@@ -46,3 +46,28 @@ that file).
 
 `consistency-gate.sh` is **NOT deleted** here — this checkpoint only establishes parity. Its
 retirement (with `conformance-reload.sh`) is **#11**, which will cite this row.
+
+## Plane A behavioral port audit (§5 · 1:1 shell-assert → scenario)
+
+The behavioral core of the shell suite (`conformance.sh`, `conformance-ext.sh`) is ported one
+assertion at a time. Each row: shell assert → Plane A scenario. This section fills in as features
+02–06 land (issue #7).
+
+### `02-core-serving.feature` ← conformance.sh + conformance-ext.sh (core) — DONE
+
+| Shell assert | Plane A scenario | Fixture |
+|--------------|------------------|---------|
+| `not`+`startsWith` path predicate | `predicate not+startsWith selects the stub` (Outline) | `core/predicates` |
+| `matches` regex path predicate | `predicate matches selects the stub` (Outline) | `core/predicates` |
+| `jsonpath` body-selector predicate | `predicate jsonpath selects the stub` (Outline) | `core/predicates` |
+| `xpath` body-selector predicate | `predicate xpath selects the stub` (Outline) | `core/predicates` |
+| `repeat:N` response cycling + wrap-around | `response cycling with repeat:N wraps around` | `core/cycling` |
+| `copy` path regex group into body | `copy path regex group into the response body` | `core/copy-path` |
+| FSM two-step state transition | `FSM two-step state transition` | `core/fsm` |
+| multi-value `Set-Cookie` preserved | `multi-value Set-Cookie headers are preserved` | `core/cookies` |
+| date template (`{{DAYS+N}}`) renders | `date template renders to an ISO-8601 date` | `core/date-template` |
+| `defaultForward` proxies unmatched | `defaultForward proxies unmatched requests to another imposter` | `core/forward-target`, `core/forwarder` |
+| single-port gateway `/__rift/:port/…` | `single-port gateway routes to an imposter by port` | `core/gateway` |
+
+Remaining behavioral features (this issue's scope, still open): `03-faults-transport`,
+`04-scripting-bounds`, `05-templating`, `06-behaviors`. #7 closes when 06 lands.
