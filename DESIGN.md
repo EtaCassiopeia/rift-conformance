@@ -494,12 +494,21 @@ Each item names its acceptance criterion. Do them in order; stop at any red.
 12. **Container mode** (`RIFT_MODE=container`, `RIFT_IMAGE`), `build-rift.sh --image`.
     ✔ feature `01`+`03` green in container mode (transport surface confirmed through
     port mapping).
-13. **Plane B `rift-external` backend** in `Backends`. ✔ existing mock corpus green with
+13. **Migrate Plane B mock corpus** from `zio-bdd-samples` → this repo (features/mock,
+    samples/mock, Backends, mock test deps, conformance{,-embedded,-rift}.sh). ✔ `sbt
+    "testOnly samples.mock.*"` green here on `MOCK_BACKEND=wiremock` + `embedded`;
+    `zio-bdd-samples` still green on its remaining framework samples.
+14. **Plane B `rift-external` backend** in the migrated `Backends`. ✔ mock corpus green with
     `MOCK_BACKEND=rift-external` (compare against `rift` container leg — same results).
-14. **Harness wiring** — `conformance-engine.sh`, extended `run-all.sh`, sbt aliases,
+15. **Harness wiring** — `conformance-engine.sh`, extended `run-all.sh`, sbt aliases,
     Makefile targets, CI YAML (two jobs). ✔ `run-all.sh` prints the layered summary with
     Plane A included; exit codes propagate.
-15. **Docs & decommission** — COVERAGE.md Plane A section + full port audit; FINDINGS.md
-    plane annotations; corpus-repo README rewrite; archive migration leg to `attic/`;
-    rewrite `/rift-conformance` command; comment on rift#254 with the new runbook.
-    ✔ a cold-start reader can run everything from the two READMEs alone.
+16. **Docs, corpus migration & decommission** — copy the JSON corpus into `./corpus` and
+    flip `RIFT_CORPUS_ROOT`; COVERAGE.md Plane A section + full port audit; FINDINGS.md
+    plane annotations; bring `/rift-conformance` here and rewrite it; note the move in the
+    `rift-imposter-samples` README (owner retires that repo); comment on rift#254.
+    ✔ everything runs from this repo's README alone; nothing depends on `rift-imposter-samples`.
+
+> Issue mapping: checklist item N = `rift-conformance` issue #N (1–16). Tracking umbrella: #17.
+> The corpus stays static/numbered and add-never-renumber throughout; `20-mimeo-solo-compat.json`
+> ships with it (the Mountebank *shell leg* is not ported — parity de-scoped).
