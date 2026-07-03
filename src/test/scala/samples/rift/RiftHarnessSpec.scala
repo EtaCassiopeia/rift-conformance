@@ -59,7 +59,7 @@ object RiftHarnessSpec extends ZIOSpecDefault:
         // The scope has closed: the finalizer (and, on abort, the shutdown hook) must have killed it.
         orphanAlive <- engine match
           case Some((pid, _)) => isAlive(pid)
-          case None           => ZIO.succeed(false)
+          case None => ZIO.succeed(false)
       yield assertTrue(code == 200) &&
         assertTrue(engine.isDefined) &&
         assertTrue(engine.exists((_, cl) => cl.contains("--allow-injection"))) &&
