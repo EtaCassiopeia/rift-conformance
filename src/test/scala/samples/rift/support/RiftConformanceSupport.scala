@@ -57,7 +57,9 @@ final case class PostedPorts(ports: List[Int])
 trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
 
   private val http = HttpClient.newHttpClient()
-  private val ProbePortLo = 4800
+  // 4800–4819 are reserved for fixed/verbatim Plane A fixtures (e.g. the defaultForward pair);
+  // the dynamic fresh-imposter pool draws from 4820–4899 so the two never collide.
+  private val ProbePortLo = 4820
   private val ProbePortHi = 4899
 
   // Delete every imposter this scenario created so ports don't leak across scenarios. URIO hook:
@@ -296,6 +298,44 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
     val d = pend.body.map(b => s"-d '$b'").getOrElse("")
     s"curl -X ${method.toUpperCase} $hs $d '$url'".replaceAll(" +", " ").trim
 
+  /** Post a fixture **verbatim** (keeping its declared port) — for scenarios that need a fixed port
+    * another imposter references (e.g. `defaultForward`) or that the gateway addresses by number.
+    */
+  protected def postImposterVerbatimFixture(name: String): ZIO[RiftHarness, Throwable, Int] =
+    for
+      raw <- loadFixture(name)
+      port <- ZIO.fromEither(portOfJson(raw)).mapError(new RuntimeException(_))
+      admin <- ZIO.serviceWith[RiftHarness](_.adminUrl)
+      code <- postImposter(admin, raw)
+      _ <- ZIO
+        .fail(new RuntimeException(s"POST verbatim fixture $name returned $code, expected 201"))
+        .when(code != 201)
+      _ <- track(port)
+      _ <- Stage.put(CurrentPort(port))
+    yield port
+
+  private def portOfJson(raw: String): Either[String, Int] =
+    raw.fromJson[Json].left.map(m => s"fixture JSON parse: $m").flatMap {
+      case Json.Obj(fields) =>
+        fields
+          .collectFirst { case ("port", Json.Num(n)) => n.intValue }
+          .toRight("no top-level port")
+      case _ => Left("fixture root is not a JSON object")
+    }
+
+  /** Send to the current imposter through the single-port gateway (`{admin}/__rift/<port><path>`).
+    */
+  protected def sendViaGateway(method: String, path: String): ZIO[RiftHarness, Throwable, Unit] =
+    for
+      port <- currentPort
+      admin <- ZIO.serviceWith[RiftHarness](_.adminUrl)
+      pend <- pendingRequest
+      url = s"$admin/__rift/$port$path"
+      _ <- recordCurl(curlOf(method, url, pend))
+      resp <- httpSend(url, method, pend.headers, pend.body)
+      _ <- Stage.put(resp)
+    yield ()
+
   // ── steps ────────────────────────────────────────────────────────────────────────────────
 
   Given("a fresh imposter from fixture " / string) { (name: String) =>
@@ -337,5 +377,30 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
       val got = r.headers.get(h.toLowerCase).map(_.mkString(","))
       assertRepro(got.contains(v), s"expected header $h=$v, got ${got.getOrElse("<absent>")}")
     }
+  }
+
+  Given("a fresh verbatim imposter from fixture " / string) { (name: String) =>
+    postImposterVerbatimFixture(name).unit
+  }
+
+  When("the client sends " / string / " " / string / " via the gateway") { (m: String, p: String) =>
+    sendViaGateway(m, p)
+  }
+
+  Then("the response has " / int / " " / string / " headers") { (n: Int, h: String) =>
+    lastResponse.flatMap { r =>
+      val cnt = r.headers.get(h.toLowerCase).map(_.size).getOrElse(0)
+      assertRepro(cnt == n, s"expected $n '$h' header(s), got $cnt")
+    }
+  }
+
+  Then("the response body matches " / string) { (regex: String) =>
+    for
+      r <- lastResponse
+      rx <- ZIO
+        .attempt(regex.r)
+        .mapError(e => new RuntimeException(s"bad regex /$regex/: ${e.getMessage}"))
+      _ <- assertRepro(rx.findFirstIn(r.body).isDefined, s"body '${r.body}' did not match /$regex/")
+    yield ()
   }
 }
