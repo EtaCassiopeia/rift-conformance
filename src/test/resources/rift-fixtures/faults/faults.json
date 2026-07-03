@@ -1,0 +1,34 @@
+{
+  "protocol": "http",
+  "name": "faults · transport",
+  "stubs": [
+    {
+      "predicates": [{ "equals": { "path": "/reset" } }],
+      "responses": [{ "is": { "statusCode": 200 }, "_rift": { "fault": { "tcp": "CONNECTION_RESET_BY_PEER" } } }]
+    },
+    {
+      "predicates": [{ "equals": { "path": "/rand" } }],
+      "responses": [{ "is": { "statusCode": 200 }, "_rift": { "fault": { "tcp": "RANDOM_DATA_THEN_CLOSE" } } }]
+    },
+    {
+      "predicates": [{ "equals": { "path": "/slow" } }],
+      "responses": [{ "is": { "statusCode": 200, "body": "slow" }, "_rift": { "fault": { "latency": { "probability": 1.0, "ms": 700 } } } }]
+    },
+    {
+      "predicates": [{ "equals": { "path": "/err" } }],
+      "responses": [{ "is": { "statusCode": 200 }, "_rift": { "fault": { "error": { "probability": 1.0, "status": 503, "body": "DOWN", "headers": { "Retry-After": "30" } } } } }]
+    },
+    {
+      "predicates": [{ "equals": { "path": "/all" } }],
+      "responses": [{ "is": { "statusCode": 200 }, "_rift": { "fault": { "tcp": "CONNECTION_RESET_BY_PEER", "error": { "probability": 1.0, "status": 503 }, "latency": { "probability": 1.0, "ms": 700 } } } }]
+    },
+    {
+      "predicates": [{ "equals": { "path": "/p0" } }],
+      "responses": [{ "is": { "statusCode": 200, "body": "ok" }, "_rift": { "fault": { "error": { "probability": 0.0, "status": 503 } } } }]
+    },
+    {
+      "predicates": [{ "equals": { "path": "/topfault" } }],
+      "responses": [{ "fault": "CONNECTION_RESET_BY_PEER" }]
+    }
+  ]
+}

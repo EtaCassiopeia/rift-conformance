@@ -71,3 +71,17 @@ assertion at a time. Each row: shell assert → Plane A scenario. This section f
 
 Remaining behavioral features (this issue's scope, still open): `03-faults-transport`,
 `04-scripting-bounds`, `05-templating`, `06-behaviors`. #7 closes when 06 lands.
+
+### `03-faults-transport.feature` ← conformance.sh + conformance-ext.sh (faults) — DONE
+
+| Shell assert | Plane A scenario | Fixture |
+|--------------|------------------|---------|
+| tcp `CONNECTION_RESET_BY_PEER` → transport error | `tcp reset aborts the connection at the transport level` (Outline) | `faults/faults` |
+| `RANDOM_DATA_THEN_CLOSE` → transport error | `random-data-then-close aborts the connection…` (Outline) | `faults/faults` |
+| latency fault ≥ floor (timing) | `latency fault delays the response past its floor` | `faults/faults` |
+| error fault status/body/headers | `error fault sets the status, body and headers` | `faults/faults` |
+| precedence tcp>error>latency (rift#277) | `fault precedence — tcp wins over error, after the latency delay` | `faults/faults` |
+| `probability: 0` no-op | `probability 0 disables a fault` | `faults/faults` |
+| top-level `fault` → 502 today (**@gap rift#309**) | `top-level fault currently returns 502 (rift#309)` | `faults/faults` |
+
+Remaining: `04-scripting-bounds`, `05-templating`, `06-behaviors`. #7 closes when 06 lands.
