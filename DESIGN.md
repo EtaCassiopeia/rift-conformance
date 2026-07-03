@@ -458,7 +458,7 @@ reverted. The corpus is never moved, so nothing external breaks.
 | R3 | **Child-process leak** on hard-killed sbt: scope finalizer + JVM shutdown hook + `pkill`-style guard in `conformance-engine.sh` (belt and braces, as the shell suite did). | mitigated |
 | R4 | **#308 saturation test vs shared engine**: 3 concurrent runaways deliberately occupy blocking threads; feature `04` runs with `scenarioParallelism = 1` and a fresh imposter, matching the proven shell probe. | designed |
 | R5 | **relative-path corpus data** (`data/products.csv`): engine cwd pinned to `RIFT_CORPUS_ROOT` (§3.1). | designed |
-| R6 | **rift-ffi surface too thin** for Plane A. Optional rift-side roadmap: widen the C-ABI (apply_config, admin ops) so embedded can become a full oracle and master needs no process spawn at all. Not required by this design. | future (rift repo) |
+| R6 | **rift-ffi surface too thin** for Plane A. Widen the C-ABI (in-process admin API, apply_config, build-info) so embedded becomes a full Plane A oracle with zero process spawn. **Now designed & filed:** rift-conformance#18 (`RIFT_MODE=embedded`), depending on rift#342/#343/#344 (C-ABI v2) + zio-bdd#193 (FFM bridge v2). Phase 4, optional — not required for parity. | filed (#18) |
 | R7 | **zio-bdd additions** — none required. Optional niceties: docstring args; a public `Rift.managed` variant exposing adminUrl (would let Plane A container mode reuse the library instead of mirroring 30 lines). File as zio-bdd enhancements when Phase 2 lands. | future (zio-bdd repo) |
 
 ## 13. Implementation checklist (ordered, for the implementing model)
