@@ -41,5 +41,31 @@ object RiftToolsParseSpec extends ZIOSpecDefault:
     test("parseVerify fails when the summary is missing") {
       val r = RiftTools.parseVerify(RiftTools.RawRun("some unrelated output", "boom", 1))
       assertTrue(r.isLeft) && assertTrue(r.swap.exists(_.contains("could not parse")))
+    },
+    // Locks in the consistency gate's "names the offending file" RED-path contract.
+    test("errorOffenders names error-severity files (with code/location) and drops non-errors") {
+      val report = LintReport(
+        errors = 1,
+        warnings = 1,
+        filesChecked = 2,
+        issues = List(
+          LintIssue(
+            "error",
+            "E010",
+            "bad",
+            "/corpus/imposters/99-broken.json",
+            Some("stubs[0]"),
+            None
+          ),
+          LintIssue("warning", "W004", "meh", "/corpus/imposters/20-ok.json", None, None),
+          LintIssue("info", "I003", "fyi", "/corpus/imposters/04-x.json", None, None)
+        ),
+        exitCode = 1,
+        raw = ""
+      )
+      val out = RiftTools.errorOffenders(report)
+      assertTrue(out == List("99-broken.json E010@stubs[0]")) &&
+      assertTrue(!out.exists(_.contains("20-ok.json"))) &&
+      assertTrue(!out.exists(_.contains("04-x.json")))
     }
   )
