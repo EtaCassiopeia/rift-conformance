@@ -1,0 +1,19 @@
+{
+  "protocol": "http",
+  "name": "scripting · engines",
+  "_rift": { "flowState": { "backend": "inmemory" } },
+  "stubs": [
+    {
+      "predicates": [{ "equals": { "path": "/rhai" } }],
+      "responses": [{ "_rift": { "script": { "engine": "rhai", "code": "fn should_inject(request, flow_store) { let c = flow_store.get(\"f\", \"n\"); if c == () { c = 0; }; c += 1; flow_store.set(\"f\", \"n\", c); #{inject: true, fault: \"error\", status: 200, body: `${c}`} }" } } }]
+    },
+    {
+      "predicates": [{ "equals": { "path": "/lua" } }],
+      "responses": [{ "_rift": { "script": { "engine": "lua", "code": "function should_inject(request, flow_store)\n  return { inject = true, fault = \"error\", status = 200, body = \"lua-ok\" }\nend" } } }]
+    },
+    {
+      "predicates": [{ "equals": { "path": "/js" } }],
+      "responses": [{ "inject": "function (config, state) { return { statusCode: 200, body: \"js-ok\" }; }" }]
+    }
+  ]
+}

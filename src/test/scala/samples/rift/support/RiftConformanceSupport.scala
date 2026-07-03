@@ -62,6 +62,14 @@ final case class TransportProbe(
     error: Option[String]
 )
 
+/** A concurrent burst left running in the background (a forked fiber) so later steps can probe the
+  * engine *while the requests are still in flight*, then join for the statuses.
+  */
+final case class ConcurrentBurst(
+    requested: Int,
+    fiber: Fiber.Runtime[Nothing, List[TransportProbe]]
+)
+
 /** Shared Plane A step backbone. Mix into a `ZIOSteps[RiftHarness, S]` suite. Steps talk **directly
   * to the admin API and the imposter ports** — `MockControl` appears nowhere, which is what keeps
   * Plane A an independent oracle (a red here is an engine/tool finding, never a library bug).
@@ -187,6 +195,30 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
     Stage.get[TransportOutcome].mapError(e => new IllegalStateException(s"no transport probe ($e)"))
   protected def elapsedMs: IO[Throwable, Long] =
     Stage.get[ElapsedMillis].map(_.ms).mapError(e => new IllegalStateException(s"no timing ($e)"))
+
+  /** Fire `n` GET requests concurrently at the current imposter's path and record their statuses —
+    * used to prove the engine stays bounded/responsive under concurrent load (rift#308).
+    */
+  protected def sendConcurrent(n: Int, path: String): ZIO[RiftHarness, Throwable, Unit] =
+    for
+      port <- currentPort
+      host <- ZIO.serviceWith[RiftHarness](_.hostFor(port))
+      pend <- pendingRequest
+      url = s"http://$host:$port$path"
+      _ <- recordCurl(s"(x$n concurrent, in flight) ${curlOf("GET", url, pend)}")
+      // Fork so the burst runs in the background — the next steps probe the engine / a sibling
+      // WHILE these are in flight (the rift#308 property). `all concurrent responses…` joins it.
+      fiber <- ZIO
+        .foreachPar(1 to n)(_ => timedProbe(url, "GET", pend.headers, pend.body))
+        .map(_.toList)
+        .forkDaemon
+      _ <- Stage.put(ConcurrentBurst(n, fiber))
+    yield ()
+
+  protected def concurrentBurst: IO[Throwable, ConcurrentBurst] =
+    Stage
+      .get[ConcurrentBurst]
+      .mapError(e => new IllegalStateException(s"no concurrent burst ($e)"))
 
   private def loadFixture(name: String): IO[Throwable, String] =
     ZIO.attemptBlocking {
@@ -337,7 +369,13 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
   ): LastResponse =
     val publisher =
       body.map(HttpRequest.BodyPublishers.ofString).getOrElse(HttpRequest.BodyPublishers.noBody)
-    var builder = HttpRequest.newBuilder(URI.create(url)).method(method.toUpperCase, publisher)
+    // A generous request timeout, well above any legitimate latency fault (700ms): if a script
+    // timeout fully regresses to an infinite hang, the send fails at 10s (a clean IOException) so a
+    // scenario reports a crisp failure with its curl repro instead of hanging the whole CI run.
+    var builder = HttpRequest
+      .newBuilder(URI.create(url))
+      .timeout(java.time.Duration.ofSeconds(10))
+      .method(method.toUpperCase, publisher)
     headers.foreach((k, v) => builder = builder.header(k, v))
     val resp = http.send(builder.build(), HttpResponse.BodyHandlers.ofString())
     // HTTP header names are case-insensitive; key by lowercase so lookups are too.
@@ -410,6 +448,25 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
       case _ => Left("fixture root is not a JSON object")
     }
 
+  /** Send to a specific imposter port (not the "current" one) — for multi-imposter scenarios like
+    * "a sibling imposter stays responsive".
+    */
+  protected def sendToPort(
+      method: String,
+      path: String,
+      port: Int
+  ): ZIO[RiftHarness, Throwable, Unit] =
+    for
+      host <- ZIO.serviceWith[RiftHarness](_.hostFor(port))
+      pend <- pendingRequest
+      url = s"http://$host:$port$path"
+      _ <- recordCurl(curlOf(method, url, pend))
+      probe <- timedProbe(url, method, pend.headers, pend.body)
+      _ <- probe.response match
+        case Some(r) => Stage.put(r) *> Stage.put(ElapsedMillis(probe.elapsedMs))
+        case None => ZIO.fail(new RuntimeException(s"transport failure on $url"))
+    yield ()
+
   /** Send to the current imposter through the single-port gateway (`{admin}/__rift/<port><path>`).
     */
   protected def sendViaGateway(method: String, path: String): ZIO[RiftHarness, Throwable, Unit] =
@@ -474,6 +531,10 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
     sendViaGateway(m, p)
   }
 
+  When("the client sends " / string / " " / string / " to port " / int) {
+    (m: String, p: String, port: Int) => sendToPort(m, p, port)
+  }
+
   Then("the response has " / int / " " / string / " headers") { (n: Int, h: String) =>
     lastResponse.flatMap { r =>
       val cnt = r.headers.get(h.toLowerCase).map(_.size).getOrElse(0)
@@ -510,5 +571,40 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
     elapsedMs.flatMap(ms =>
       assertRepro(ms >= floor, s"expected the request to take >= $floor ms, took $ms ms")
     )
+  }
+
+  Then("the response took at most " / int / " ms") { (ceil: Int) =>
+    elapsedMs.flatMap(ms =>
+      assertRepro(ms <= ceil, s"expected the request to take <= $ceil ms, took $ms ms")
+    )
+  }
+
+  When("the client fires " / int / " concurrent requests to " / string) { (n: Int, p: String) =>
+    sendConcurrent(n, p)
+  }
+
+  Then("all concurrent responses have status " / int) { (code: Int) =>
+    concurrentBurst.flatMap { b =>
+      b.fiber.join.flatMap { probes =>
+        val statuses = probes.flatMap(_.response.map(_.status))
+        assertRepro(
+          statuses.size == b.requested && statuses.forall(_ == code),
+          s"expected all ${b.requested} responses to be $code, got $statuses"
+        )
+      }
+    }
+  }
+
+  Then("the engine remains responsive") {
+    ZIO.serviceWithZIO[RiftHarness] { h =>
+      ZIO
+        .attemptBlocking {
+          val req = HttpRequest.newBuilder(URI.create(s"${h.adminUrl}/imposters")).GET().build()
+          http.send(req, HttpResponse.BodyHandlers.discarding()).statusCode()
+        }
+        .flatMap(code =>
+          assertRepro(code == 200, s"admin API not responsive: GET /imposters -> $code")
+        )
+    }
   }
 }

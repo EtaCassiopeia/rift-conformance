@@ -85,3 +85,19 @@ Remaining behavioral features (this issue's scope, still open): `03-faults-trans
 | top-level `fault` → 502 today (**@gap rift#309**) | `top-level fault currently returns 502 (rift#309)` | `faults/faults` |
 
 Remaining: `04-scripting-bounds`, `05-templating`, `06-behaviors`. #7 closes when 06 lands.
+
+### `04-scripting-bounds.feature` ← conformance-ext.sh (scripting + #308) — DONE
+
+| Shell assert | Plane A scenario | Fixture |
+|--------------|------------------|---------|
+| rhai flow_store counter increments across requests | `rhai flow_store counter increments across requests` | `scripting/scripts` |
+| lua script injects a result | `a lua script injects its response` (Outline) | `scripting/scripts` |
+| js inject result | `a js script injects its response` (Outline) | `scripting/scripts` |
+| rift#308 runaway rhai `timeoutMs:300` → 500 + `x-rift-script-error` ~300ms | `a runaway rhai script is bounded by its timeout` (≥250ms & ≤2000ms) | `scripting/runaway` |
+| rift#308 engine + sibling stay responsive with 3 concurrent runaways **in flight** | `a sibling imposter stays responsive while concurrent runaways are in flight` (burst forked; sibling+admin probed while in flight; all 500 on join) | `scripting/sibling`, `scripting/runaway` |
+
+Remaining: `05-templating`, `06-behaviors`. #7 closes when 06 lands.
+
+> Harness note: a `sbt test` that recompiles a suite *during* the test task can miss that just-recompiled
+> suite (discovery snapshots before incremental compile finishes); a clean re-run picks it up. Watch for
+> this when wiring CI (#15) — run `compile` before `test`, or `sbt clean test`.
