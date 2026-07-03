@@ -101,6 +101,18 @@ object RiftTools:
       case (Some(p), Some(f), Some(s)) => Right(VerifyReport(p, f, s, r.exitCode, r.stdout))
       case _ => Left(s"could not parse rift-verify summary${diagnostics(r)}")
 
+  /** The error-severity findings, one per line as `<file> <code>[@location]` — this is the "names
+    * the offending file" contract the consistency gate relies on. Pure, so it is unit-tested.
+    */
+  def errorOffenders(report: LintReport): List[String] =
+    report.issues
+      .filter(_.severity == "error")
+      .map { i =>
+        val file = i.file.substring(i.file.lastIndexOf('/') + 1)
+        s"$file ${i.code}${i.location.fold("")(l => s"@$l")}"
+      }
+      .distinct
+
   private def diagnostics(r: RawRun): String =
     s" (exit ${r.exitCode})\nstdout:\n${r.stdout}\nstderr:\n${r.stderr}"
 
