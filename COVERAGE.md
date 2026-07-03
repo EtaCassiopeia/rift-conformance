@@ -70,7 +70,7 @@ assertion at a time. Each row: shell assert → Plane A scenario. This section f
 | single-port gateway `/__rift/:port/…` | `single-port gateway routes to an imposter by port` | `core/gateway` |
 
 Remaining behavioral features (this issue's scope, still open): `03-faults-transport`,
-`04-scripting-bounds`, `05-templating`, `06-behaviors`. #7 closes when 06 lands.
+`04-scripting-bounds`, `05-templating`, `06-behaviors`. #7 closes when feature 06 lands — now shipped; see the 06 section below.
 
 ### `03-faults-transport.feature` ← conformance.sh + conformance-ext.sh (faults) — DONE
 
@@ -84,7 +84,7 @@ Remaining behavioral features (this issue's scope, still open): `03-faults-trans
 | `probability: 0` no-op | `probability 0 disables a fault` | `faults/faults` |
 | top-level `fault` → 502 today (**@gap rift#309**) | `top-level fault currently returns 502 (rift#309)` | `faults/faults` |
 
-Remaining: `04-scripting-bounds`, `05-templating`, `06-behaviors`. #7 closes when 06 lands.
+Remaining: `04-scripting-bounds`, `05-templating`, `06-behaviors`. #7 closes when feature 06 lands — now shipped; see the 06 section below.
 
 ### `04-scripting-bounds.feature` ← conformance-ext.sh (scripting + #308) — DONE
 
@@ -96,7 +96,7 @@ Remaining: `04-scripting-bounds`, `05-templating`, `06-behaviors`. #7 closes whe
 | rift#308 runaway rhai `timeoutMs:300` → 500 + `x-rift-script-error` ~300ms | `a runaway rhai script is bounded by its timeout` (≥250ms & ≤2000ms) | `scripting/runaway` |
 | rift#308 engine + sibling stay responsive with 3 concurrent runaways **in flight** | `a sibling imposter stays responsive while concurrent runaways are in flight` (burst forked; sibling+admin probed while in flight; all 500 on join) | `scripting/sibling`, `scripting/runaway` |
 
-Remaining: `05-templating`, `06-behaviors`. #7 closes when 06 lands.
+Remaining: `05-templating`, `06-behaviors`. #7 closes when feature 06 lands — now shipped; see the 06 section below.
 
 > Harness note: a `sbt test` that recompiles a suite *during* the test task can miss that just-recompiled
 > suite (discovery snapshots before incremental compile finishes); a clean re-run picks it up. Watch for
@@ -116,4 +116,31 @@ Remaining: `05-templating`, `06-behaviors`. #7 closes when 06 lands.
 | `{{MONTHS-N}}` renders today-N months | `date token MONTHS-1 …` (Outline: -1 months) | `templating/templates` |
 
 Date tokens verify the **actual computed offset** (expected date derived from wall-clock at
-assertion time), not merely "renders some ISO date". Remaining: `06-behaviors`. #7 closes when 06 lands.
+assertion time), not merely "renders some ISO date". Remaining: `06-behaviors`. #7 closes when feature 06 lands — now shipped; see the 06 section below.
+
+### `06-behaviors.feature` ← conformance.sh + conformance-ext.sh (behaviors) — DONE
+
+| Shell assert | Plane A scenario | Fixture |
+|--------------|------------------|---------|
+| `copy` from a request header | `copy from a request header into the response` | `behaviors/behaviors` |
+| `copy` from body via jsonpath | `copy via jsonpath from the request body` | `behaviors/behaviors` |
+| `lookup` CSV column by key (needs corpus `data/`, engine cwd = `$RIFT_CORPUS_ROOT`) | `lookup a CSV column by key` | `behaviors/behaviors` |
+| `wait` behavior delays past floor | `the wait behavior delays the response past its floor` (≥500ms) | `behaviors/behaviors` |
+| `shellTransform` rewrites a static `is` | `shellTransform rewrites a static response body` | `behaviors/behaviors` |
+| Set-Cookie multi-value survives a `copy` (rift#272) | `multi-value Set-Cookie survives a copy behavior (rift#272)` (2 distinct headers) | `behaviors/behaviors` |
+| JS `decorate` rewrites the response | `a JS decorate behavior rewrites the response` | `behaviors/behaviors` |
+
+**Note on the two former `@gap` probes:** the design tagged `shellTransform`-on-static-`is` and
+Set-Cookie-survives-`copy` (rift#272) as expected-divergence. On the pinned engine build both now
+behave correctly (rift#272 is **closed** upstream), so these scenarios assert the *correct* behavior
+with no `@gap` tag — the gap has "flipped on fix" and the scenarios now guard against a regression.
+The one still-open `@gap` in this suite is rift#309 (top-level `fault` → 502) in `03-faults-transport`.
+
+---
+
+## Behavioral core port — COMPLETE ✅
+
+Features **02–06** are all green under `RIFT_MODE=external`. The 1:1 port audit covers every
+`chk`/`gap`/timing assert in **`conformance.sh`** and the behavioral sections of
+**`conformance-ext.sh`** — each maps to a named scenario above (or a documented drop). Issue **#7**
+is discharged by this feature.
