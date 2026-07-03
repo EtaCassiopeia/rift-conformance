@@ -31,3 +31,7 @@ Test / testFrameworks := Seq(
 // and process teardown run in an isolated JVM, and run suites serially (one engine per run).
 Test / fork := true
 Test / parallelExecution := false
+
+// Plane A consistency gate (feature 01). The parity checkpoint (#6) and future retirements run this
+// on the same build as the shell gate. (The full alias set — run-all, mock legs — lands in #15.)
+addCommandAlias("engineGate", "testOnly samples.rift.ConsistencyGateSuite")
