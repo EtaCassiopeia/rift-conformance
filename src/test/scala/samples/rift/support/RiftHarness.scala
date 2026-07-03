@@ -82,7 +82,7 @@ object RiftHarness:
         url = s"http://localhost:$port"
         _ <- awaitReady(url, proc)
         info <- RiftBuildInfo.fromBuildDir(cfg.buildDir, engineVersion = None)
-      yield RiftHarnessLive(url, RiftTools(cfg.buildDir), info)
+      yield RiftHarnessLive(url, RiftTools.fromBuildDir(cfg.buildDir), info)
     }
 
   /** Prefer 2525, but fall back to a free port if it is *busy* so a stray engine never wedges the
