@@ -552,6 +552,27 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
     yield ()
   }
 
+  // Verifies a date TEMPLATE rendered the correct OFFSET (not just "some ISO date"): the expected
+  // value is computed from wall-clock at assertion time, so it never goes stale, and it fails only
+  // if the engine's date arithmetic is actually wrong.
+  Then("the response body is a date offset by " / int / " " / string / " from today") {
+    (offset: Int, unit: String) =>
+      for
+        r <- lastResponse
+        got <- ZIO
+          .attempt(java.time.OffsetDateTime.parse(r.body.trim).toLocalDate)
+          .mapError(e =>
+            new RuntimeException(s"body '${r.body}' is not an ISO date-time: ${e.getMessage}")
+          )
+        today = java.time.LocalDate.now(java.time.ZoneOffset.UTC)
+        want <- unit match
+          case "days" => ZIO.succeed(today.plusDays(offset.toLong))
+          case "months" => ZIO.succeed(today.plusMonths(offset.toLong))
+          case other => ZIO.fail(new RuntimeException(s"unknown date unit '$other' (days|months)"))
+        _ <- assertRepro(got == want, s"expected a date $offset $unit from today ($want), got $got")
+      yield ()
+  }
+
   When("the client sends " / string / " " / string / " expecting a transport error") {
     (m: String, p: String) => sendExpectingTransportError(m, p)
   }

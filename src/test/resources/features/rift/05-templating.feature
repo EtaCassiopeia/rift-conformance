@@ -1,0 +1,38 @@
+@rift @templating
+Feature: Response templating — request variables and date tokens
+
+  Scenario: request method and path variables render
+    Given a fresh imposter from fixture "templating/templates"
+    When the client sends "GET" "/rmp"
+    Then the response status is 200
+    And the response body is "m=GET p=/rmp"
+
+  Scenario: request query variable renders
+    Given a fresh imposter from fixture "templating/templates"
+    When the client sends "GET" "/rq?name=bob"
+    Then the response status is 200
+    And the response body is "q=bob"
+
+  Scenario: request header variable renders
+    Given a fresh imposter from fixture "templating/templates"
+    When the request header "X-Test" is "val"
+    And the client sends "GET" "/rh"
+    Then the response status is 200
+    And the response body is "h=val"
+
+  # Each date token must render an ISO-8601 date with the CORRECT offset — not just "some date" and
+  # not the literal `{{...}}`. The expected date is computed at assertion time, so a bug that ignored
+  # the offset/sign (e.g. always returned NOW) fails, while the test never goes stale.
+  Scenario Outline: date token <token> renders a date <offset> <unit> from today
+    Given a fresh imposter from fixture "templating/templates"
+    When the client sends "GET" "<path>"
+    Then the response status is 200
+    And the response body is a date offset by <offset> <unit> from today
+
+    Examples:
+      | token    | path | offset | unit   |
+      | NOW      | /now | 0      | days   |
+      | DAYS+5   | /d5  | 5      | days   |
+      | DAYS-5   | /dm5 | -5     | days   |
+      | MONTHS+1 | /m1  | 1      | months |
+      | MONTHS-1 | /mm1 | -1     | months |

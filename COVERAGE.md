@@ -101,3 +101,19 @@ Remaining: `05-templating`, `06-behaviors`. #7 closes when 06 lands.
 > Harness note: a `sbt test` that recompiles a suite *during* the test task can miss that just-recompiled
 > suite (discovery snapshots before incremental compile finishes); a clean re-run picks it up. Watch for
 > this when wiring CI (#15) — run `compile` before `test`, or `sbt clean test`.
+
+### `05-templating.feature` ← conformance-ext.sh (templating) — DONE
+
+| Shell assert | Plane A scenario | Fixture |
+|--------------|------------------|---------|
+| `${request.method}` + `${request.path}` render | `request method and path variables render` | `templating/templates` |
+| `${request.query.*}` renders | `request query variable renders` | `templating/templates` |
+| `${request.headers.*}` renders | `request header variable renders` | `templating/templates` |
+| `{{NOW}}` renders today | `date token NOW …` (Outline: offset 0 days) | `templating/templates` |
+| `{{DAYS+N}}` renders today+N | `date token DAYS+5 …` (Outline: +5 days) | `templating/templates` |
+| `{{DAYS-N}}` renders today-N | `date token DAYS-5 …` (Outline: -5 days) | `templating/templates` |
+| `{{MONTHS+N}}` renders today+N months | `date token MONTHS+1 …` (Outline: +1 months) | `templating/templates` |
+| `{{MONTHS-N}}` renders today-N months | `date token MONTHS-1 …` (Outline: -1 months) | `templating/templates` |
+
+Date tokens verify the **actual computed offset** (expected date derived from wall-clock at
+assertion time), not merely "renders some ISO date". Remaining: `06-behaviors`. #7 closes when 06 lands.
