@@ -46,6 +46,22 @@ final case class LoadedCorpus(files: List[java.nio.file.Path])
 /** The declared ports of the corpus imposters posted to the engine this scenario. */
 final case class PostedPorts(ports: List[Int])
 
+/** Wall-clock cost of the last request — for latency-floor / timing asserts. */
+final case class ElapsedMillis(ms: Long)
+
+/** Whether the last "expecting a transport error" send actually failed at the transport level. */
+final case class TransportOutcome(failed: Boolean)
+
+/** Result of a timed send that tolerates a transport-level failure (thrown IOException). `error`
+  * carries the thrown exception's identity so a failure has a diagnostic trail.
+  */
+final case class TransportProbe(
+    response: Option[LastResponse],
+    elapsedMs: Long,
+    failed: Boolean,
+    error: Option[String]
+)
+
 /** Shared Plane A step backbone. Mix into a `ZIOSteps[RiftHarness, S]` suite. Steps talk **directly
   * to the admin API and the imposter ports** — `MockControl` appears nowhere, which is what keeps
   * Plane A an independent oracle (a red here is an engine/tool finding, never a library bug).
@@ -140,9 +156,37 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
       pend <- pendingRequest
       url = s"http://$host:$port$path"
       _ <- recordCurl(curlOf(method, url, pend))
-      resp <- httpSend(url, method, pend.headers, pend.body)
-      _ <- Stage.put(resp)
+      probe <- timedProbe(url, method, pend.headers, pend.body)
+      _ <- probe.response match
+        case Some(r) => Stage.put(r) *> Stage.put(ElapsedMillis(probe.elapsedMs))
+        case None =>
+          ZIO.fail(new RuntimeException(s"transport failure on $url (unexpected for a plain send)"))
     yield ()
+
+  /** Send expecting a transport-level failure (fault scenarios): capture whether it failed, the
+    * elapsed time (latency still applies), and any HTTP response (the top-level-fault @gap returns
+    * a 502 rather than a reset).
+    */
+  protected def sendExpectingTransportError(
+      method: String,
+      path: String
+  ): ZIO[RiftHarness, Throwable, Unit] =
+    for
+      port <- currentPort
+      host <- ZIO.serviceWith[RiftHarness](_.hostFor(port))
+      pend <- pendingRequest
+      url = s"http://$host:$port$path"
+      _ <- recordCurl(curlOf(method, url, pend))
+      probe <- timedProbe(url, method, pend.headers, pend.body)
+      _ <- Stage.put(TransportOutcome(probe.failed))
+      _ <- Stage.put(ElapsedMillis(probe.elapsedMs))
+      _ <- ZIO.foreachDiscard(probe.response)(Stage.put(_))
+    yield ()
+
+  protected def transportOutcome: IO[Throwable, TransportOutcome] =
+    Stage.get[TransportOutcome].mapError(e => new IllegalStateException(s"no transport probe ($e)"))
+  protected def elapsedMs: IO[Throwable, Long] =
+    Stage.get[ElapsedMillis].map(_.ms).mapError(e => new IllegalStateException(s"no timing ($e)"))
 
   private def loadFixture(name: String): IO[Throwable, String] =
     ZIO.attemptBlocking {
@@ -282,16 +326,59 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
       headers: Map[String, String],
       body: Option[String]
   ): IO[Throwable, LastResponse] =
+    ZIO.attemptBlocking(blockingSend(url, method, headers, body))
+
+  // The raw JDK send — throws on a transport-level failure (connection reset, garbage-then-close).
+  private def blockingSend(
+      url: String,
+      method: String,
+      headers: Map[String, String],
+      body: Option[String]
+  ): LastResponse =
+    val publisher =
+      body.map(HttpRequest.BodyPublishers.ofString).getOrElse(HttpRequest.BodyPublishers.noBody)
+    var builder = HttpRequest.newBuilder(URI.create(url)).method(method.toUpperCase, publisher)
+    headers.foreach((k, v) => builder = builder.header(k, v))
+    val resp = http.send(builder.build(), HttpResponse.BodyHandlers.ofString())
+    // HTTP header names are case-insensitive; key by lowercase so lookups are too.
+    val hs = resp.headers.map.asScala.map((k, v) => k.toLowerCase -> v.asScala.toList).toMap
+    LastResponse(resp.statusCode, resp.body, hs)
+
+  /** Send and time it, capturing a transport-level failure (a thrown IOException) instead of
+    * failing the effect — so fault scenarios can assert "the request fails at the transport level"
+    * and the elapsed time (latency faults apply even when the connection is then reset).
+    */
+  private def timedProbe(
+      url: String,
+      method: String,
+      headers: Map[String, String],
+      body: Option[String]
+  ): UIO[TransportProbe] =
     ZIO.attemptBlocking {
-      val publisher =
-        body.map(HttpRequest.BodyPublishers.ofString).getOrElse(HttpRequest.BodyPublishers.noBody)
-      var builder = HttpRequest.newBuilder(URI.create(url)).method(method.toUpperCase, publisher)
-      headers.foreach((k, v) => builder = builder.header(k, v))
-      val resp = http.send(builder.build(), HttpResponse.BodyHandlers.ofString())
-      // HTTP header names are case-insensitive; key by lowercase so lookups are too.
-      val hs = resp.headers.map.asScala.map((k, v) => k.toLowerCase -> v.asScala.toList).toMap
-      LastResponse(resp.statusCode, resp.body, hs)
-    }
+      val t0 = java.lang.System.nanoTime()
+      def elapsed = (java.lang.System.nanoTime() - t0) / 1000000L
+      try
+        TransportProbe(
+          Some(blockingSend(url, method, headers, body)),
+          elapsed,
+          failed = false,
+          None
+        )
+      catch
+        // A transport-abort fault (reset / garbage-then-close) surfaces as an IOException on an
+        // *established* connection. ConnectException/UnknownHostException mean the engine wasn't
+        // reachable at all — a real bug, NOT a fault — so let those (and any non-IO throwable,
+        // fatal error, or interrupt) propagate as a defect rather than green a fault scenario.
+        case e: java.net.ConnectException => throw e
+        case e: java.net.UnknownHostException => throw e
+        case e: java.io.IOException =>
+          TransportProbe(
+            None,
+            elapsed,
+            failed = true,
+            Some(s"${e.getClass.getSimpleName}: ${e.getMessage}")
+          )
+    }.orDie
 
   private def curlOf(method: String, url: String, pend: PendingRequest): String =
     val hs = pend.headers.map((k, v) => s"-H '$k: $v'").mkString(" ")
@@ -402,5 +489,26 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
         .mapError(e => new RuntimeException(s"bad regex /$regex/: ${e.getMessage}"))
       _ <- assertRepro(rx.findFirstIn(r.body).isDefined, s"body '${r.body}' did not match /$regex/")
     yield ()
+  }
+
+  When("the client sends " / string / " " / string / " expecting a transport error") {
+    (m: String, p: String) => sendExpectingTransportError(m, p)
+  }
+
+  Then("the request fails at the transport level") {
+    for
+      o <- transportOutcome
+      got <- lastResponse.option
+      _ <- assertRepro(
+        o.failed,
+        s"expected a transport-level failure${got.fold("")(r => s", but got HTTP ${r.status}")}"
+      )
+    yield ()
+  }
+
+  Then("the response took at least " / int / " ms") { (floor: Int) =>
+    elapsedMs.flatMap(ms =>
+      assertRepro(ms >= floor, s"expected the request to take >= $floor ms, took $ms ms")
+    )
   }
 }
