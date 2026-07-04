@@ -11,6 +11,7 @@ import java.net.{InetSocketAddress, ServerSocket, Socket, URI}
 import java.net.http.{HttpClient, HttpRequest, HttpResponse}
 import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Path, Paths}
+import javax.net.ssl.{SSLContext, TrustManager, X509TrustManager}
 import scala.jdk.CollectionConverters.*
 
 /** Scenario state for Plane A suites. The interesting per-scenario values (tracked ports, the
@@ -52,6 +53,13 @@ final case class ElapsedMillis(ms: Long)
 /** Whether the last "expecting a transport error" send actually failed at the transport level. */
 final case class TransportOutcome(failed: Boolean)
 
+/** The `rift_requests_total` sum recorded by "the client records the request counter" — the
+  * baseline a later "increased by at least N" delta assertion is computed against. The counter is
+  * cumulative across the shared engine, so only a delta around the scenario's own requests is
+  * meaningful.
+  */
+final case class RequestCounter(total: Long)
+
 /** Result of a timed send that tolerates a transport-level failure (thrown IOException). `error`
   * carries the thrown exception's identity so a failure has a diagnostic trail.
   */
@@ -81,6 +89,29 @@ final case class ConcurrentBurst(
 trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
 
   private val http = HttpClient.newHttpClient()
+
+  // A trust-all X509TrustManager — this is a TEST harness talking to a self-signed conformance
+  // imposter (rift auto-generates the cert; there's no CA to verify against), so skipping
+  // verification here is correct and intentional, never used against a real endpoint.
+  private val trustAllManager: X509TrustManager =
+    new X509TrustManager:
+      def checkClientTrusted(
+          chain: Array[java.security.cert.X509Certificate],
+          authType: String
+      ): Unit = ()
+      def checkServerTrusted(
+          chain: Array[java.security.cert.X509Certificate],
+          authType: String
+      ): Unit = ()
+      def getAcceptedIssuers: Array[java.security.cert.X509Certificate] = Array.empty
+
+  private val insecureSslContext: SSLContext =
+    val ctx = SSLContext.getInstance("TLS")
+    ctx.init(null, Array[TrustManager](trustAllManager), new java.security.SecureRandom())
+    ctx
+
+  private val httpInsecure = HttpClient.newBuilder().sslContext(insecureSslContext).build()
+
   // 4800–4819 are reserved for fixed/verbatim Plane A fixtures (e.g. the defaultForward pair);
   // the dynamic fresh-imposter pool draws from 4820–4899 so the two never collide.
   private val ProbePortLo = 4820
@@ -366,6 +397,16 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
       method: String,
       headers: Map[String, String],
       body: Option[String]
+  ): LastResponse = blockingSendWith(http, url, method, headers, body)
+
+  // Same as `blockingSend` but against an explicit client — lets HTTPS scenarios use
+  // `httpInsecure` (trust-all) while every other send keeps the default verifying client.
+  private def blockingSendWith(
+      client: HttpClient,
+      url: String,
+      method: String,
+      headers: Map[String, String],
+      body: Option[String]
   ): LastResponse =
     val publisher =
       body.map(HttpRequest.BodyPublishers.ofString).getOrElse(HttpRequest.BodyPublishers.noBody)
@@ -377,7 +418,7 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
       .timeout(java.time.Duration.ofSeconds(10))
       .method(method.toUpperCase, publisher)
     headers.foreach((k, v) => builder = builder.header(k, v))
-    val resp = http.send(builder.build(), HttpResponse.BodyHandlers.ofString())
+    val resp = client.send(builder.build(), HttpResponse.BodyHandlers.ofString())
     // HTTP header names are case-insensitive; key by lowercase so lookups are too.
     val hs = resp.headers.map.asScala.map((k, v) => k.toLowerCase -> v.asScala.toList).toMap
     LastResponse(resp.statusCode, resp.body, hs)
@@ -391,13 +432,22 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
       method: String,
       headers: Map[String, String],
       body: Option[String]
+  ): UIO[TransportProbe] = timedProbeWith(http, url, method, headers, body)
+
+  // Same as `timedProbe` but against an explicit client (see `blockingSendWith`).
+  private def timedProbeWith(
+      client: HttpClient,
+      url: String,
+      method: String,
+      headers: Map[String, String],
+      body: Option[String]
   ): UIO[TransportProbe] =
     ZIO.attemptBlocking {
       val t0 = java.lang.System.nanoTime()
       def elapsed = (java.lang.System.nanoTime() - t0) / 1000000L
       try
         TransportProbe(
-          Some(blockingSend(url, method, headers, body)),
+          Some(blockingSendWith(client, url, method, headers, body)),
           elapsed,
           failed = false,
           None
@@ -479,6 +529,84 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
       resp <- httpSend(url, method, pend.headers, pend.body)
       _ <- Stage.put(resp)
     yield ()
+
+  /** Send over HTTPS (via `httpInsecure`, which does not verify the server cert) to a specific
+    * imposter port — for the self-signed-TLS scenario. Mirrors `sendToCurrent`'s staging.
+    */
+  protected def sendHttpsToPort(
+      method: String,
+      path: String,
+      port: Int
+  ): ZIO[RiftHarness, Throwable, Unit] =
+    for
+      host <- ZIO.serviceWith[RiftHarness](_.hostFor(port))
+      pend <- pendingRequest
+      url = s"https://$host:$port$path"
+      _ <- recordCurl(s"${curlOf(method, url, pend)} -k")
+      probe <- timedProbeWith(httpInsecure, url, method, pend.headers, pend.body)
+      _ <- probe.response match
+        case Some(r) => Stage.put(r) *> Stage.put(ElapsedMillis(probe.elapsedMs))
+        case None =>
+          ZIO.fail(
+            new RuntimeException(s"transport failure on $url (unexpected for an HTTPS send)")
+          )
+    yield ()
+
+  /** Assert a cert-VERIFYING client (the default `http`) is rejected by the imposter's self-signed
+    * cert — this is what proves the cert is self-signed, not merely that *some* TLS is spoken. A
+    * verifying client aborts the handshake, which the JDK surfaces as an IOException.
+    */
+  protected def httpsVerificationRejected(
+      path: String,
+      port: Int
+  ): ZIO[RiftHarness, Throwable, Unit] =
+    for
+      host <- ZIO.serviceWith[RiftHarness](_.hostFor(port))
+      url = s"https://$host:$port$path"
+      _ <- recordCurl(s"curl $url   # (cert-verifying; expected to be REJECTED)")
+      probe <- timedProbeWith(http, url, "GET", Map.empty, None)
+      _ <- assertRepro(
+        probe.response.isEmpty,
+        s"expected the self-signed cert to be REJECTED by a verifying client, but $url answered " +
+          s"HTTP ${probe.response.map(_.status).getOrElse("-")}"
+      )
+    yield ()
+
+  // ── metrics (rift#9, feature 09) ───────────────────────────────────────────────────────────
+
+  /** `GET {metricsUrl}/metrics` — the raw Prometheus text exposition. */
+  private def fetchMetricsText: ZIO[RiftHarness, Throwable, String] =
+    for
+      metricsUrl <- ZIO.serviceWith[RiftHarness](_.metricsUrl)
+      resp <- httpSend(s"$metricsUrl/metrics", "GET", Map.empty, None)
+      _ <- assertRepro(
+        resp.status == 200,
+        s"GET $metricsUrl/metrics -> ${resp.status} (expected 200)"
+      )
+    yield resp.body
+
+  /** Sum the value of every `rift_requests_total{...} <n>` line in a Prometheus text exposition.
+    * The metric is registered lazily by the engine — a brand-new engine's `/metrics` has NO
+    * `rift_requests_total` line at all until the first data-plane request lands anywhere on it — so
+    * absent-entirely reads as a legitimate baseline of 0, not an error. Parse failures on lines
+    * that DO exist still fail loudly (a genuinely malformed counter is a real finding).
+    */
+  private def sumRiftRequestsTotal(text: String): IO[Throwable, Double] =
+    // Match the counter series exactly — `rift_requests_total{labels}` or a bare `rift_requests_total `
+    // — so a Prometheus-client sibling like `rift_requests_total_created` can never be summed in.
+    val lines = text.linesIterator
+      .filter(l => l.startsWith("rift_requests_total{") || l.startsWith("rift_requests_total "))
+      .toList
+    if lines.isEmpty then ZIO.succeed(0.0)
+    else
+      ZIO
+        .attempt(lines.map(l => l.trim.split("\\s+").last.toDouble).sum)
+        .mapError(e =>
+          new RuntimeException(s"could not parse rift_requests_total value(s): $lines", e)
+        )
+
+  protected def requestCounterTotal: ZIO[RiftHarness, Throwable, Long] =
+    fetchMetricsText.flatMap(sumRiftRequestsTotal).map(_.toLong)
 
   // ── spaces + FSM admin ops (rift#9) ───────────────────────────────────────────────────────
 
@@ -1094,5 +1222,39 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
     portAnswers(port).flatMap(up =>
       assertRepro(!up, s"expected port $port to be gone after the replace, but it still answers")
     )
+  }
+
+  // ── HTTPS + metrics (rift#9, feature 09) ────────────────────────────────────────────────
+
+  When("the client sends " / string / " " / string / " over HTTPS to port " / int) {
+    (m: String, p: String, port: Int) => sendHttpsToPort(m, p, port)
+  }
+
+  Then("a cert-verifying HTTPS request to port " / int / " at " / string / " is rejected") {
+    (port: Int, path: String) => httpsVerificationRejected(path, port)
+  }
+
+  Then("the metrics endpoint reports at least " / int / " requests") { (n: Int) =>
+    requestCounterTotal.flatMap(total =>
+      assertRepro(total >= n, s"expected metrics rift_requests_total sum >= $n, got $total")
+    )
+  }
+
+  When("the client records the request counter") {
+    requestCounterTotal.flatMap(total => Stage.put(RequestCounter(total)))
+  }
+
+  Then("the request counter increased by at least " / int) { (n: Int) =>
+    for
+      before <- Stage
+        .get[RequestCounter]
+        .mapError(e => new IllegalStateException(s"no recorded request counter ($e)"))
+      after <- requestCounterTotal
+      delta = after - before.total
+      _ <- assertRepro(
+        delta >= n,
+        s"expected the request counter to increase by >= $n, got delta=$delta (before=${before.total}, after=$after)"
+      )
+    yield ()
   }
 }

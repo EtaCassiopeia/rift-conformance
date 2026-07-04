@@ -14,6 +14,7 @@ import java.util.concurrent.TimeUnit
   */
 trait RiftHarness:
   def adminUrl: String
+  def metricsUrl: String
   def hostFor(imposterPort: Int): String
   def tools: RiftTools
   def buildInfo: UIO[RiftBuildInfo]
@@ -56,6 +57,7 @@ object RiftHarnessConfig:
 
 private final class RiftHarnessLive(
     val adminUrl: String,
+    val metricsUrl: String,
     val tools: RiftTools,
     info: RiftBuildInfo
 ) extends RiftHarness:
@@ -77,13 +79,50 @@ object RiftHarness:
     ZLayer.scoped {
       for
         cfg <- RiftHarnessConfig.fromEnv
-        port <- choosePort(cfg.preferredAdminPort)
-        proc <- spawnEngine(cfg, port)
-        url = s"http://localhost:$port"
-        _ <- awaitReady(url, proc)
+        // Bounded retry, always on a *fresh ephemeral* admin port after the first attempt. The
+        // preferred port (2525) can be genuinely unbindable even though our own JVM-side probe
+        // (`choosePort`) reports it free: `ServerSocket` sets SO_REUSEADDR so the probe's transient
+        // bind-and-release succeeds regardless, but a lingering TCP TIME_WAIT on that local port
+        // (left behind by earlier short-lived connections to it — admin API calls, readiness
+        // polling, prior engine instances during rapid repeated test runs) can still make the
+        // engine's own bind fail outright. Retrying with the SAME preferred port would just hit the
+        // same wall every time; only a genuinely different (ephemeral) port sidesteps it. A failed
+        // attempt never lingers: `acquireReadyEngine` force-kills its process on any readiness
+        // failure (the bind-failure mode exits on its own; the timeout-while-alive mode is killed
+        // explicitly there), so a retry starts with the ports actually freed.
+        urls <- acquireReadyEngine(cfg, useFreshAdminPort = false)
+          .catchAll(_ =>
+            acquireReadyEngine(cfg, useFreshAdminPort = true).retry(Schedule.recurs(4))
+          )
+        (url, metricsUrl) = urls
         info <- RiftBuildInfo.fromBuildDir(cfg.buildDir, engineVersion = None)
-      yield RiftHarnessLive(url, RiftTools.fromBuildDir(cfg.buildDir), info)
+      yield RiftHarnessLive(url, metricsUrl, RiftTools.fromBuildDir(cfg.buildDir), info)
     }
+
+  private def acquireReadyEngine(
+      cfg: RiftHarnessConfig,
+      useFreshAdminPort: Boolean
+  ): ZIO[Scope, Throwable, (String, String)] =
+    for
+      port <- if useFreshAdminPort then freePort else choosePort(cfg.preferredAdminPort)
+      metricsPort <- freePort
+      proc <- spawnEngine(cfg, port, metricsPort)
+      url = s"http://localhost:$port"
+      metricsUrl = s"http://localhost:$metricsPort"
+      // Readiness can fail with the engine still ALIVE (a probe times out while the process runs —
+      // e.g. the metrics listener never binds). `spawnEngine`'s finalizer is in the long-lived layer
+      // scope, so it would not run until end-of-run; on a retry that would leave this engine holding
+      // its ports for the whole run (and stack more per retry). Force-kill it *now* on any readiness
+      // failure so the retry starts clean — the deferred finalizer then no-ops on a dead process.
+      _ <-
+        (awaitReady(s"$url/imposters", proc) *>
+          // The metrics HTTP listener can bind measurably later than the admin listener (it binds a
+          // freshly-probed-then-released ephemeral port, which the OS can briefly delay rebinding) —
+          // so "ready" must wait for both, or an immediate metrics probe can race a listener still
+          // coming up.
+          awaitReady(s"$metricsUrl/metrics", proc))
+          .onError(_ => ZIO.attemptBlocking(proc.destroyForcibly()).ignore)
+    yield (url, metricsUrl)
 
   /** Prefer 2525, but fall back to a free port if it is *busy* so a stray engine never wedges the
     * run; `adminUrl` then reflects the port actually chosen. Only a bind failure (IOException)
@@ -108,7 +147,11 @@ object RiftHarness:
       p
     }
 
-  private def spawnEngine(cfg: RiftHarnessConfig, port: Int): ZIO[Scope, Throwable, Process] =
+  private def spawnEngine(
+      cfg: RiftHarnessConfig,
+      port: Int,
+      metricsPort: Int
+  ): ZIO[Scope, Throwable, Process] =
     val binary = cfg.buildDir.resolve("rift-http-proxy").toString
     ZIO
       .acquireRelease(
@@ -117,7 +160,15 @@ object RiftHarness:
           val logFile = Files.createTempFile(s"rift-engine-$port-", ".log").toFile
           logFile.deleteOnExit()
           val pb =
-            new ProcessBuilder(binary, "--port", port.toString, "--allow-injection", "--nologfile")
+            new ProcessBuilder(
+              binary,
+              "--port",
+              port.toString,
+              "--allow-injection",
+              "--nologfile",
+              "--metrics-port",
+              metricsPort.toString
+            )
           pb.directory(cfg.corpusRoot.toFile)
           pb.redirectErrorStream(true)
           pb.redirectOutput(logFile)
@@ -148,11 +199,13 @@ object RiftHarness:
       }
       .map(_._1)
 
-  /** Bounded, blocking readiness probe. Deliberately independent of the ZIO `Clock` (so a shared
-    * layer never hangs under a spec's `TestClock`) and watches the child: if the engine exits early
-    * it fails fast with the exit code instead of retrying connection-refused for the full budget.
+  /** Bounded, blocking readiness probe against `probeUrl` (a full URL — the admin API's
+    * `.../imposters` or the metrics server's `.../metrics`). Deliberately independent of the ZIO
+    * `Clock` (so a shared layer never hangs under a spec's `TestClock`) and watches the child: if
+    * the engine exits early it fails fast with the exit code instead of retrying connection-refused
+    * for the full budget.
     */
-  private def awaitReady(url: String, proc: Process): IO[Throwable, Unit] =
+  private def awaitReady(probeUrl: String, proc: Process): IO[Throwable, Unit] =
     ZIO.attemptBlocking {
       val deadline = java.lang.System.nanoTime + ReadinessBudgetMs * 1000000L
       var ready = false
@@ -160,10 +213,10 @@ object RiftHarness:
       while !ready && java.lang.System.nanoTime < deadline do
         if !proc.isAlive then
           throw new RuntimeException(
-            s"rift-http-proxy exited early (code ${proc.exitValue()}) before the admin API on $url came up"
+            s"rift-http-proxy exited early (code ${proc.exitValue()}) before $probeUrl came up"
           )
         try
-          if probeStatus(s"$url/imposters") == 200 then ready = true
+          if probeStatus(probeUrl) == 200 then ready = true
           else Thread.sleep(ReadinessSpacingMs)
         catch
           case e: Throwable =>
@@ -171,7 +224,7 @@ object RiftHarness:
             Thread.sleep(ReadinessSpacingMs)
       if !ready then
         throw new RuntimeException(
-          s"engine not ready on $url within ${ReadinessBudgetMs}ms",
+          s"engine not ready on $probeUrl within ${ReadinessBudgetMs}ms",
           lastErr
         )
     }
