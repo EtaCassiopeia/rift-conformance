@@ -480,6 +480,125 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
       _ <- Stage.put(resp)
     yield ()
 
+  // ── spaces + FSM admin ops (rift#9) ───────────────────────────────────────────────────────
+
+  /** POST a new stub straight into a space (spaces CRUD, bypassing the fixture). Builds a minimal
+    * `equals path` / `is status+body` stub, matching the shape existing fixtures use.
+    */
+  protected def registerSpaceStub(
+      space: String,
+      path: String,
+      body: String
+  ): ZIO[RiftHarness, Throwable, Unit] =
+    for
+      port <- currentPort
+      admin <- ZIO.serviceWith[RiftHarness](_.adminUrl)
+      stub =
+        s"""{"predicates":[{"equals":{"path":"${jsonEscape(
+            path
+          )}"}}],"responses":[{"is":{"statusCode":200,"body":"${jsonEscape(body)}"}}]}"""
+      resp <- httpSend(
+        s"$admin/imposters/$port/spaces/$space/stubs",
+        "POST",
+        Map("Content-Type" -> "application/json"),
+        Some(stub)
+      )
+      _ <- assertRepro(
+        resp.status == 201,
+        s"POST spaces/$space/stubs -> ${resp.status} (expected 201): ${resp.body}"
+      )
+    yield ()
+
+  /** `GET .../spaces/{space}/stubs` — the `stubs` array's length (spaces CRUD + teardown
+    * isolation).
+    */
+  protected def spaceStubCount(space: String): ZIO[RiftHarness, Throwable, Int] =
+    for
+      port <- currentPort
+      admin <- ZIO.serviceWith[RiftHarness](_.adminUrl)
+      resp <- httpSend(s"$admin/imposters/$port/spaces/$space/stubs", "GET", Map.empty, None)
+      json <- parseAdminJson(resp.body)
+      n <- json match
+        case Json.Obj(fields) =>
+          fields.collectFirst { case ("stubs", Json.Arr(elems)) => elems.length } match
+            case Some(len) => ZIO.succeed(len)
+            case None =>
+              ZIO.fail(
+                new RuntimeException(s"no 'stubs' array in spaces/$space response: ${resp.body}")
+              )
+        case _ =>
+          ZIO.fail(
+            new RuntimeException(s"spaces/$space/stubs response is not a JSON object: ${resp.body}")
+          )
+    yield n
+
+  /** `DELETE .../spaces/{space}` — tear down a space (rift#9 teardown isolation). */
+  protected def tearDownSpace(space: String): ZIO[RiftHarness, Throwable, Unit] =
+    for
+      port <- currentPort
+      admin <- ZIO.serviceWith[RiftHarness](_.adminUrl)
+      resp <- httpSend(s"$admin/imposters/$port/spaces/$space", "DELETE", Map.empty, None)
+      _ <- assertRepro(
+        resp.status == 200,
+        s"DELETE spaces/$space -> ${resp.status} (expected 200): ${resp.body}"
+      )
+    yield ()
+
+  /** `POST .../scenarios/reset` — resets every scenario on the current imposter back to `"Started"`
+    * (rift#311 CAS / concurrent-settle).
+    */
+  protected def resetScenarios: ZIO[RiftHarness, Throwable, Unit] =
+    for
+      port <- currentPort
+      admin <- ZIO.serviceWith[RiftHarness](_.adminUrl)
+      resp <- httpSend(
+        s"$admin/imposters/$port/scenarios/reset",
+        "POST",
+        Map("Content-Type" -> "application/json"),
+        Some("{}")
+      )
+      _ <- assertRepro(
+        resp.status == 200,
+        s"POST scenarios/reset -> ${resp.status} (expected 200): ${resp.body}"
+      )
+    yield ()
+
+  /** `GET .../scenarios[?flowId=...]` — the named scenario's `state`, or `None` if that scenario is
+    * absent from the array (e.g. a flow that was never touched).
+    */
+  protected def scenarioState(
+      name: String,
+      flowId: Option[String]
+  ): ZIO[RiftHarness, Throwable, Option[String]] =
+    for
+      port <- currentPort
+      admin <- ZIO.serviceWith[RiftHarness](_.adminUrl)
+      qs = flowId.fold("")(f => s"?flowId=$f")
+      resp <- httpSend(s"$admin/imposters/$port/scenarios$qs", "GET", Map.empty, None)
+      json <- parseAdminJson(resp.body)
+      state <- json match
+        case Json.Obj(fields) =>
+          fields.collectFirst { case ("scenarios", Json.Arr(elems)) => elems } match
+            case Some(elems) =>
+              ZIO.succeed(elems.collectFirst {
+                case Json.Obj(sf)
+                    if sf.collectFirst { case ("name", Json.Str(n)) => n }.contains(name) =>
+                  sf.collectFirst { case ("state", Json.Str(s)) => s }
+              }.flatten)
+            case None =>
+              ZIO.fail(new RuntimeException(s"no 'scenarios' array in response: ${resp.body}"))
+        case _ =>
+          ZIO.fail(new RuntimeException(s"scenarios response is not a JSON object: ${resp.body}"))
+    yield state
+
+  private def parseAdminJson(body: String): IO[Throwable, Json] =
+    ZIO
+      .fromEither(body.fromJson[Json])
+      .mapError(m => new RuntimeException(s"invalid admin JSON: $m (body=$body)"))
+
+  private def jsonEscape(s: String): String =
+    s.replace("\\", "\\\\").replace("\"", "\\\"")
+
   // ── steps ────────────────────────────────────────────────────────────────────────────────
 
   Given("a fresh imposter from fixture " / string) { (name: String) =>
@@ -627,5 +746,47 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
           assertRepro(code == 200, s"admin API not responsive: GET /imposters -> $code")
         )
     }
+  }
+
+  When(
+    "the client registers a stub in space " / string / " for path " / string / " returning " / string
+  )((space: String, path: String, body: String) => registerSpaceStub(space, path, body))
+
+  Then("space " / string / " has " / int / " stubs") { (space: String, n: Int) =>
+    spaceStubCount(space).flatMap(c =>
+      assertRepro(c == n, s"expected space '$space' to have $n stub(s), got $c")
+    )
+  }
+
+  When("the client tears down space " / string)((space: String) => tearDownSpace(space))
+
+  Then("scenario " / string / " is in state " / string) { (name: String, state: String) =>
+    scenarioState(name, None).flatMap(s =>
+      assertRepro(s.contains(state), s"expected scenario '$name' state '$state', got $s")
+    )
+  }
+
+  Then("scenario " / string / " in space " / string / " is in state " / string) {
+    (name: String, space: String, state: String) =>
+      scenarioState(name, Some(space)).flatMap(s =>
+        assertRepro(
+          s.contains(state),
+          s"expected scenario '$name' in space '$space' state '$state', got $s"
+        )
+      )
+  }
+
+  Then("scenario " / string / " in space " / string / " is untouched") {
+    (name: String, space: String) =>
+      scenarioState(name, Some(space)).flatMap(s =>
+        assertRepro(
+          s.isEmpty || s.contains("Started"),
+          s"expected scenario '$name' in space '$space' to be untouched (absent or 'Started'), got $s"
+        )
+      )
+  }
+
+  When("the client resets scenarios") {
+    resetScenarios
   }
 }

@@ -144,3 +144,21 @@ Features **02–06** are all green under `RIFT_MODE=external`. The 1:1 port audi
 `chk`/`gap`/timing assert in **`conformance.sh`** and the behavioral sections of
 **`conformance-ext.sh`** — each maps to a named scenario above (or a documented drop). Issue **#7**
 is discharged by this feature.
+
+---
+
+## Phase 2 — admin/topology/proxy surface (issue #9)
+
+### `07-spaces-and-fsm.feature` ← ext spaces + rift#311 FSM/CAS — DONE
+
+| Spec item (issue #9) | Plane A scenario | Fixture |
+|----------------------|------------------|---------|
+| per-space vs global stubs (flowIdSource header:X-Mock-Space) | `requests partition by space via the flow-id header, with a global fallback` | `spaces/spaces` |
+| space stub outranks global on same path; unknown space → global | `a space-scoped stub takes precedence over a global stub on the same path` | `spaces/spaces` |
+| spaces admin CRUD (POST/GET /imposters/:port/spaces/:flowId/stubs) | `spaces CRUD — register a stub into a new space, then serve and count it` | `spaces/spaces` |
+| teardown isolation (alpha down, beta+global intact) | `tearing down a space empties its stubs and stops serving, without affecting siblings` (pre-teardown liveness check + admin `0 stubs` + data-plane no-match) | `spaces/spaces` |
+| space×FSM no-bleed | `a scenario stub advances only the flow-id it is addressed with (no cross-space bleed)` | `spaces/spaces` |
+| rift#311 FSM sequential A→B→terminal | `FSM sequential transitions from Started through to the terminal state` | `spaces/fsm` |
+| rift#311 concurrent burst settles to terminal (NOT asserting racy first-state count) | `FSM concurrent settle (rift#311) — a burst always settles to the terminal state` (20-way burst → terminal `two`) | `spaces/fsm` |
+
+Remaining Phase-2 features: `08-admin-surface`, `09-gateway-https-metrics`, `10-proxy-record`, `11-reload`. #9 closes when 07–10 land.
