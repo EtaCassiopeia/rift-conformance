@@ -53,11 +53,12 @@ Feature: Proxy record/replay — proxyOnce, proxyTransparent, proxyAlways chains
     # Prove the query VALUE was captured, not merely the "query" key.
     And the imposter on port 4806 first recorded predicate includes "{\"x\":\"1\"}"
 
-  # Divergence from the mountebank contract, pinned as current behavior: on this engine build a
-  # `predicateGenerators` matcher with `headers:true` records ONLY the path — the request header is
-  # NOT captured into the generated predicate (query IS captured; headers are not). Flips if rift
-  # starts capturing headers.
-  Scenario: predicateGenerators do not capture request headers (current engine behavior)
+  # predicateGenerators capture a named request header into the recorded predicate. NOTE the config
+  # shape: unlike path/method/query (which take a boolean `true`), `headers` takes a per-header
+  # OBJECT — `"headers": {"X-Trace": true}`. rift does NOT honour mountebank's blanket `"headers":
+  # true` (capture-all) shorthand — that form is silently ignored — which is the one genuine
+  # mountebank-compat divergence here (a config-shape gap, not a capture bug).
+  Scenario: predicateGenerators capture a named request header into the recorded predicate
     Given a fresh verbatim imposter from fixture "proxy/headers-upstream"
     And a fresh verbatim imposter from fixture "proxy/headers-proxy"
     When the request header "X-Trace" is "abc123"
@@ -66,5 +67,5 @@ Feature: Proxy record/replay — proxyOnce, proxyTransparent, proxyAlways chains
     And the response body is "H"
     And the imposter on port 4811 has 2 stubs
     And the imposter on port 4811 first recorded predicate includes "/h"
-    And the imposter on port 4811 first recorded predicate excludes "X-Trace"
-    And the imposter on port 4811 first recorded predicate excludes "abc123"
+    And the imposter on port 4811 first recorded predicate includes "X-Trace"
+    And the imposter on port 4811 first recorded predicate includes "abc123"

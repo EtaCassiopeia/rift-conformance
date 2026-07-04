@@ -198,10 +198,12 @@ Harness: `RiftHarness` now spawns the engine with a fresh `--metrics-port` and e
 | proxyTransparent records nothing | `a proxyTransparent proxy forwards the response but records nothing` (settle-then-assert) | `proxy/transparent-{upstream,proxy}` |
 | multi-level proxyAlways chain | `a multi-level proxyAlways chain resolves through every hop` | `proxy/chain-{leaf,mid,top}` |
 | predicateGenerators capture query (VALUE, not just key) | `predicateGenerators can capture the query string` | `proxy/query-{upstream,proxy}` |
-| predicateGenerators + headers — **divergence pinned**: header NOT captured on this build | `predicateGenerators do not capture request headers (current engine behavior)` | `proxy/headers-{upstream,proxy}` |
+| predicateGenerators capture a named request header | `predicateGenerators capture a named request header into the recorded predicate` | `proxy/headers-{upstream,proxy}` |
 
-> Note: `predicateGenerators` with `headers:true` captures ONLY the path on the pinned build — the
-> request header is not recorded into the generated predicate (query IS captured). Pinned as current
-> behavior; flips to an assertion of capture if rift adds header support.
+> Note on config shape: `predicateGenerators.matches` takes booleans for `path`/`method`/`query`
+> but a per-header OBJECT for headers — `"headers": {"X-Trace": true}` — which rift captures
+> correctly. rift does NOT honour mountebank's blanket `"headers": true` (capture-all) shorthand
+> (silently ignored) — the one genuine mountebank-compat divergence, a config-shape gap rather than
+> a capture bug.
 
 ## Phase 2 behavioral surface (issue #9) — COMPLETE ✅ (features 07–10 all green)
