@@ -161,7 +161,7 @@ is discharged by this feature.
 | rift#311 FSM sequential A→B→terminal | `FSM sequential transitions from Started through to the terminal state` | `spaces/fsm` |
 | rift#311 concurrent burst settles to terminal (NOT asserting racy first-state count) | `FSM concurrent settle (rift#311) — a burst always settles to the terminal state` (20-way burst → terminal `two`) | `spaces/fsm` |
 
-Remaining Phase-2 features: `09-gateway-https-metrics`, `10-proxy-record`, `11-reload`. #9 closes when 07–10 land.
+Remaining Phase-2 features: `10-proxy-record`, `11-reload`. #9 closes when 07–10 land.
 
 ### `08-admin-surface.feature` ← ext admin surface + rift#190 flow-state — DONE
 
@@ -175,3 +175,16 @@ Remaining Phase-2 features: `09-gateway-https-metrics`, `10-proxy-record`, `11-r
 | flow-state KV lifecycle + 404 + cross-flow isolation (rift#190) | `flow-state KV full lifecycle — set, get, delete, then 404` (+ f2 isolation) | `admin/base` |
 | PUT /imposters atomic swap (valid) | `a valid PUT /imposters atomically swaps the whole imposter set` | `admin/pre-existing`, `admin/replace-batch` |
 | PUT /imposters validate-then-swap (invalid → 400, old kept, rejected port never bound) | `an invalid PUT /imposters batch is rejected and the previous set is untouched` | `admin/pre-existing` |
+
+### `09-gateway-https-metrics.feature` ← conformance gateway/https + ext metrics — DONE
+
+| Spec item (issue #9) | Plane A scenario | Fixture |
+|----------------------|------------------|---------|
+| `/__rift/:port/<path>` single-port gateway | `the single-port gateway routes to the addressed imposter` | `gateway/services` |
+| binary `_mode` (base64-decoded on the wire) | `a binary-mode response body is base64-decoded on the wire` | `gateway/services` |
+| HTTPS self-signed (TLS client no-verify) + verifying client rejected | `an HTTPS imposter auto-generates a self-signed cert and serves over TLS` | `gateway/secure` |
+| `_rift.metrics` counter on the DEDICATED metrics port (not admin) | `the metrics endpoint counts data-plane requests` (delta: +3 after 3 requests) | `gateway/services` |
+
+Harness: `RiftHarness` now spawns the engine with a fresh `--metrics-port` and exposes `metricsUrl`
+(the metrics listener is a separate port from the admin API, per the old `conformance-ext.sh`
+`METRICS_URL` note); a trust-all `HttpClient` (confined to the HTTPS send) drives the self-signed leg.
