@@ -78,6 +78,14 @@ final case class ConcurrentBurst(
     fiber: Fiber.Runtime[Nothing, List[TransportProbe]]
 )
 
+/** Set by "the engine is started with the reload config file" (rift#316, feature 11) so
+  * `afterScenario` knows to call `RiftHarness#revertEngine` — reverting the shared engine back to
+  * plain is mandatory even when an assertion fails mid-scenario, but calling `revertEngine` on
+  * EVERY scenario (it would just no-op) would add a pointless harness round-trip to the whole
+  * suite, hence the flag.
+  */
+final case class ReloadActive(active: Boolean)
+
 /** Shared Plane A step backbone. Mix into a `ZIOSteps[RiftHarness, S]` suite. Steps talk **directly
   * to the admin API and the imposter ports** — `MockControl` appears nowhere, which is what keeps
   * Plane A an independent oracle (a red here is an engine/tool finding, never a library bug).
@@ -132,6 +140,21 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
             .ignore
         }
       }
+    }
+  }
+
+  // Revert the shared engine to plain if this scenario swapped in a --configfile engine (rift#316,
+  // feature 11) — MUST run even when an assertion failed mid-scenario, or every later suite would
+  // keep running against the reload scenario's isolated 2-imposter config. URIO hook, same
+  // swallow-but-log posture as the imposter cleanup above.
+  afterScenario {
+    Stage.get[ReloadActive].orElseSucceed(ReloadActive(false)).flatMap { ra =>
+      ZIO
+        .serviceWithZIO[RiftHarness](_.revertEngine)
+        .tapError(e => ZIO.logWarning(s"reload-engine revert failed: ${e.getMessage}"))
+        .ignore
+        .when(ra.active)
+        .unit
     }
   }
 
@@ -1388,5 +1411,112 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
       imposterStubCountAfterSettle(port).flatMap(c =>
         assertRepro(c == n, s"expected imposter on port $port to STILL have $n stub(s), got $c")
       )
+  }
+
+  // ── reload (rift#316, feature 11) ────────────────────────────────────────────────────────
+
+  // A controlled 2-imposter configfile: one records requests (runtime state that must survive an
+  // incremental reload), one is static — mirrors scripts/conformance-reload.sh exactly.
+  private val reloadConfigJson: String =
+    """{"imposters":[""" +
+      """{"port":4870,"protocol":"http","recordRequests":true,"stubs":[""" +
+      """{"predicates":[{"equals":{"path":"/a"}}],""" +
+      """"responses":[{"is":{"statusCode":200,"body":"A"}}]}]},""" +
+      """{"port":4871,"protocol":"http","stubs":[""" +
+      """{"predicates":[{"equals":{"path":"/b"}}],""" +
+      """"responses":[{"is":{"statusCode":200,"body":"B"}}]}]}""" +
+      """]}"""
+
+  /** `GET {admin}/imposters/{port}` -> `numberOfRequests` — unlike `recordedRequestCount` (which
+    * reads the scenario's "current" imposter via `Stage[CurrentPort]`), the reload configfile's
+    * imposters are never posted through `postImposterFromFixture`, so they target an explicit port.
+    */
+  private def numberOfRequests(port: Int): ZIO[RiftHarness, Throwable, Int] =
+    for
+      admin <- ZIO.serviceWith[RiftHarness](_.adminUrl)
+      resp <- httpSend(s"$admin/imposters/$port", "GET", Map.empty, None)
+      _ <- assertRepro(
+        resp.status == 200,
+        s"GET imposters/$port -> ${resp.status} (expected 200): ${resp.body}"
+      )
+      json <- parseAdminJson(resp.body)
+      n <- json match
+        case Json.Obj(fields) =>
+          fields.collectFirst { case ("numberOfRequests", Json.Num(v)) => v.intValue } match
+            case Some(v) => ZIO.succeed(v)
+            case None =>
+              ZIO.fail(new RuntimeException(s"no 'numberOfRequests' field: ${resp.body}"))
+        case _ =>
+          ZIO.fail(
+            new RuntimeException(s"imposters/$port response is not a JSON object: ${resp.body}")
+          )
+    yield n
+
+  /** `POST {admin}/admin/reload` (no body) — stashes the change-report response as the scenario's
+    * `lastResponse` so the existing "the response body is"/status steps and the report-shape
+    * asserts below can all read it the same way.
+    */
+  private def reload: ZIO[RiftHarness, Throwable, Unit] =
+    for
+      admin <- ZIO.serviceWith[RiftHarness](_.adminUrl)
+      resp <- httpSend(s"$admin/admin/reload", "POST", Map.empty, None)
+      _ <- assertRepro(
+        resp.status == 200,
+        s"POST admin/reload -> ${resp.status} (expected 200): ${resp.body}"
+      )
+      _ <- Stage.put(resp)
+    yield ()
+
+  /** The length of the named top-level array (`created`/`deleted`/`replaced`/`stubPatched`) in the
+    * last reload change-report response.
+    */
+  private def reloadReportArrayLength(field: String): ZIO[Any, Throwable, Int] =
+    for
+      r <- lastResponse
+      json <- parseAdminJson(r.body)
+      n <- json match
+        case Json.Obj(fields) =>
+          fields.collectFirst { case (`field`, Json.Arr(elems)) => elems.length } match
+            case Some(len) => ZIO.succeed(len)
+            case None =>
+              ZIO.fail(new RuntimeException(s"no '$field' array in reload report: ${r.body}"))
+        case _ =>
+          ZIO.fail(new RuntimeException(s"reload report is not a JSON object: ${r.body}"))
+    yield n
+
+  Given("the engine is started with the reload config file") {
+    ZIO.serviceWithZIO[RiftHarness](_.startReloadConfig(reloadConfigJson)) *>
+      Stage.put(ReloadActive(true))
+  }
+
+  Then("imposter " / int / " has recorded " / int / " requests") { (port: Int, n: Int) =>
+    numberOfRequests(port).flatMap(c =>
+      assertRepro(c == n, s"expected imposter $port to have recorded $n request(s), got $c")
+    )
+  }
+
+  When("the engine reloads its configuration") {
+    reload
+  }
+
+  Then("the reload report " / string / " " / int / " imposters") { (field: String, n: Int) =>
+    reloadReportArrayLength(field).flatMap(c =>
+      assertRepro(c == n, s"expected reload report '$field' to have length $n, got $c")
+    )
+  }
+
+  Then("the reload report exposes all four change fields") {
+    for
+      r <- lastResponse
+      json <- parseAdminJson(r.body)
+      keys = json match
+        case Json.Obj(fields) => fields.map(_._1).toSet
+        case _ => Set.empty[String]
+      required = Set("created", "replaced", "stubPatched", "deleted")
+      _ <- assertRepro(
+        required.subsetOf(keys),
+        s"expected reload report to expose $required, got keys=$keys (body=${r.body})"
+      )
+    yield ()
   }
 }

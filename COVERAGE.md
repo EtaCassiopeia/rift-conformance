@@ -161,7 +161,7 @@ is discharged by this feature.
 | rift#311 FSM sequential A→B→terminal | `FSM sequential transitions from Started through to the terminal state` | `spaces/fsm` |
 | rift#311 concurrent burst settles to terminal (NOT asserting racy first-state count) | `FSM concurrent settle (rift#311) — a burst always settles to the terminal state` (20-way burst → terminal `two`) | `spaces/fsm` |
 
-Remaining Phase-2 feature: `11-reload` (issue #10). #9 closes with feature 10.
+#9 closed with feature 10; `11-reload` (issue #10) below completes Phase-2.
 
 ### `08-admin-surface.feature` ← ext admin surface + rift#190 flow-state — DONE
 
@@ -206,4 +206,22 @@ Harness: `RiftHarness` now spawns the engine with a fresh `--metrics-port` and e
 > (silently ignored) — the one genuine mountebank-compat divergence, a config-shape gap rather than
 > a capture bug.
 
-## Phase 2 behavioral surface (issue #9) — COMPLETE ✅ (features 07–10 all green)
+### `11-reload.feature` ← conformance-reload.sh (rift#316) — DONE (issue #10)
+
+| Shell assert (conformance-reload.sh) | Plane A step |
+|---|---|
+| 2-imposter configfile (one recordRequests:true) loaded | `Given the engine is started with the reload config file` (via `RiftHarness.startReloadConfig`) |
+| recorded 2 requests pre-reload | `Then imposter 4870 has recorded 2 requests` |
+| reload created nothing (identical config) | `Then the reload report created 0 imposters` |
+| reload deleted nothing | `And the reload report deleted 0 imposters` |
+| report exposes {created,replaced,stubPatched,deleted} | `And the reload report exposes all four change fields` |
+| recorded state preserved across reload (rift#316) | `And imposter 4870 has recorded 2 requests` (still 2, post-reload) |
+| both imposters still serve post-reload | `GET /a`→"A", `GET /b`→"B" |
+
+> Harness: `RiftHarness` is now engine-restartable in place — `withConfigFile` / `startReloadConfig`
+> swap in a `--configfile` engine on the same admin port and revert to a plain engine via an
+> `afterScenario` hook (mandatory even on a failed assertion). A single `engineRef`-based layer
+> finalizer reaps whichever engine is current at run end. `conformance-reload.sh` retirement is
+> deferred to #11.
+
+## Phase 2 admin/topology/proxy/reload surface — COMPLETE ✅ (features 07–11 all green)
