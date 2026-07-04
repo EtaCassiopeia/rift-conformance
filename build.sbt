@@ -35,3 +35,7 @@ Test / parallelExecution := false
 // Plane A consistency gate (feature 01). The parity checkpoint (#6) and future retirements run this
 // on the same build as the shell gate. (The full alias set — run-all, mock legs — lands in #15.)
 addCommandAlias("engineGate", "testOnly samples.rift.ConsistencyGateSuite")
+
+// Full Plane A pass (issue #15): every samples.rift.* suite, not just the gate. This is what
+// scripts/conformance-engine.sh and scripts/run-all.sh's "engine (Plane A)" layer invoke.
+addCommandAlias("engineConformance", "testOnly samples.rift.*")
