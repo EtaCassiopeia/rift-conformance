@@ -925,6 +925,99 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
       )
     yield ()
 
+  // ── proxy record/replay (rift#9, feature 10) ────────────────────────────────────────────
+
+  /** `GET {admin}/imposters/{port}` — the `stubs` array's length. Used to observe the Mountebank-
+    * style proxy record/replay contract: a `proxyOnce` (or `proxyAlways`) stub carrying
+    * `predicateGenerators` PREPENDS a recorded stub after the first data-plane request lands; a
+    * `proxyTransparent` stub — or a `proxyOnce` stub with no `predicateGenerators` — never does.
+    */
+  protected def imposterStubCount(port: Int): ZIO[RiftHarness, Throwable, Int] =
+    for
+      admin <- ZIO.serviceWith[RiftHarness](_.adminUrl)
+      resp <- httpSend(s"$admin/imposters/$port", "GET", Map.empty, None)
+      _ <- assertRepro(
+        resp.status == 200,
+        s"GET imposters/$port -> ${resp.status} (expected 200): ${resp.body}"
+      )
+      json <- parseAdminJson(resp.body)
+      n <- json match
+        case Json.Obj(fields) =>
+          fields.collectFirst { case ("stubs", Json.Arr(elems)) => elems.length } match
+            case Some(len) => ZIO.succeed(len)
+            case None =>
+              ZIO.fail(
+                new RuntimeException(s"no 'stubs' array in imposters/$port response: ${resp.body}")
+              )
+        case _ =>
+          ZIO.fail(
+            new RuntimeException(s"imposters/$port response is not a JSON object: ${resp.body}")
+          )
+    yield n
+
+  /** Proxy recording is asynchronous relative to the response reaching the client: the recorded
+    * stub can land a beat after the response returns. Poll `imposterStubCount` (spaced 100ms, up to
+    * ~1.4s) rather than a single fixed sleep, so the common case (the record lands almost
+    * immediately) doesn't pay a flat delay, while a genuinely slow engine still gets a fair chance
+    * to settle before the assertion reports the count it actually saw.
+    */
+  private def imposterStubCountSettled(port: Int, expected: Int): ZIO[RiftHarness, Throwable, Int] =
+    def loop(remaining: Int): ZIO[RiftHarness, Throwable, Int] =
+      imposterStubCount(port).flatMap { n =>
+        if n == expected || remaining <= 0 then ZIO.succeed(n)
+        else Clock.sleep(100.millis) *> loop(remaining - 1)
+      }
+    loop(14)
+
+  /** For the NEGATIVE ("records nothing") cases: the poll-until-match `imposterStubCountSettled`
+    * short-circuits immediately when the count already equals the expected value, so it can't prove
+    * a stub *doesn't* get recorded a beat later. Wait out the full settle window first, THEN read —
+    * so a regression that DOES record (async) is actually caught.
+    */
+  protected def imposterStubCountAfterSettle(port: Int): ZIO[RiftHarness, Throwable, Int] =
+    Clock.sleep(1500.millis) *> imposterStubCount(port)
+
+  /** The first stub's `predicates` array, serialized back to compact JSON — for asserting the shape
+    * of a proxy-RECORDED predicate (e.g. it should include `"path":"/svc"` and `"method":"GET"`).
+    * Falls back to the whole first stub if `predicates` is absent (shouldn't happen for a recorded
+    * stub, but keeps the helper honest about what it actually saw rather than throwing).
+    */
+  private def firstStubPredicatesJson(port: Int): ZIO[RiftHarness, Throwable, String] =
+    for
+      admin <- ZIO.serviceWith[RiftHarness](_.adminUrl)
+      resp <- httpSend(s"$admin/imposters/$port", "GET", Map.empty, None)
+      _ <- assertRepro(
+        resp.status == 200,
+        s"GET imposters/$port -> ${resp.status} (expected 200): ${resp.body}"
+      )
+      json <- parseAdminJson(resp.body)
+      firstStub: Json <- json match
+        case Json.Obj(fields) =>
+          fields.collectFirst { case ("stubs", Json.Arr(elems)) => elems } match
+            case Some(elems) if elems.nonEmpty => ZIO.succeed(elems.head)
+            case Some(_) => ZIO.fail(new RuntimeException(s"imposters/$port has no stubs"))
+            case None =>
+              ZIO.fail(
+                new RuntimeException(s"no 'stubs' array in imposters/$port response: ${resp.body}")
+              )
+        case _ =>
+          ZIO.fail(
+            new RuntimeException(s"imposters/$port response is not a JSON object: ${resp.body}")
+          )
+      predicates: Json = firstStub match
+        case Json.Obj(sf) =>
+          sf.collectFirst { case ("predicates", p @ Json.Arr(_)) => p }.getOrElse(firstStub)
+        case other => other
+    yield predicates.toJson
+
+  /** Tear down an imposter mid-scenario (distinct from the automatic `afterScenario` cleanup) —
+    * used by the proxyOnce record/replay scenario to prove the recorded stub replays without the
+    * upstream still running. A 404 (already gone) is swallowed inside `deleteImposter` itself; any
+    * other non-2xx surfaces here as a real failure.
+    */
+  protected def tearDownImposter(port: Int): ZIO[RiftHarness, Throwable, Unit] =
+    ZIO.serviceWithZIO[RiftHarness](h => deleteImposter(h.adminUrl, port))
+
   // ── steps ────────────────────────────────────────────────────────────────────────────────
 
   Given("a fresh imposter from fixture " / string) { (name: String) =>
@@ -1256,5 +1349,44 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
         s"expected the request counter to increase by >= $n, got delta=$delta (before=${before.total}, after=$after)"
       )
     yield ()
+  }
+
+  // ── proxy record/replay steps (rift#9, feature 10) ──────────────────────────────────────
+
+  Then("the imposter on port " / int / " has " / int / " stubs") { (port: Int, n: Int) =>
+    imposterStubCountSettled(port, n).flatMap(c =>
+      assertRepro(c == n, s"expected imposter on port $port to have $n stub(s), got $c")
+    )
+  }
+
+  When("the client tears down the imposter on port " / int) { (port: Int) =>
+    tearDownImposter(port)
+  }
+
+  Then("the imposter on port " / int / " first recorded predicate includes " / string) {
+    (port: Int, substr: String) =>
+      firstStubPredicatesJson(port).flatMap(json =>
+        assertRepro(
+          json.contains(substr),
+          s"expected imposter $port's first stub predicates to include '$substr', got: $json"
+        )
+      )
+  }
+
+  Then("the imposter on port " / int / " first recorded predicate excludes " / string) {
+    (port: Int, substr: String) =>
+      firstStubPredicatesJson(port).flatMap(json =>
+        assertRepro(
+          !json.contains(substr),
+          s"expected imposter $port's first stub predicates to EXCLUDE '$substr', got: $json"
+        )
+      )
+  }
+
+  Then("the imposter on port " / int / " still has " / int / " stubs after recording settles") {
+    (port: Int, n: Int) =>
+      imposterStubCountAfterSettle(port).flatMap(c =>
+        assertRepro(c == n, s"expected imposter on port $port to STILL have $n stub(s), got $c")
+      )
   }
 }

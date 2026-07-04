@@ -161,7 +161,7 @@ is discharged by this feature.
 | rift#311 FSM sequential A→B→terminal | `FSM sequential transitions from Started through to the terminal state` | `spaces/fsm` |
 | rift#311 concurrent burst settles to terminal (NOT asserting racy first-state count) | `FSM concurrent settle (rift#311) — a burst always settles to the terminal state` (20-way burst → terminal `two`) | `spaces/fsm` |
 
-Remaining Phase-2 features: `10-proxy-record`, `11-reload`. #9 closes when 07–10 land.
+Remaining Phase-2 feature: `11-reload` (issue #10). #9 closes with feature 10.
 
 ### `08-admin-surface.feature` ← ext admin surface + rift#190 flow-state — DONE
 
@@ -188,3 +188,20 @@ Remaining Phase-2 features: `10-proxy-record`, `11-reload`. #9 closes when 07–
 Harness: `RiftHarness` now spawns the engine with a fresh `--metrics-port` and exposes `metricsUrl`
 (the metrics listener is a separate port from the admin API, per the old `conformance-ext.sh`
 `METRICS_URL` note); a trust-all `HttpClient` (confined to the HTTPS send) drives the self-signed leg.
+
+### `10-proxy-record.feature` ← conformance proxy + ext proxy — DONE (closes #9)
+
+| Spec item (issue #9) | Plane A scenario | Fixtures |
+|----------------------|------------------|----------|
+| proxyOnce records → replays (upstream torn down mid-scenario) | `a proxyOnce proxy with predicateGenerators records a replayable stub, then replays it` | `proxy/once-{upstream,proxy}` |
+| recorded stub prepended ONLY with predicateGenerators | `a proxyOnce proxy WITHOUT predicateGenerators does not record a replayable stub` (settle-then-assert) | `proxy/nopg-{upstream,proxy}` |
+| proxyTransparent records nothing | `a proxyTransparent proxy forwards the response but records nothing` (settle-then-assert) | `proxy/transparent-{upstream,proxy}` |
+| multi-level proxyAlways chain | `a multi-level proxyAlways chain resolves through every hop` | `proxy/chain-{leaf,mid,top}` |
+| predicateGenerators capture query (VALUE, not just key) | `predicateGenerators can capture the query string` | `proxy/query-{upstream,proxy}` |
+| predicateGenerators + headers — **divergence pinned**: header NOT captured on this build | `predicateGenerators do not capture request headers (current engine behavior)` | `proxy/headers-{upstream,proxy}` |
+
+> Note: `predicateGenerators` with `headers:true` captures ONLY the path on the pinned build — the
+> request header is not recorded into the generated predicate (query IS captured). Pinned as current
+> behavior; flips to an assertion of capture if rift adds header support.
+
+## Phase 2 behavioral surface (issue #9) — COMPLETE ✅ (features 07–10 all green)
