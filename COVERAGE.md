@@ -161,4 +161,17 @@ is discharged by this feature.
 | rift#311 FSM sequential A→B→terminal | `FSM sequential transitions from Started through to the terminal state` | `spaces/fsm` |
 | rift#311 concurrent burst settles to terminal (NOT asserting racy first-state count) | `FSM concurrent settle (rift#311) — a burst always settles to the terminal state` (20-way burst → terminal `two`) | `spaces/fsm` |
 
-Remaining Phase-2 features: `08-admin-surface`, `09-gateway-https-metrics`, `10-proxy-record`, `11-reload`. #9 closes when 07–10 land.
+Remaining Phase-2 features: `09-gateway-https-metrics`, `10-proxy-record`, `11-reload`. #9 closes when 07–10 land.
+
+### `08-admin-surface.feature` ← ext admin surface + rift#190 flow-state — DONE
+
+| Spec item (issue #9) | Plane A scenario | Fixture |
+|----------------------|------------------|---------|
+| stub by-id GET (+ 404 for unknown id, + content check) | `a stub is retrievable by its explicit id; an unknown id 404s` | `admin/base` |
+| enable/disable → 503/200 | `disabling an imposter 503s the data plane; enabling it restores 200` | `admin/base` |
+| X-Rift-Debug introspection | `X-Rift-Debug returns diagnostics instead of the normal stub response` | `admin/base` |
+| ?match= header filter + stacked AND-semantics | `savedRequests ?match= filters by header, and stacked match= clauses AND together` | `admin/base` |
+| targeted savedRequests delete keeps non-matching | `a targeted savedRequests delete removes only the matching requests` | `admin/base` |
+| flow-state KV lifecycle + 404 + cross-flow isolation (rift#190) | `flow-state KV full lifecycle — set, get, delete, then 404` (+ f2 isolation) | `admin/base` |
+| PUT /imposters atomic swap (valid) | `a valid PUT /imposters atomically swaps the whole imposter set` | `admin/pre-existing`, `admin/replace-batch` |
+| PUT /imposters validate-then-swap (invalid → 400, old kept, rejected port never bound) | `an invalid PUT /imposters batch is rejected and the previous set is untouched` | `admin/pre-existing` |

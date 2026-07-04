@@ -599,6 +599,204 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
   private def jsonEscape(s: String): String =
     s.replace("\\", "\\\\").replace("\"", "\\\"")
 
+  // ── admin surface (rift#9, feature 08): stub-by-id, enable/disable, savedRequests ?match=,
+  //    flow-state KV, and the atomic PUT /imposters validate-then-swap ─────────────────────
+
+  /** `GET .../stubs/by-id/{id}` — the raw response (200 with the stub, or 404). */
+  private def stubById(id: String): ZIO[RiftHarness, Throwable, LastResponse] =
+    for
+      port <- currentPort
+      admin <- ZIO.serviceWith[RiftHarness](_.adminUrl)
+      resp <- httpSend(s"$admin/imposters/$port/stubs/by-id/$id", "GET", Map.empty, None)
+    yield resp
+
+  /** `POST .../enable` | `.../disable` on the current imposter. */
+  private def setImposterEnabled(enabled: Boolean): ZIO[RiftHarness, Throwable, Unit] =
+    for
+      port <- currentPort
+      admin <- ZIO.serviceWith[RiftHarness](_.adminUrl)
+      verb = if enabled then "enable" else "disable"
+      resp <- httpSend(s"$admin/imposters/$port/$verb", "POST", Map.empty, None)
+      _ <- assertRepro(
+        resp.status == 200,
+        s"POST imposters/$port/$verb -> ${resp.status} (expected 200): ${resp.body}"
+      )
+      // Belt-and-braces: give the engine a moment to flip the enabled bit before the next
+      // data-plane probe — mirrors the manual conformance script's `sleep 0.1` after enable/disable.
+      _ <- Clock.sleep(100.millis)
+    yield ()
+
+  /** `GET .../requests[?match=header:h=v&match=header:h2=v2]` — count of recorded requests (the
+    * body is a bare JSON array, or `{requests:[...]}` on some engine versions — handle both).
+    */
+  private def recordedRequestCount(
+      matches: List[(String, String)]
+  ): ZIO[RiftHarness, Throwable, Int] =
+    for
+      port <- currentPort
+      admin <- ZIO.serviceWith[RiftHarness](_.adminUrl)
+      qs = matches match
+        case Nil => ""
+        case xs => "?" + xs.map((h, v) => s"match=header:${urlEnc(h)}=${urlEnc(v)}").mkString("&")
+      resp <- httpSend(s"$admin/imposters/$port/requests$qs", "GET", Map.empty, None)
+      _ <- assertRepro(
+        resp.status == 200,
+        s"GET imposters/$port/requests$qs -> ${resp.status} (expected 200): ${resp.body}"
+      )
+      json <- parseAdminJson(resp.body)
+      n <- json match
+        case Json.Arr(elems) => ZIO.succeed(elems.length)
+        case Json.Obj(fields) =>
+          fields.collectFirst { case ("requests", Json.Arr(elems)) => elems.length } match
+            case Some(len) => ZIO.succeed(len)
+            case None =>
+              ZIO.fail(new RuntimeException(s"no 'requests' array in response: ${resp.body}"))
+        case _ =>
+          ZIO.fail(new RuntimeException(s"/requests response is not an array/object: ${resp.body}"))
+    yield n
+
+  /** `DELETE .../requests?match=header:h=v` — deletes only the matching recorded requests. */
+  private def deleteRecordedRequests(
+      header: String,
+      value: String
+  ): ZIO[RiftHarness, Throwable, Unit] =
+    for
+      port <- currentPort
+      admin <- ZIO.serviceWith[RiftHarness](_.adminUrl)
+      resp <- httpSend(
+        s"$admin/imposters/$port/requests?match=header:${urlEnc(header)}=${urlEnc(value)}",
+        "DELETE",
+        Map.empty,
+        None
+      )
+      _ <- assertRepro(
+        resp.status == 200,
+        s"DELETE imposters/$port/requests?match=header:$header=$value -> ${resp.status} (expected 200): ${resp.body}"
+      )
+    yield ()
+
+  private def urlEnc(s: String): String =
+    java.net.URLEncoder.encode(s, StandardCharsets.UTF_8)
+
+  /** `PUT .../admin/imposters/{port}/flow-state/{flowId}/{key}` body `{"value":"..."}` — note the
+    * `/admin/` prefix, distinct from every other admin-surface path in this trait.
+    */
+  private def putFlowState(
+      flowId: String,
+      key: String,
+      value: String
+  ): ZIO[RiftHarness, Throwable, Unit] =
+    for
+      port <- currentPort
+      admin <- ZIO.serviceWith[RiftHarness](_.adminUrl)
+      body = s"""{"value":"${jsonEscape(value)}"}"""
+      resp <- httpSend(
+        s"$admin/admin/imposters/$port/flow-state/$flowId/$key",
+        "PUT",
+        Map("Content-Type" -> "application/json"),
+        Some(body)
+      )
+      _ <- assertRepro(
+        resp.status == 200,
+        s"PUT admin/imposters/$port/flow-state/$flowId/$key -> ${resp.status} (expected 200): ${resp.body}"
+      )
+    yield ()
+
+  /** Raw `GET .../admin/imposters/{port}/flow-state/{flowId}/{key}` response (200 + value, or 404).
+    */
+  private def getFlowState(flowId: String, key: String): ZIO[RiftHarness, Throwable, LastResponse] =
+    for
+      port <- currentPort
+      admin <- ZIO.serviceWith[RiftHarness](_.adminUrl)
+      resp <- httpSend(
+        s"$admin/admin/imposters/$port/flow-state/$flowId/$key",
+        "GET",
+        Map.empty,
+        None
+      )
+    yield resp
+
+  private def deleteFlowState(flowId: String, key: String): ZIO[RiftHarness, Throwable, Unit] =
+    for
+      port <- currentPort
+      admin <- ZIO.serviceWith[RiftHarness](_.adminUrl)
+      resp <- httpSend(
+        s"$admin/admin/imposters/$port/flow-state/$flowId/$key",
+        "DELETE",
+        Map.empty,
+        None
+      )
+      _ <- assertRepro(
+        resp.status == 200,
+        s"DELETE admin/imposters/$port/flow-state/$flowId/$key -> ${resp.status} (expected 200): ${resp.body}"
+      )
+    yield ()
+
+  /** The `port`s declared inside a `{"imposters":[...]}` batch — so a `PUT /imposters` replace can
+    * track every survivor for `afterScenario` cleanup (the replace itself isn't auto-tracked; it
+    * doesn't go through `postImposterFromFixture`).
+    */
+  private def portsOfBatch(raw: String): Either[String, List[Int]] =
+    raw.fromJson[Json].left.map(m => s"batch JSON parse: $m").flatMap {
+      case Json.Obj(fields) =>
+        fields.collectFirst { case ("imposters", Json.Arr(elems)) => elems } match
+          case Some(elems) =>
+            Right(
+              elems
+                .collect { case Json.Obj(f) =>
+                  f.collectFirst { case ("port", Json.Num(n)) => n.intValue }
+                }
+                .flatten
+                .toList
+            )
+          case None => Left("no top-level 'imposters' array")
+      case _ => Left("batch root is not a JSON object")
+    }
+
+  /** `PUT {admin}/imposters` with a fixture's raw `{"imposters":[...]}` body — atomic
+    * validate-then-swap of the WHOLE imposter set. Tracks every surviving port for cleanup.
+    */
+  private def replaceAllImpostersWithFixture(name: String): ZIO[RiftHarness, Throwable, Unit] =
+    for
+      raw <- loadFixture(name)
+      ports <- ZIO.fromEither(portsOfBatch(raw)).mapError(new RuntimeException(_))
+      admin <- ZIO.serviceWith[RiftHarness](_.adminUrl)
+      resp <- httpSend(
+        s"$admin/imposters",
+        "PUT",
+        Map("Content-Type" -> "application/json"),
+        Some(raw)
+      )
+      _ <- assertRepro(
+        resp.status == 200,
+        s"PUT /imposters (fixture $name) -> ${resp.status} (expected 200): ${resp.body}"
+      )
+      _ <- ZIO.foreachDiscard(ports)(track)
+    yield ()
+
+  // A response-level `_rift.script` with intentionally broken rhai syntax — the engine's
+  // validate-then-swap must reject the WHOLE batch with 400 and leave the previous set untouched.
+  private val invalidImposterBatch: String =
+    """{"imposters":[{"port":4810,"protocol":"http","stubs":[{"predicates":[{"equals":{"path":"/x"}}],"responses":[{"_rift":{"script":{"engine":"rhai","code":"fn should_inject(request, flow_store) { broken @#$ syntax"}}}]}]}]}"""
+
+  /** `PUT {admin}/imposters` with a batch containing an invalid response script — must 400 and
+    * leave the previous imposter set untouched (validate-then-swap, never partially applied).
+    */
+  private def replaceAllImpostersInvalid: ZIO[RiftHarness, Throwable, Unit] =
+    for
+      admin <- ZIO.serviceWith[RiftHarness](_.adminUrl)
+      resp <- httpSend(
+        s"$admin/imposters",
+        "PUT",
+        Map("Content-Type" -> "application/json"),
+        Some(invalidImposterBatch)
+      )
+      _ <- assertRepro(
+        resp.status == 400,
+        s"PUT /imposters (invalid batch) -> ${resp.status} (expected 400): ${resp.body}"
+      )
+    yield ()
+
   // ── steps ────────────────────────────────────────────────────────────────────────────────
 
   Given("a fresh imposter from fixture " / string) { (name: String) =>
@@ -788,5 +986,113 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
 
   When("the client resets scenarios") {
     resetScenarios
+  }
+
+  // ── admin surface steps (rift#9, feature 08) ────────────────────────────────────────────
+
+  Then("the stub with id " / string / " is retrievable") { (id: String) =>
+    stubById(id).flatMap(resp =>
+      assertRepro(
+        resp.status == 200,
+        s"stubs/by-id/$id -> ${resp.status} (expected 200): ${resp.body}"
+      )
+    )
+  }
+
+  Then("the stub with id " / string / " includes " / string) { (id: String, substr: String) =>
+    stubById(id).flatMap(resp =>
+      assertRepro(
+        resp.status == 200 && resp.body.contains(substr),
+        s"stubs/by-id/$id (status ${resp.status}) did not include '$substr': ${resp.body}"
+      )
+    )
+  }
+
+  Then("no stub has id " / string) { (id: String) =>
+    stubById(id).flatMap(resp =>
+      assertRepro(
+        resp.status == 404,
+        s"stubs/by-id/$id -> ${resp.status} (expected 404): ${resp.body}"
+      )
+    )
+  }
+
+  When("the client disables the imposter")(setImposterEnabled(false))
+  When("the client enables the imposter")(setImposterEnabled(true))
+
+  Then("recorded requests total " / int) { (n: Int) =>
+    recordedRequestCount(Nil).flatMap(c =>
+      assertRepro(c == n, s"expected $n recorded request(s), got $c")
+    )
+  }
+
+  Then("recorded requests matching header " / string / " value " / string / " total " / int) {
+    (h: String, v: String, n: Int) =>
+      recordedRequestCount(List(h -> v)).flatMap(c =>
+        assertRepro(c == n, s"expected $n request(s) matching header $h=$v, got $c")
+      )
+  }
+
+  Then(
+    "recorded requests matching header " / string / " value " / string / " and header " / string / " value " / string / " total " / int
+  ) { (h1: String, v1: String, h2: String, v2: String, n: Int) =>
+    recordedRequestCount(List(h1 -> v1, h2 -> v2)).flatMap(c =>
+      assertRepro(c == n, s"expected $n request(s) matching header $h1=$v1 and $h2=$v2, got $c")
+    )
+  }
+
+  When("the client deletes recorded requests matching header " / string / " value " / string) {
+    (h: String, v: String) => deleteRecordedRequests(h, v)
+  }
+
+  When("the client sets flow-state " / string / " in flow " / string / " to " / string) {
+    (key: String, flow: String, value: String) => putFlowState(flow, key, value)
+  }
+
+  Then("flow-state " / string / " in flow " / string / " is " / string) {
+    (key: String, flow: String, value: String) =>
+      for
+        resp <- getFlowState(flow, key)
+        _ <- assertRepro(
+          resp.status == 200,
+          s"GET flow-state $flow/$key -> ${resp.status} (expected 200): ${resp.body}"
+        )
+        json <- parseAdminJson(resp.body)
+        got = json match
+          case Json.Obj(fields) => fields.collectFirst { case ("value", Json.Str(s)) => s }
+          case _ => None
+        _ <- assertRepro(
+          got.contains(value),
+          s"expected flow-state $flow/$key = '$value', got $got (body=${resp.body})"
+        )
+      yield ()
+  }
+
+  When("the client deletes flow-state " / string / " in flow " / string) {
+    (key: String, flow: String) => deleteFlowState(flow, key)
+  }
+
+  Then("flow-state " / string / " in flow " / string / " is absent") {
+    (key: String, flow: String) =>
+      getFlowState(flow, key).flatMap(resp =>
+        assertRepro(
+          resp.status == 404,
+          s"expected 404 for flow-state $flow/$key, got ${resp.status}: ${resp.body}"
+        )
+      )
+  }
+
+  When("the client replaces all imposters with fixture " / string) { (name: String) =>
+    replaceAllImpostersWithFixture(name)
+  }
+
+  When("the client replaces all imposters with an invalid batch") {
+    replaceAllImpostersInvalid
+  }
+
+  Then("the imposter on port " / int / " no longer serves") { (port: Int) =>
+    portAnswers(port).flatMap(up =>
+      assertRepro(!up, s"expected port $port to be gone after the replace, but it still answers")
+    )
   }
 }
