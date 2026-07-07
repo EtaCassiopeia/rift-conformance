@@ -3,18 +3,16 @@ package samples.rift
 import samples.rift.support.*
 import zio.test.*
 
-/** Fast, process-free tests for the RiftTools output parsers — they exercise the failure branches
-  * and the ANSI stripping that the real-tool integration test (RiftToolsSpec) cannot easily force.
+/** Fast, process-free tests for the RiftTools JSON parsers — they exercise the failure branches
+  * (malformed / empty output, panic-on-stderr) that the real-tool integration test (RiftToolsSpec)
+  * cannot easily force.
   */
 object RiftToolsParseSpec extends ZIOSpecDefault:
 
-  private val esc = 27.toChar.toString // ESC, without an invisible byte in the source
-
   def spec = suite("RiftTools parsing")(
-    test("parseLint reads counts + a populated issue from banner-prefixed JSON") {
+    test("parseLint reads counts + a populated issue from the JSON stdout") {
       val out =
-        s"${esc}[36mRift Imposter Linter${esc}[0m\nScanning: /x\n" +
-          """{"issues":[{"severity":"warning","code":"W004","message":"bad","file":"f.json","location":"stubs[0]","suggestion":"fix it"}],"files_checked":15,"errors":0,"warnings":1}"""
+        """{"issues":[{"severity":"warning","code":"W004","message":"bad","file":"f.json","location":"stubs[0]","suggestion":"fix it"}],"files_checked":15,"errors":0,"warnings":1}"""
       val r = RiftTools.parseLint(RiftTools.RawRun(out, "", 0))
       assertTrue(r.isRight) &&
       assertTrue(r.toOption.exists(_.errors == 0)) &&
@@ -29,16 +27,16 @@ object RiftToolsParseSpec extends ZIOSpecDefault:
       assertTrue(r.swap.exists(_.contains("panicked"))) &&
       assertTrue(r.swap.exists(_.contains("exit 101")))
     },
-    test("parseVerify strips ANSI around the label and reads Passed/Failed/Skipped") {
+    test("parseVerify decodes the JSON summary (passed/failed/skipped; extra fields ignored)") {
       val out =
-        s"Verification Summary\n  ${esc}[32mPassed:${esc}[0m  5\n  Failed:  0\n  Skipped: 2\n"
+        """{"failed":0,"imposters":3,"passed":5,"skipped":2,"stubs":9,"tests":7}"""
       val r = RiftTools.parseVerify(RiftTools.RawRun(out, "", 0))
       assertTrue(r.isRight) &&
       assertTrue(r.toOption.exists(_.passed == 5)) &&
       assertTrue(r.toOption.exists(_.failed == 0)) &&
       assertTrue(r.toOption.exists(_.skipped == 2))
     },
-    test("parseVerify fails when the summary is missing") {
+    test("parseVerify fails when the output is not the JSON summary") {
       val r = RiftTools.parseVerify(RiftTools.RawRun("some unrelated output", "boom", 1))
       assertTrue(r.isLeft) && assertTrue(r.swap.exists(_.contains("could not parse")))
     },

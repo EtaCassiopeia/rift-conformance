@@ -30,7 +30,7 @@ final case class LintReport(
     raw: String
 )
 
-/** Parsed rift-verify "Verification Summary". `raw`/`exitCode` preserved for failure messages. */
+/** Parsed `rift-verify -o json` summary. `raw`/`exitCode` preserved for failure messages. */
 final case class VerifyReport(
     passed: Int,
     failed: Int,
@@ -44,18 +44,28 @@ final case class VerifyReport(
   */
 final case class RiftTools(lint: Path, verify: Path):
 
-  /** `rift-lint -o json <path>`. rift-lint prints a coloured banner before the JSON body, so the
-    * output is sliced from its first `{`; counts come from the tool's own summary, not a re-count.
+  /** `rift-lint -o json <path>` — since rift#347 stdout is pure JSON (the banner goes to stderr),
+    * so counts come straight from the tool's own JSON summary.
     */
   def riftLint(path: Path): IO[Throwable, LintReport] =
     runCapture(Command(lint.toString, "-o", "json", path.toString)).flatMap { r =>
       ZIO.fromEither(RiftTools.parseLint(r)).mapError(new RuntimeException(_))
     }
 
-  /** `rift-verify --admin-url <url> --skip-dynamic --verify-dynamic` against a running engine. */
+  /** `rift-verify --admin-url <url> --skip-dynamic --verify-dynamic -o json` against a running
+    * engine — since rift#347 stdout carries only the JSON summary (banner/progress → stderr).
+    */
   def riftVerify(adminUrl: String): IO[Throwable, VerifyReport] =
     runCapture(
-      Command(verify.toString, "--admin-url", adminUrl, "--skip-dynamic", "--verify-dynamic")
+      Command(
+        verify.toString,
+        "--admin-url",
+        adminUrl,
+        "--skip-dynamic",
+        "--verify-dynamic",
+        "-o",
+        "json"
+      )
     ).flatMap { r =>
       ZIO.fromEither(RiftTools.parseVerify(r)).mapError(new RuntimeException(_))
     }
@@ -83,23 +93,21 @@ object RiftTools:
     * folded into the failure message so a tool crash (a panic goes to stderr) is never lost.
     */
   private[rift] def parseLint(r: RawRun): Either[String, LintReport] =
-    val brace = r.stdout.indexOf('{')
-    if brace < 0 then Left(s"rift-lint emitted no JSON${diagnostics(r)}")
-    else
-      r.stdout
-        .substring(brace)
-        .fromJson[LintJson]
-        .left
-        .map(msg => s"unparseable rift-lint JSON: $msg${diagnostics(r)}")
-        .map(j => LintReport(j.errors, j.warnings, j.files_checked, j.issues, r.exitCode, r.stdout))
+    r.stdout
+      .fromJson[LintJson]
+      .left
+      .map(msg => s"unparseable rift-lint JSON: $msg${diagnostics(r)}")
+      .map(j => LintReport(j.errors, j.warnings, j.files_checked, j.issues, r.exitCode, r.stdout))
 
-  /** Pure parse of the rift-verify "Verification Summary" — exposed for fast, process-free tests.
+  /** Pure parse of the `rift-verify -o json` summary (rift#347: JSON on stdout) — exposed for fast,
+    * process-free tests.
     */
   private[rift] def parseVerify(r: RawRun): Either[String, VerifyReport] =
-    val clean = stripAnsi(r.stdout)
-    (count("Passed", clean), count("Failed", clean), count("Skipped", clean)) match
-      case (Some(p), Some(f), Some(s)) => Right(VerifyReport(p, f, s, r.exitCode, r.stdout))
-      case _ => Left(s"could not parse rift-verify summary${diagnostics(r)}")
+    r.stdout
+      .fromJson[VerifyJson]
+      .left
+      .map(msg => s"could not parse rift-verify JSON: $msg${diagnostics(r)}")
+      .map(j => VerifyReport(j.passed, j.failed, j.skipped, r.exitCode, r.stdout))
 
   /** The error-severity findings, one per line as `<file> <code>[@location]` — this is the "names
     * the offending file" contract the consistency gate relies on. Pure, so it is unit-tested.
@@ -125,9 +133,8 @@ object RiftTools:
   private object LintJson:
     given JsonDecoder[LintJson] = DeriveJsonDecoder.gen[LintJson]
 
-  // A real SGR sequence is ESC '[' … 'm'. ESC is written as the regex hex escape \x1b so the
-  // source stays plain ASCII — an embedded raw ESC byte is invisible in editors and diffs.
-  private val ansi = "\\x1b\\[[0-9;]*m".r
-  private def stripAnsi(s: String): String = ansi.replaceAllIn(s, "")
-  private def count(label: String, text: String): Option[Int] =
-    s"(?m)^\\s*$label:\\s*(\\d+)".r.findFirstMatchIn(text).map(_.group(1).toInt)
+  // `rift-verify -o json` emits more fields (imposters, stubs, tests); we only need the tallies,
+  // and zio-json ignores the extras.
+  private final case class VerifyJson(passed: Int, failed: Int, skipped: Int)
+  private object VerifyJson:
+    given JsonDecoder[VerifyJson] = DeriveJsonDecoder.gen[VerifyJson]
