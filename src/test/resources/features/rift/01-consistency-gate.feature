@@ -4,8 +4,8 @@ Feature: Cross-tool consistency — engine, rift-lint, and rift-verify agree on 
   # Rift's admin API exposes no version endpoint, so version coherence is asserted from BUILD_INFO
   # (written by scripts/build-rift.sh) plus co-location of the tool binaries with the engine build.
   @preflight
-  Scenario: Version coherence — the engine, rift-lint and rift-verify are one clean-master build
-    Then BUILD_INFO records a clean-master commit and all three binaries
+  Scenario: Version coherence — the engine, rift-lint and rift-verify are one released build
+    Then BUILD_INFO records a released build and all three binaries
     And the engine, rift-lint and rift-verify binaries match BUILD_INFO
 
   Scenario: The corpus is present and complete

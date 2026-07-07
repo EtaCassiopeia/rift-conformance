@@ -11,7 +11,7 @@ import java.time.Duration as JDuration
 import java.util.concurrent.TimeUnit
 
 /** Owns the engine lifecycle — the one shared seam both attribution planes drive through. External
-  * mode (this issue) spawns a real `rift-http-proxy` child.
+  * mode (this issue) spawns a real `rift` child.
   */
 trait RiftHarness:
   def adminUrl: String
@@ -47,8 +47,8 @@ object RiftHarnessConfig:
   val DefaultAdminPort = 2525
   val DefaultCorpusRoot = "../rift-imposter-samples"
 
-  /** Read config from the environment. `RIFT_BUILD_DIR` is required — it names the clean-master
-    * build produced by scripts/build-rift.sh; there is no safe default for it.
+  /** Read config from the environment. `RIFT_BUILD_DIR` is required — it names the released build
+    * produced by scripts/build-rift.sh; there is no safe default for it.
     */
   val fromEnv: IO[Throwable, RiftHarnessConfig] =
     for
@@ -255,12 +255,11 @@ object RiftHarness:
       p
     }
 
-  /** RAW spawn — starts `rift-http-proxy` with the given ports (and, when present, a
-    * `--configfile`) and registers the same belt-and-braces JVM shutdown hook `layer` always has,
-    * but does NOT wrap the process in `ZIO.acquireRelease`: there is no per-spawn finalizer, so
-    * respawning (reload / revert) never accumulates one. Callers are responsible for reaping the
-    * process they replace via `killProcess` — `layer`'s single scope finalizer reaps whatever is
-    * current at scope-close.
+  /** RAW spawn — starts `rift` with the given ports (and, when present, a `--configfile`) and
+    * registers the same belt-and-braces JVM shutdown hook `layer` always has, but does NOT wrap the
+    * process in `ZIO.acquireRelease`: there is no per-spawn finalizer, so respawning (reload /
+    * revert) never accumulates one. Callers are responsible for reaping the process they replace
+    * via `killProcess` — `layer`'s single scope finalizer reaps whatever is current at scope-close.
     */
   private[support] def rawSpawn(
       cfg: RiftHarnessConfig,
@@ -269,7 +268,7 @@ object RiftHarness:
       configFile: Option[Path]
   ): Task[Process] =
     ZIO.attemptBlocking {
-      val binary = cfg.buildDir.resolve("rift-http-proxy").toString
+      val binary = cfg.buildDir.resolve("rift").toString
       // --nologfile: don't drop an mb.log into the corpus repo (cwd); capture output to a temp file.
       val logFile = Files.createTempFile(s"rift-engine-$port-", ".log").toFile
       logFile.deleteOnExit()
@@ -308,7 +307,7 @@ object RiftHarness:
       proc.destroy()
       if !proc.waitFor(5, TimeUnit.SECONDS) then proc.destroyForcibly()
       if !proc.waitFor(5, TimeUnit.SECONDS) then
-        throw new RuntimeException(s"rift-http-proxy (pid ${proc.pid()}) survived teardown")
+        throw new RuntimeException(s"rift (pid ${proc.pid()}) survived teardown")
     }
 
   /** Bounded, blocking readiness probe against `probeUrl` (a full URL — the admin API's
@@ -325,7 +324,7 @@ object RiftHarness:
       while !ready && java.lang.System.nanoTime < deadline do
         if !proc.isAlive then
           throw new RuntimeException(
-            s"rift-http-proxy exited early (code ${proc.exitValue()}) before $probeUrl came up"
+            s"rift exited early (code ${proc.exitValue()}) before $probeUrl came up"
           )
         try
           if probeStatus(probeUrl) == 200 then ready = true

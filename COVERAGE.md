@@ -82,7 +82,7 @@ Remaining behavioral features (this issue's scope, still open): `03-faults-trans
 | error fault status/body/headers | `error fault sets the status, body and headers` | `faults/faults` |
 | precedence tcp>error>latency (rift#277) | `fault precedence — tcp wins over error, after the latency delay` | `faults/faults` |
 | `probability: 0` no-op | `probability 0 disables a fault` | `faults/faults` |
-| top-level `fault` → 502 today (**@gap rift#309**) | `top-level fault currently returns 502 (rift#309)` | `faults/faults` |
+| top-level `fault` resets at the transport level (rift#309, fixed in rift 0.9.0) | `top-level fault resets the connection at the transport level (rift#309)` | `faults/faults` |
 
 Remaining: `04-scripting-bounds`, `05-templating`, `06-behaviors`. #7 closes when feature 06 lands — now shipped; see the 06 section below.
 
@@ -130,11 +130,12 @@ assertion time), not merely "renders some ISO date". Remaining: `06-behaviors`. 
 | Set-Cookie multi-value survives a `copy` (rift#272) | `multi-value Set-Cookie survives a copy behavior (rift#272)` (2 distinct headers) | `behaviors/behaviors` |
 | JS `decorate` rewrites the response | `a JS decorate behavior rewrites the response` | `behaviors/behaviors` |
 
-**Note on the two former `@gap` probes:** the design tagged `shellTransform`-on-static-`is` and
-Set-Cookie-survives-`copy` (rift#272) as expected-divergence. On the pinned engine build both now
-behave correctly (rift#272 is **closed** upstream), so these scenarios assert the *correct* behavior
-with no `@gap` tag — the gap has "flipped on fix" and the scenarios now guard against a regression.
-The one still-open `@gap` in this suite is rift#309 (top-level `fault` → 502) in `03-faults-transport`.
+**Note on the former `@gap` probes:** the design tagged `shellTransform`-on-static-`is`,
+Set-Cookie-survives-`copy` (rift#272), and top-level-`fault`-→-502 (rift#309) as expected-divergence.
+On the pinned engine build all three now behave correctly (rift#272 and rift#309 are **closed**
+upstream — rift#309 fixed in 0.9.0), so these scenarios assert the *correct* behavior with no `@gap`
+tag — the gap has "flipped on fix" and the scenarios now guard against a regression. No `@gap` remains
+open in this suite.
 
 ---
 

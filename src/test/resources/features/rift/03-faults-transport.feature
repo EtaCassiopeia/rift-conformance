@@ -39,11 +39,11 @@ Feature: Faults and transport errors
     Then the response status is 200
     And the response body is "ok"
 
-  # @gap rift#309: a top-level `fault` response should abort the connection (Mountebank parity), but
-  # today the engine returns HTTP 502. This pins the current behavior and flips to a transport-error
-  # assertion when the fix lands. https://github.com/EtaCassiopeia/rift/issues/309
-  @gap
-  Scenario: top-level fault currently returns 502 (rift#309)
+  # rift#309: a top-level `fault` response should abort the connection (Mountebank parity), not
+  # return HTTP 502. This build (0.9.1) resets at the transport level, so the historical @gap is
+  # resolved — we assert the correct behavior, which now guards against a regression.
+  # https://github.com/EtaCassiopeia/rift/issues/309
+  Scenario: top-level fault resets the connection at the transport level (rift#309)
     Given a fresh imposter from fixture "faults/faults"
-    When the client sends "GET" "/topfault"
-    Then the response status is 502
+    When the client sends "GET" "/topfault" expecting a transport error
+    Then the request fails at the transport level

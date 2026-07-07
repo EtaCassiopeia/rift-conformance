@@ -22,9 +22,9 @@ object RiftHarnessSpec extends ZIOSpecDefault:
       client.send(req, HttpResponse.BodyHandlers.discarding()).statusCode()
     }
 
-  /** The live rift-http-proxy whose command line targets `--port <port>` — this is the exact
-    * "orphan in ps" check the acceptance criterion asks for, done via ProcessHandle. Returns the
-    * whole command line too so the spawn flags can be asserted.
+  /** The live rift whose command line targets `--port <port>` — this is the exact "orphan in ps"
+    * check the acceptance criterion asks for, done via ProcessHandle. Returns the whole command
+    * line too so the spawn flags can be asserted.
     */
   private def engineOnPort(port: Int): UIO[Option[(Long, String)]] =
     ZIO.succeed {
@@ -33,7 +33,7 @@ object RiftHarnessSpec extends ZIOSpecDefault:
         .iterator()
         .asScala
         .flatMap(ph => ph.info().commandLine().toScala.map(cl => (ph.pid(), cl)))
-        .find((_, cl) => cl.contains("rift-http-proxy") && cl.contains(s"--port $port"))
+        .find((_, cl) => cl.contains("rift") && cl.contains(s"--port $port"))
     }
 
   private def isAlive(pid: Long): UIO[Boolean] =

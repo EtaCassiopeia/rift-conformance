@@ -1,0 +1,59 @@
+name: conformance
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  compile-and-format:
+    name: compile & format check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up sbt
+        uses: sbt/setup-sbt@v1
+
+      - name: Compile + format check
+        run: sbt -batch "Test/compile; scalafmtCheckAll; scalafmtSbtCheck"
+
+  # Plane A against the real rift engine, fetched as a published release (#38 — no Rust build
+  # needed). Gated on workflow_dispatch until the corpus is vendored in-repo (#16); until then
+  # RIFT_CORPUS_ROOT points at a sibling checkout that only exists on a maintainer's machine.
+  plane-a-engine:
+    name: Plane A — engine conformance
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up sbt
+        uses: sbt/setup-sbt@v1
+
+      - name: Fetch released rift
+        run: |
+          # Fail the step if the fetch fails, rather than surfacing later as an empty RIFT_BUILD_DIR.
+          out="$(scripts/build-rift.sh)" || { echo "build-rift.sh failed"; exit 1; }
+          eval "$out"
+          echo "RIFT_BUILD_DIR=$RIFT_BUILD_DIR" >> "$GITHUB_ENV"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run Plane A conformance
+        run: sbt -batch engineConformance
+        env:
+          RIFT_MODE: external
+          RIFT_CORPUS_ROOT: ${{ github.workspace }}/corpus

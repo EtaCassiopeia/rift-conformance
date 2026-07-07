@@ -226,8 +226,8 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
     yield ()
 
   /** Send expecting a transport-level failure (fault scenarios): capture whether it failed, the
-    * elapsed time (latency still applies), and any HTTP response (the top-level-fault @gap returns
-    * a 502 rather than a reset).
+    * elapsed time (latency still applies), and any HTTP response (some fault kinds may still
+    * surface one instead of a reset).
     */
   protected def sendExpectingTransportError(
       method: String,

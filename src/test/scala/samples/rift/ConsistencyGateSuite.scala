@@ -9,9 +9,9 @@ import zio.bdd.core.step.{Stage, ZIOSteps}
 import java.nio.file.Files
 
 /** Plane A consistency gate (#5): the engine, rift-lint and rift-verify must all agree on the
-  * corpus, and all come from one clean-master build. Corpus imposters are posted **verbatim**
-  * (fixed 45xx ports, `_verify` blocks intact) — never through the adapter, so this stays an
-  * independent oracle. Requires `RIFT_BUILD_DIR`; corpus at `$RIFT_CORPUS_ROOT/imposters`.
+  * corpus, and all come from one released build. Corpus imposters are posted **verbatim** (fixed
+  * 45xx ports, `_verify` blocks intact) — never through the adapter, so this stays an independent
+  * oracle. Requires `RIFT_BUILD_DIR`; corpus at `$RIFT_CORPUS_ROOT/imposters`.
   */
 @Suite(
   featureDirs = Array("src/test/resources/features/rift/01-consistency-gate.feature"),
@@ -24,15 +24,15 @@ object ConsistencyGateSuite
 
   override def environment: ZLayer[Any, Throwable, RiftHarness] = RiftHarness.layer
 
-  private val Binaries = List("rift-http-proxy", "rift-verify", "rift-lint")
+  private val Binaries = List("rift", "rift-verify", "rift-lint")
 
   // ── @preflight — version coherence ─────────────────────────────────────────────────────────
 
-  Then("BUILD_INFO records a clean-master commit and all three binaries") {
+  Then("BUILD_INFO records a released build and all three binaries") {
     ZIO.serviceWithZIO[RiftHarness](_.buildInfo).flatMap { info =>
       val missing = Binaries.filterNot(info.versions.contains)
       Assertions.assertTrue(
-        info.commit.nonEmpty && info.branch == "master" && missing.isEmpty,
+        info.commit.nonEmpty && info.branch.nonEmpty && missing.isEmpty,
         s"BUILD_INFO coherence: commit='${info.commit}' branch='${info.branch}' missing=${missing.mkString(",")}"
       )
     }

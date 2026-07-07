@@ -31,7 +31,7 @@ implementation checklist. Work is tracked in this repo's issues (start at the pi
 
 ```
 DESIGN.md                              the implementation contract
-scripts/build-rift.sh                  clean-master engine build (single source of artifacts)
+scripts/build-rift.sh                  fetches the released engine binaries (single source of artifacts)
 src/test/scala/samples/rift/           Plane A — engine conformance suites + RiftHarness
 src/test/scala/samples/mock/           Plane B — MockControl corpus (migrated)
 src/test/resources/features/rift/      Plane A features
@@ -42,9 +42,14 @@ COVERAGE.md · FINDINGS.md              coverage matrix + defect ledger
 
 ## Environment knobs
 
+This repo is self-contained: **no sibling checkout of rift or zio-bdd is required.** zio-bdd is
+consumed from Maven Central; rift is fetched as a published GitHub release by
+`scripts/build-rift.sh`.
+
 | Var | Default | Meaning |
 |---|---|---|
-| `RIFT_BUILD_DIR` | (built by `build-rift.sh`) | dir holding `rift-http-proxy`/`rift-lint`/`rift-verify` from a clean `master` build |
+| `RIFT_BUILD_DIR` | (fetched by `build-rift.sh`) | dir holding `rift`/`rift-lint`/`rift-verify` from a released rift build |
+| `RIFT_VERSION` | `0.9.1` | released rift version `build-rift.sh` fetches |
 | `RIFT_MODE` | `external` | `external` (spawn the binary, no Docker) or `container` (image) — Plane A |
 | `RIFT_CORPUS_ROOT` | `../rift-imposter-samples` | where the JSON corpus lives (until it migrates here) |
 | `MOCK_BACKEND` | `wiremock` | Plane B backend: `wiremock` / `rift` / `rift-external` / `embedded` |

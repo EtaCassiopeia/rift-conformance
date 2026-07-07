@@ -2,12 +2,10 @@ ThisBuild / scalaVersion := "3.3.4"
 ThisBuild / organization := "io.github.etacassiopeia"
 
 val zioVersion = "2.1.17"
-val zioBddVersion = "1.2.0-SNAPSHOT"
+val zioBddVersion = "1.3.1"
 
-// zio-bdd is consumed as a locally published snapshot (mavenLocal); re-resolve snapshots so a
-// fresh `publish-lib` is always picked up.
-resolvers += Resolver.mavenLocal
-ThisBuild / updateOptions := updateOptions.value.withLatestSnapshots(true)
+// zio-bdd 1.3.1 is a public Maven Central release (no local publishLocal / sibling checkout
+// needed).
 
 // The RiftHarness, the Plane A steps, and their specs live under src/test — this build hosts the
 // conformance harness, not a shipped library, so its dependencies are test-scoped.
