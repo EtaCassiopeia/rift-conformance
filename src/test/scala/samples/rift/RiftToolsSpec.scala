@@ -52,7 +52,7 @@ object RiftToolsSpec extends ZIOSpecDefault:
         assertTrue(report.passed > 0) &&
         assertTrue(report.failed == 0) &&
         assertTrue(report.exitCode == 0) &&
-        assertTrue(report.raw.contains("Passed"))
+        assertTrue(report.raw.contains("passed"))
     }
   ).provideShared(RiftHarness.layer)
     @@ TestAspect.withLiveClock @@ TestAspect.sequential @@ TestAspect.timeout(120.seconds)
