@@ -1,11 +1,11 @@
 .PHONY: build-rift engine gate run-all fmt test
 
-# Build rift@master (clean clone) and print the resulting RIFT_BUILD_DIR. Run with
+# Fetch the released rift binaries and print the resulting RIFT_BUILD_DIR. Run with
 # `eval "$$(make build-rift)"` if you want RIFT_BUILD_DIR exported into your shell.
 build-rift:
 	./scripts/build-rift.sh
 
-# Plane A: samples.rift.* suites against a real rift-http-proxy (issue #15).
+# Plane A: samples.rift.* suites against a real rift (issue #15).
 engine:
 	./scripts/conformance-engine.sh
 

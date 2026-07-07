@@ -2,18 +2,18 @@
 # One-command layered conformance summary (rift-conformance issue #15).
 #
 # Layer list (DESIGN.md §9):
-#   engine (Plane A)          — samples.rift.* suites against a real rift-http-proxy     [RUNS]
+#   engine (Plane A)          — samples.rift.* suites against a real rift             [RUNS]
 #   wiremock (Plane B)        — not yet migrated                                  [SKIP see #13/#14]
 #   embedded (Plane B)        — not yet migrated                                  [SKIP see #13/#14]
 #   rift-external (Plane B)   — not yet migrated                                  [SKIP see #13/#14]
 #   rift-container (Plane B)  — Docker-gated (RIFT_IT)                              [SKIP see #12]
 #
 # Usage:
-#   ./scripts/run-all.sh            # run against an already-built engine (built lazily otherwise)
-#   ./scripts/run-all.sh --build    # build rift@master via build-rift.sh first
+#   ./scripts/run-all.sh            # run against an already-fetched engine (fetched lazily otherwise)
+#   ./scripts/run-all.sh --build    # fetch the released rift via build-rift.sh first
 #
 # Env:
-#   RIFT_BUILD_DIR    pre-built engine dir (skips build-rift.sh's clone/build)
+#   RIFT_BUILD_DIR    pre-fetched engine dir (skips build-rift.sh's download)
 #   RIFT_CORPUS_ROOT  imposter corpus root (default ../rift-imposter-samples)
 #   RIFT_IT           set to 1 to attempt the Docker-gated rift-container layer (#12)
 #

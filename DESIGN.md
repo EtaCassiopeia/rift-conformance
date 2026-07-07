@@ -68,10 +68,9 @@ planes**, so that:
 ```
                        ┌─────────────────────────────────────────────┐
                        │  scripts/build-rift.sh                      │
-                       │  clean master clone → cargo build           │
-                       │  rift-http-proxy · rift-lint · rift-verify  │
-                       │  [+ librift_ffi]  [+ docker image :local]   │
-                       │  → BUILD_INFO (commit SHA, timestamps)      │
+                       │  fetch rift v$RIFT_VERSION release binaries │
+                       │  rift · rift-lint · rift-verify (tarball)   │
+                       │  sha256-verified → BUILD_INFO (tag, vers.)  │
                        └────────────────────┬────────────────────────┘
                                             │ one build, all artifacts
                      ┌──────────────────────┴──────────────────────┐
@@ -140,7 +139,7 @@ final case class RiftTools(lint: Path, verify: Path)
 
 | `RIFT_MODE` | What it does | Docker | Surface | Use |
 |---|---|:---:|---|---|
-| `external` *(default)* | Spawns `rift-http-proxy --port <admin> --allow-injection` from `RIFT_BUILD_DIR`, kills it on scope close | no | **full** (TCP faults, HTTPS, proxy, admin, metrics) | master testing, dev inner loop, CI job 1 |
+| `external` *(default)* | Spawns `rift --port <admin> --allow-injection` (the released engine binary) from `RIFT_BUILD_DIR`, kills it on scope close | no | **full** (TCP faults, HTTPS, proxy, admin, metrics) | release testing, dev inner loop, CI |
 | `container` | `GenericContainer` on `RIFT_IMAGE` (a published tag or the locally-built `rift-proxy:local`) | yes | full | pre-release gate on the shipped image, CI job 2 |
 | *(embedded)* | not a RiftHarness mode — Plane A **requires** `external` or `container`. Embedded (FFI) exists only as a Plane B backend; its C-ABI (`rift_start/stop/create_imposter/replace_stubs/recorded/delete_all`) cannot reach the admin surface, transport faults, or reload. | no | partial | Plane B fast witness only |
 
@@ -169,15 +168,15 @@ clone of `master`** — never the developer's working checkout at `~/Projects/ri
 carry unfinished branch work.
 
 ```
-scripts/build-rift.sh [--image] [--ffi]
-  1. clone --depth 1 --branch master https://github.com/EtaCassiopeia/rift
-     into $RIFT_BUILD_CACHE (default: ~/.cache/rift-conformance/<date>-<sha>/),
-     or fetch+reset if a cache dir for HEAD's SHA already exists (idempotent).
-  2. cargo build --release -p rift-http-proxy --bin rift-http-proxy --bin rift-verify \
-                            -p rift-lint --bin rift-lint
-  3. [--ffi]   cargo build --release -p rift-ffi   → librift_ffi.<ext> (for Plane B embedded)
-  4. [--image] docker build -t rift-proxy:local .   (for container mode)
-  5. write BUILD_INFO: {commit, branch, builtAt, binaries: {…sha256…}}
+scripts/build-rift.sh   (self-contained since #38 — no clone, no cargo, no sibling repos)
+  1. detect the platform triple (aarch64/x86_64 × apple-darwin/unknown-linux-gnu).
+  2. download rift-v$RIFT_VERSION-<triple>.tar.gz (+ .sha256) from the EtaCassiopeia/rift
+     GitHub *release* into $RIFT_BUILD_CACHE (default ~/.cache/rift-conformance/rift-v<ver>-<triple>/);
+     reuse if already extracted (idempotent). RIFT_VERSION defaults to the pinned release.
+  3. sha256-verify, extract → bin/{rift, rift-lint, rift-verify, rift-tui}.
+  4. write BUILD_INFO: {commit: <tag SHA>, branch: "v<ver>", builtAt, binaries:{…sha256…},
+     versions:{…"<bin> <ver>"…}} — the released binaries carry none, the gate (#5) requires it.
+  (zio-bdd is likewise a public Maven Central release, 1.3.x; no ../zio-bdd publishLocal.)
   6. print `export RIFT_BUILD_DIR=…` for the caller.
 ```
 
@@ -190,7 +189,7 @@ is recorded in BUILD_INFO at build time; if the admin API exposes no version end
 preflight compares binary paths + BUILD_INFO instead and the scenario documents that.)
 
 Escape hatch: `RIFT_BUILD_DIR=/path/to/any/build` skips the clone entirely (for testing a
-branch deliberately). The default path is always clean-master.
+branch deliberately). The default path fetches the pinned rift release.
 
 ## 4. Corpus — canonical location and the consistency gate
 
@@ -253,7 +252,7 @@ documented, justified drop) recorded in `COVERAGE.md` (§10).
 |---|---|---|
 | `01-consistency-gate.feature` | `consistency-gate.sh`, `lint.sh` | §4.3 above |
 | `02-core-serving.feature` | `conformance.sh` | predicates (`not`+startsWith, matches, jsonpath, xpath); repeat:N cycling; `copy` path-group; FSM two-step transition; multi-value `Set-Cookie`; date template; `defaultForward`; cycling wrap |
-| `03-faults-transport.feature` | `conformance.sh` + ext fault section | tcp reset → transport error; `RANDOM_DATA_THEN_CLOSE`; latency ≥ floor timing; error fault status/body/headers; **precedence tcp>error>latency**; `probability: 0` no-op; `@gap` #309 top-level `fault` → asserts today's 502 (flip on fix) |
+| `03-faults-transport.feature` | `conformance.sh` + ext fault section | tcp reset → transport error; `RANDOM_DATA_THEN_CLOSE`; latency ≥ floor timing; error fault status/body/headers; **precedence tcp>error>latency**; `probability: 0` no-op; top-level `fault` resets at the transport level (rift#309, fixed in 0.9.0) |
 | `04-scripting-bounds.feature` | ext scripting + #308 section | rhai flow_store counter increments across requests; lua result; js inject result; **#308**: runaway rhai under `timeoutMs: 300` → 500 + `x-rift-script-error` in ~300ms; engine + sibling imposter stay responsive with 3 concurrent runaways in flight |
 | `05-templating.feature` | ext templating | `${request.method/path/query.*/headers.*}` vars; `{{NOW}}`; `{{DAYS+N}}`; `{{DAYS-N}}`; `{{MONTHS±N}}` |
 | `06-behaviors.feature` | ext behaviors | `copy` from header / via jsonpath; `lookup` CSV column (needs corpus `data/`); JS-function `wait` ≥ floor; `shellTransform` on a static `is`; Set-Cookie multi-value survives a copy behavior (rift#272) |
@@ -386,7 +385,7 @@ rift repo issue tracker as today (one finding → one issue, ref #254).
 ## 9. Scripts, Makefile, CI
 
 ```
-scripts/build-rift.sh            # §3.2 — clean-master build, BUILD_INFO, [--image] [--ffi]
+scripts/build-rift.sh            # §3.2 — fetch rift release binaries + BUILD_INFO (RIFT_VERSION)
 scripts/conformance-engine.sh    # Plane A: RIFT_MODE=external sbt "testOnly samples.rift.*"
 scripts/conformance.sh           # (exists) Plane B wiremock
 scripts/conformance-embedded.sh  # (exists) Plane B embedded — RIFT_FFI_LIB from build-rift --ffi
@@ -465,7 +464,7 @@ reverted. The corpus is never moved, so nothing external breaks.
 
 Each item names its acceptance criterion. Do them in order; stop at any red.
 
-1. **`scripts/build-rift.sh`** — clean-master clone→build→BUILD_INFO, `--ffi`/`--image`
+1. **`scripts/build-rift.sh`** — fetch pinned rift release tarball → BUILD_INFO (self-contained, #38)
    flags, SHA-keyed cache. ✔ two consecutive runs: second is a cache hit; binaries exist;
    BUILD_INFO commit matches `git -C <cache> rev-parse HEAD`.
 2. **`RiftHarness` external mode** (`samples/rift/support/`) — spawn/readiness/teardown,
