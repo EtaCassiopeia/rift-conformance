@@ -1,59 +1,141 @@
 # rift-conformance
 
 The dedicated conformance suite for [Rift](https://github.com/EtaCassiopeia/rift) — one
-[zio-bdd](https://github.com/EtaCassiopeia/zio-bdd) harness hosting **two attribution planes**:
+[zio-bdd](https://github.com/EtaCassiopeia/zio-bdd) harness hosting **two attribution planes**,
+fully self-contained: no sibling checkout of `rift`, `rift-imposter-samples`, or `zio-bdd-samples`
+is required. This README alone is enough to fetch the engine and run everything.
 
-- **Plane A — engine conformance.** Drives Rift's admin API directly (raw HTTP) and runs the
-  engine's own `rift-lint` / `rift-verify` tools. No `MockControl` in the path, so a red here is an
-  **engine or tool** finding. This is the typed-Gherkin successor to the `rift-imposter-samples`
-  shell suite.
-- **Plane B — portable SPI corpus.** Drives Rift *through* the zio-bdd `MockControl` adapter (and
-  WireMock / embedded-FFI backends). A red here with Plane A green is a **library** finding. Migrated
-  in from `zio-bdd-samples`.
+## The two planes
 
-The Plane B mock corpus (issue #13) now lives in this repo under `src/test/scala/samples/mock/`,
-driven by `MOCK_BACKEND` (default `wiremock`, in-process, no Docker required).
+- **Plane A — engine conformance** (`src/test/scala/samples/rift/`, `samples.rift.*`). Drives
+  Rift's admin API directly (raw HTTP) and shells out to the engine's own `rift-lint` /
+  `rift-verify` tools. No `MockControl` in the path, so a red here is an **engine or tool**
+  finding, never a library finding. This is the typed-Gherkin successor to the retired
+  `rift-imposter-samples` bash suite — see COVERAGE.md for the full 1:1 port audit.
+- **Plane B — portable SPI corpus** (`src/test/scala/samples/mock/`, `samples.mock.*`). Drives
+  Rift *through* the zio-bdd `MockControl` adapter, against four interchangeable backends
+  (WireMock / a Rift container / a `RiftHarness`-spawned rift, no Docker / embedded Rift over
+  FFI). A red here with Plane A green is a **library** finding. Migrated in from
+  `zio-bdd-samples`.
 
-Both planes share one `RiftHarness` (engine lifecycle) and one engine build, so running them together
-gives differential (engine-direct vs engine-via-adapter) coverage. **This is how one suite tests both
-libraries** — the Rift engine *and* the zio-bdd mock stack.
+Both planes share one `RiftHarness` (engine lifecycle) and one engine build (fetched once by
+`scripts/build-rift.sh`), so running them together gives differential (engine-direct vs
+engine-via-adapter) coverage — this is how one suite tests both libraries, the Rift engine and
+the zio-bdd mock stack.
+
+**Attribution rule:**
+
+| Plane A | Plane B (rift backend) | Conclusion |
+|:-------:|:-----------------------:|------------|
+| 🟢 | 🔴 | zio-bdd library bug → file on `zio-bdd` |
+| 🔴 | any | engine or tool bug → confirm with curl, file on `rift` (ref rift#254) |
+| 🟢 | 🟢 | ship it |
 
 See **[DESIGN.md](DESIGN.md)** for the full architecture, risk register, and the ordered
-implementation checklist. Work is tracked in this repo's issues (start at the pinned tracking issue).
+implementation checklist. Coverage bookkeeping lives in **[COVERAGE.md](COVERAGE.md)**; the
+defect ledger in **[FINDINGS.md](FINDINGS.md)**. The triage decision tree (DESIGN.md §8) is
+reproduced at the top of FINDINGS.md.
 
-## Status
-
-🚧 Under construction — being migrated from two sources:
-
-| Source | What moves here | Then |
-|---|---|---|
-| `rift-imposter-samples` | the canonical JSON corpus + the shell-suite coverage (→ Plane A) | repo **retired** |
-| `zio-bdd-samples` | the `MockControl` mock corpus (→ Plane B) | keeps its framework-general samples |
-
-## Repo layout (target)
+## Repo layout
 
 ```
 DESIGN.md                              the implementation contract
+COVERAGE.md · FINDINGS.md              coverage matrix + defect ledger
 scripts/build-rift.sh                  fetches the released engine binaries (single source of artifacts)
+scripts/run-all.sh                     one-command layered summary, both planes
 src/test/scala/samples/rift/           Plane A — engine conformance suites + RiftHarness
-src/test/scala/samples/mock/           Plane B — MockControl corpus (migrated)
+src/test/scala/samples/mock/           Plane B — MockControl corpus (migrated from zio-bdd-samples)
 src/test/resources/features/rift/      Plane A features
 src/test/resources/features/mock/      Plane B features (migrated)
-corpus/imposters/*.json                canonical JSON corpus (migrated last)
-COVERAGE.md · FINDINGS.md              coverage matrix + defect ledger
+corpus/imposters/*.json                canonical JSON corpus (vendored in-repo, #16) — static, numbered, add-never-renumber
+corpus/data/products.csv               CSV lookup data for feature 06 (`lookup` behavior)
+corpus/fixtures/injection/*.cjs,*.js   JS injection modules for the scripting/decorate scenarios
 ```
 
-## Environment knobs
+## Quickstart (cold start, nothing else checked out)
 
-This repo is self-contained: **no sibling checkout of rift or zio-bdd is required.** zio-bdd is
-consumed from Maven Central; rift is fetched as a published GitHub release by
-`scripts/build-rift.sh`.
+```bash
+# 1. Fetch the released rift engine binaries (rift, rift-lint, rift-verify) — cached under
+#    ~/.cache/rift-conformance, sha256-verified, BUILD_INFO written for version-coherence checks.
+eval "$(scripts/build-rift.sh)"     # exports RIFT_BUILD_DIR into your shell
+
+# 2. Run everything — both planes, layered summary, non-fatal SKIPs for gated legs.
+scripts/run-all.sh
+```
+
+`scripts/run-all.sh` (equivalently `./scripts/run-all.sh --build` to fetch the engine first in
+one step) runs, in order:
+
+| Layer | Suites | Status |
+|---|---|---|
+| engine (Plane A) | `samples.rift.*` against a real rift child | runs |
+| wiremock (Plane B) | `samples.mock.*` against in-process WireMock | runs |
+| embedded (Plane B) | `samples.mock.*` against in-process Rift (Panama FFI) | SKIP below JDK 22 |
+| rift-external (Plane B) | `samples.mock.*` against a `RiftHarness`-spawned rift, no Docker | runs |
+| rift-container (Plane B) | `samples.mock.*` against a Rift Docker image | SKIP unless `RIFT_IT=1` (#12) |
+
+Exit code is 0 iff the Plane A layer passed and no layer FAILed (SKIPs never fail the run).
+
+### Running one leg at a time
+
+```bash
+sbt engineGate                                  # cheapest: just the consistency gate (feature 01)
+sbt engineConformance                           # full Plane A: every samples.rift.* suite
+sbt mockConformance                             # Plane B on the default wiremock backend
+MOCK_BACKEND=embedded    sbt mockEmbedded        # Plane B, embedded FFI backend (needs JDK 22+)
+MOCK_BACKEND=rift-external sbt mockRiftExternal  # Plane B, real rift, no Docker
+```
+
+or the equivalent shell wrappers (`scripts/conformance-engine.sh`,
+`scripts/conformance-mock.sh`, `scripts/conformance-embedded.sh`,
+`scripts/conformance-rift-external.sh`, `scripts/conformance-rift.sh`), or the `Makefile`
+targets (`make engine`, `make gate`, `make run-all`, `make fmt`, `make test`).
+
+## Environment knobs
 
 | Var | Default | Meaning |
 |---|---|---|
 | `RIFT_BUILD_DIR` | (fetched by `build-rift.sh`) | dir holding `rift`/`rift-lint`/`rift-verify` from a released rift build |
 | `RIFT_VERSION` | `0.9.1` | released rift version `build-rift.sh` fetches |
+| `RIFT_BUILD_CACHE` | `~/.cache/rift-conformance` | cache root for `build-rift.sh` downloads (SHA-keyed, idempotent) |
 | `RIFT_MODE` | `external` | `external` (spawn the binary, no Docker) or `container` (image) — Plane A |
-| `RIFT_CORPUS_ROOT` | `../rift-imposter-samples` | where the JSON corpus lives (until it migrates here) |
-| `MOCK_BACKEND` | `wiremock` | Plane B backend: `wiremock` / `rift` / `rift-external` / `embedded` |
+| `RIFT_CORPUS_ROOT` | `./corpus` | where the vendored JSON corpus / CSV data / fixtures live (imposters, data, fixtures subdirs) |
+| `RIFT_IT` | unset | set to `1` to attempt the Docker-gated `rift-container` Plane B layer (#12) |
+| `MOCK_BACKEND` | `wiremock` | Plane B backend: `wiremock` (in-process, no Docker) / `rift` (Docker container) / `rift-external` (real rift via `RiftHarness`, no Docker) / `embedded` (in-process Rift over Panama FFI, needs JDK 22+) |
 | `RIFT_FFI_LIB` | (bundled) | `librift_ffi` path for the embedded Plane B leg |
+
+`RIFT_CORPUS_ROOT` defaults to `./corpus` (relative to the sbt working directory) — the corpus
+is vendored in this repo, so no other env var needs to be set to run Plane A. The engine is
+spawned with cwd = `RIFT_CORPUS_ROOT`, so `corpus/data/products.csv` and `corpus/imposters/*.json`
+both resolve correctly without extra configuration.
+
+## sbt aliases
+
+| Alias | What it runs |
+|---|---|
+| `engineGate` | `testOnly samples.rift.ConsistencyGateSuite` — feature 01 only, the cheap inner loop |
+| `engineConformance` | `testOnly samples.rift.*` — every Plane A suite |
+| `mockConformance` | `testOnly samples.mock.*` on `MOCK_BACKEND=wiremock` (excludes wiremock-`➖` capability tags) |
+| `mockEmbedded` | `testOnly samples.mock.*` on `MOCK_BACKEND=embedded` (excludes embedded-`➖` capability tags) |
+| `mockRiftExternal` | `testOnly samples.mock.*` on `MOCK_BACKEND=rift-external` (excludes only `@wiremock`-only scenarios) |
+| `lintFeatures` | `testOnly samples.* -- --dry-run` — dry-run step-matching validation across both planes |
+| `mockSmoke` | `testOnly samples.mock.* -- --include-tags smoke` |
+
+## CI
+
+`.github/workflows/conformance.yml` runs on every `push`/`pull_request` (plus manual
+`workflow_dispatch`):
+
+- **compile-and-format** — `Test/compile`, `scalafmtCheckAll`, `scalafmtSbtCheck`.
+- **plane-a-engine** — fetches the released rift via `scripts/build-rift.sh`, then
+  `sbt engineConformance` with `RIFT_MODE=external` and `RIFT_CORPUS_ROOT` pointed at the
+  in-repo `./corpus`.
+
+The Docker-gated Plane B container leg (#12) and the embedded FFI leg (needs JDK 22+) are not
+wired into CI yet — both stay local/manual for now.
+
+## The `/rift-conformance` command
+
+`.claude/commands/rift-conformance.md` drives the standing conformance pass against this
+harness (fetch → run both planes → triage per DESIGN.md §8 → update COVERAGE.md/FINDINGS.md).
+See the command file for its scope grammar.

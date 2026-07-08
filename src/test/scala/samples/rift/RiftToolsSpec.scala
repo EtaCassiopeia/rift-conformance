@@ -10,7 +10,7 @@ import java.nio.file.{Files, Path, Paths}
 
 /** Acceptance gate for RiftTools (#3): the real rift-lint / rift-verify binaries from the harness
   * build, driven over the corpus and a running engine. Requires `RIFT_BUILD_DIR` (and
-  * `RIFT_CORPUS_ROOT` when the corpus is not at the default `../rift-imposter-samples`).
+  * `RIFT_CORPUS_ROOT` when the corpus is not at the default `corpus`).
   */
 object RiftToolsSpec extends ZIOSpecDefault:
 
@@ -20,7 +20,7 @@ object RiftToolsSpec extends ZIOSpecDefault:
     val root = Option(java.lang.System.getenv("RIFT_CORPUS_ROOT"))
       .map(_.trim)
       .filter(_.nonEmpty)
-      .getOrElse("../rift-imposter-samples")
+      .getOrElse("corpus")
     Paths.get(root).resolve("imposters")
 
   private def postImposter(adminUrl: String, file: Path): Task[Int] =

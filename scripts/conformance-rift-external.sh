@@ -9,7 +9,7 @@
 # Env:
 #   RIFT_BUILD_DIR    pre-fetched engine dir (skips build-rift.sh's download if already set)
 #   RIFT_CORPUS_ROOT  imposter corpus root the harness spawns rift with as cwd (default
-#                     ../rift-imposter-samples) — RiftHarness.layer requires it to start.
+#                     corpus) — RiftHarness.layer requires it to start.
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/lib.sh

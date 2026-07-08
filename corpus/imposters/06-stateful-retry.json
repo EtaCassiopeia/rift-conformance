@@ -1,0 +1,47 @@
+{
+  "port": 4506,
+  "protocol": "http",
+  "name": "06 · Stateful Retry Simulation (flow state)",
+  "recordRequests": true,
+  "_rift": {
+    "flowState": { "backend": "inmemory", "ttlSeconds": 300 }
+  },
+  "stubs": [
+    {
+      "name": "Fail the first 2 attempts with 503, succeed on the 3rd (keyed by X-Flow-Id)",
+      "predicates": [{ "equals": { "method": "GET", "path": "/api/resource" } }],
+      "responses": [{
+        "_rift": {
+          "script": {
+            "engine": "rhai",
+            "code": "fn should_inject(request, flow_store) { let flow_id = request.headers[\"x-flow-id\"]; if flow_id == () { flow_id = \"default\"; }; let attempts = flow_store.get(flow_id, \"attempts\"); if attempts == () { attempts = 0; }; attempts += 1; flow_store.set(flow_id, \"attempts\", attempts); if attempts <= 2 { #{ inject: true, fault: \"error\", status: 503, body: `{\"error\":\"service unavailable\",\"attempt\":${attempts}}`, headers: #{\"Content-Type\": \"application/json\", \"Retry-After\": \"1\", \"X-Attempt\": `${attempts}`} } } else { #{ inject: true, fault: \"error\", status: 200, body: `{\"ok\":true,\"succeededOnAttempt\":${attempts}}`, headers: #{\"Content-Type\": \"application/json\", \"X-Attempt\": `${attempts}`} } } }"
+          }
+        }
+      }]
+    },
+    {
+      "name": "Inspect the current attempt count for a flow",
+      "predicates": [{ "equals": { "method": "GET", "path": "/api/attempts" } }],
+      "responses": [{
+        "_rift": {
+          "script": {
+            "engine": "rhai",
+            "code": "fn should_inject(request, flow_store) { let flow_id = request.headers[\"x-flow-id\"]; if flow_id == () { flow_id = \"default\"; }; let attempts = flow_store.get(flow_id, \"attempts\"); if attempts == () { attempts = 0; }; #{ inject: true, fault: \"error\", status: 200, body: `{\"flowId\":\"${flow_id}\",\"attempts\":${attempts}}`, headers: #{\"Content-Type\": \"application/json\"} } }"
+          }
+        }
+      }]
+    },
+    {
+      "name": "Reset the attempt counter for a flow",
+      "predicates": [{ "equals": { "method": "DELETE", "path": "/api/reset" } }],
+      "responses": [{
+        "_rift": {
+          "script": {
+            "engine": "rhai",
+            "code": "fn should_inject(request, flow_store) { let flow_id = request.headers[\"x-flow-id\"]; if flow_id == () { flow_id = \"default\"; }; flow_store.delete(flow_id, \"attempts\"); #{ inject: true, fault: \"error\", status: 200, body: `{\"message\":\"reset\",\"flowId\":\"${flow_id}\"}`, headers: #{\"Content-Type\": \"application/json\"} } }"
+          }
+        }
+      }]
+    }
+  ]
+}

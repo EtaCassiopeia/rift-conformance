@@ -7,7 +7,7 @@
 # Env:
 #   RIFT_BUILD_DIR    pre-fetched engine dir; if unset, fetched via build-rift.sh (released rift)
 #   RIFT_MODE         harness mode (default: external — the only mode implemented so far)
-#   RIFT_CORPUS_ROOT  imposter corpus root (default: ../rift-imposter-samples, matches RiftHarness)
+#   RIFT_CORPUS_ROOT  imposter corpus root (default: corpus, matches RiftHarness)
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/lib.sh
@@ -20,7 +20,7 @@ if [ -z "${RIFT_BUILD_DIR:-}" ]; then
 fi
 export RIFT_BUILD_DIR
 export RIFT_MODE="${RIFT_MODE:-external}"
-export RIFT_CORPUS_ROOT="${RIFT_CORPUS_ROOT:-../rift-imposter-samples}"
+export RIFT_CORPUS_ROOT="${RIFT_CORPUS_ROOT:-corpus}"
 
 echo "conformance-engine: RIFT_BUILD_DIR=$RIFT_BUILD_DIR RIFT_MODE=$RIFT_MODE RIFT_CORPUS_ROOT=$RIFT_CORPUS_ROOT"
 
