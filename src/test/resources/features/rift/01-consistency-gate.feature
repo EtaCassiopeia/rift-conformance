@@ -15,10 +15,16 @@ Feature: Cross-tool consistency — engine, rift-lint, and rift-verify agree on 
   Scenario: rift-lint accepts every corpus file
     Then rift-lint reports 0 errors across the corpus
 
+  # @full-corpus: posts/serves the ENTIRE corpus, including the lua-scripting imposter
+  # (05-scripting-engines.json). RIFT_MODE=container excludes these because the published
+  # rift-proxy images are built without the `lua` cargo feature (unlike the released binary); the
+  # full-corpus + rift-verify oracle stays external/embedded. Tracked by the agent-filed follow-up.
+  @full-corpus
   Scenario: The engine serves every corpus imposter on its declared port
     Given every corpus imposter is posted to the engine
     Then every corpus imposter answers on its declared port
 
+  @full-corpus
   Scenario: rift-verify drives the loaded corpus with no failures
     Given every corpus imposter is posted to the engine
     Then rift-verify reports 0 failures

@@ -28,6 +28,22 @@ trait RiftHarness:
     */
   def rewriteFixture(json: String): String = json
 
+  /** Pick a fresh imposter port in `[lo, hi]` for a scenario. Default: scan for a host-free port —
+    * external/embedded imposters bind the port directly on the host, so host-freeness is exactly
+    * the right check. Container mode overrides this: its imposters bind *inside* the container and
+    * the matching host ports are held by Docker's 1:1 forward, so a host-freeness scan would always
+    * find them busy; it hands out from its published pool instead.
+    */
+  def freshImposterPort(lo: Int, hi: Int): IO[Throwable, Int] =
+    ZIO.attemptBlocking {
+      (lo to hi)
+        .find(p =>
+          try { new ServerSocket(p).close(); true }
+          catch { case _: Throwable => false }
+        )
+        .getOrElse(throw new RuntimeException(s"no free probe port in $lo..$hi"))
+    }
+
   /** Swap in a `--configfile`-backed engine for the life of the returned `Scope`, reverting to a
     * plain engine (same admin/metrics ports) when the scope closes.
     */
@@ -179,6 +195,7 @@ object RiftHarness:
       RiftHarnessConfig.fromEnv.flatMap { cfg =>
         cfg.mode match
           case RiftMode.Embedded => RiftHarnessEmbedded.acquire(cfg)
+          case RiftMode.Container => RiftHarnessContainer.acquire(cfg)
           case RiftMode.External => acquireExternal(cfg)
       }
     }

@@ -108,3 +108,44 @@ jobs:
         run: sbt -batch mockEmbedded
         env:
           MOCK_BACKEND: embedded
+
+  # Same Plane A oracle, run in a Docker container on a published image (#12): proves the transport
+  # surface across the container boundary. ubuntu-latest ships a working Docker daemon, so this leg
+  # opts in with RIFT_IT=1. Runs feature 01 (gate, minus the @full-corpus lua scenarios the published
+  # image can't serve) + 03 (transport faults). The released rift is still fetched for the host
+  # lint/verify tools + BUILD_INFO.
+  plane-a-container:
+    name: Plane A — engine conformance (container)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up sbt
+        uses: sbt/setup-sbt@v1
+
+      # The released host rift-lint/rift-verify dynamically link LuaJIT.
+      - name: Install rift runtime deps (LuaJIT)
+        run: sudo apt-get update && sudo apt-get install -y libluajit-5.1-2
+
+      - name: Fetch released rift
+        run: |
+          out="$(scripts/build-rift.sh)" || { echo "build-rift.sh failed"; exit 1; }
+          eval "$out"
+          echo "RIFT_BUILD_DIR=$RIFT_BUILD_DIR" >> "$GITHUB_ENV"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # conformance-engine.sh (RIFT_MODE=container, RIFT_IT=1) runs the engineContainer subset against
+      # a testcontainers-managed rift on the published image.
+      - name: Run Plane A conformance (container)
+        run: scripts/conformance-engine.sh
+        env:
+          RIFT_MODE: container
+          RIFT_IT: "1"
+          RIFT_CORPUS_ROOT: ${{ github.workspace }}/corpus

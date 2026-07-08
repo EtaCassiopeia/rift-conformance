@@ -8,11 +8,20 @@
 #
 # Usage: scripts/conformance-engine.sh
 #
+# RIFT_MODE=container (#12) runs the engine in a Docker container on a published image (RIFT_IMAGE)
+# and runs the container-safe subset (engineContainer: feature 01 gate minus the @full-corpus lua
+# scenarios + feature 03 transport faults). Docker/RIFT_IT-gated — SKIPs when RIFT_IT!=1 or docker
+# is absent, like the Plane B rift-container leg.
+#
+# Usage: scripts/conformance-engine.sh
+#
 # Env:
 #   RIFT_BUILD_DIR    pre-fetched engine dir; if unset, fetched via build-rift.sh (released rift)
-#   RIFT_MODE         harness mode: external (default) | embedded
+#   RIFT_MODE         harness mode: external (default) | embedded | container
 #   RIFT_CORPUS_ROOT  imposter corpus root (default: corpus, matches RiftHarness)
 #   RIFT_FFI_LIB      (embedded) explicit librift_ffi path; else the bundled natives jar is used
+#   RIFT_IT           (container) set to 1 to opt into the Docker-gated container leg
+#   RIFT_IMAGE        (container) image tag to run (default: zainalpour/rift-proxy:v0.9.1)
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/lib.sh
@@ -37,6 +46,17 @@ if [ "$RIFT_MODE" = "embedded" ]; then
     exit "$SKIP_EXIT_CODE"
   fi
   SBT_TASK="engineEmbedded"
+elif [ "$RIFT_MODE" = "container" ]; then
+  # Docker-gated like the Plane B rift-container leg: opt-in via RIFT_IT=1, and docker must be usable.
+  if [ "${RIFT_IT:-}" != "1" ]; then
+    echo "conformance-engine: SKIP container — Docker-gated (RIFT_IT unset); see #12" >&2
+    exit "$SKIP_EXIT_CODE"
+  fi
+  if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
+    echo "conformance-engine: SKIP container — docker not available; see #12" >&2
+    exit "$SKIP_EXIT_CODE"
+  fi
+  SBT_TASK="engineContainer"
 fi
 
 if [ -z "${RIFT_BUILD_DIR:-}" ]; then
