@@ -42,8 +42,8 @@ Guiding principles:
 - **Corpus stays static & numbered.** Add new `corpus/imposters/NN-*.json` files, never renumber;
   `20-mimeo-solo-compat.json` stays (engine-served shapes, still gated).
 - **One finding → one issue**, filed on `EtaCassiopeia/rift` (engine/tool findings) or `zio-bdd`
-  (library findings), referencing rift#254. Confirm against real behavior with `curl` before
-  filing — no speculative issues.
+  (library findings), referencing **this repo** (`EtaCassiopeia/rift-conformance`; see
+  `CONFORMANCE.md`). Confirm against real behavior with `curl` before filing — no speculative issues.
 
 ---
 
@@ -99,7 +99,7 @@ Scenario red
 ├─ Plane A?
 │   ├─ Re-run the emitted curl repro (every Plane A HTTP step logs one on `Stage`) against the
 │   │   harness adminUrl.
-│   │   ├─ Engine misbehaves                          → ENGINE finding → file on rift, ref #254.
+│   │   ├─ Engine misbehaves                          → ENGINE finding → file on rift, ref this repo.
 │   │   ├─ Engine fine, rift-lint/rift-verify disagreed → TOOL-DRIFT finding → file on rift.
 │   │   └─ Engine fine, curl matches expectation       → corpus/step bug → fix here, no issue.
 │   └─ A `@gap` scenario started failing → the pinned divergent behavior CHANGED: either the fix
@@ -118,7 +118,7 @@ For each real finding:
 2. Classify per the tree above.
 3. File one issue per finding with the tripping config/sample, the `curl` repro, observed vs
    expected, and which leg/tool caught it. `gh issue create --repo EtaCassiopeia/rift` (engine/tool)
-   or the `zio-bdd` repo (library), referencing rift#254.
+   or the `zio-bdd` repo (library), referencing this repo (`EtaCassiopeia/rift-conformance`).
 4. If the fix is yours to make upstream, hand off to that repo's own `/fix-issue <N>`, then
    re-fetch (Step 1, bump `RIFT_VERSION` once a new release ships) and re-run the affected leg.
 
@@ -148,6 +148,6 @@ touched), and the next-highest-value gap left (check DESIGN.md §12's risk regis
 - **Keep feature 01 (the consistency gate) green** — any new static `corpus/imposters/NN-*.json`
   must be served by the engine, lint with 0 errors, and draw no `rift-verify` FAIL.
 - **Corpus stays static & numbered** — add new samples, never renumber existing ones.
-- **One finding → one issue.** Don't bundle unrelated gaps. Reference rift#254 on engine/tool
-  issues.
+- **One finding → one issue.** Don't bundle unrelated gaps. Reference this repo
+  (`EtaCassiopeia/rift-conformance`) on engine/tool issues.
 - Confirm a finding against real behavior with `curl` before filing — no speculative issues.

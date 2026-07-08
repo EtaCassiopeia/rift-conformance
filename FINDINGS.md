@@ -2,8 +2,9 @@
 
 Migrated from `zio-bdd-samples` (issue #13); the F-series ledger below predates the migration and
 is preserved as-is. Defects and gaps surfaced by the sample corpus. Each links the tripping sample,
-the backend, and the filed `zio-bdd` issue (cross-linked under umbrella
-EtaCassiopeia/rift#254). Corpus stays static/numbered; only additions + status flips.
+the backend, and the filed `zio-bdd` issue. The standing-conformance charter + pass log lives in
+[CONFORMANCE.md](CONFORMANCE.md) (this repo supersedes the former umbrella issue rift#254, now
+closed). Corpus stays static/numbered; only additions + status flips.
 
 ## Triage decision tree (DESIGN.md §8)
 
@@ -13,7 +14,7 @@ Every new finding is triaged with this tree before it gets a row below or a file
 Scenario red
 ├─ Plane A?
 │   ├─ Re-run the emitted curl repro against the harness adminUrl.
-│   │   ├─ Engine misbehaves  → ENGINE finding → file on rift, ref #254.
+│   │   ├─ Engine misbehaves  → ENGINE finding → file on rift, ref this repo (CONFORMANCE.md).
 │   │   ├─ Engine fine, rift-lint/rift-verify disagreed → TOOL-DRIFT finding → file on rift.
 │   │   └─ Engine fine, curl matches expectation → corpus/step bug → fix in samples, no issue.
 │   └─ (@gap scenario started failing = the pinned divergent behavior CHANGED:
