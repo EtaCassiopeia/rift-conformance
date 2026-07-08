@@ -102,3 +102,11 @@ addCommandAlias(
   "mockEmbedded",
   "testOnly samples.mock.* -- --exclude-tags stateful,stateinspection,rift,wiremock,negotiation,native"
 )
+// `rift-external` (issue #14) is a real rift engine spawned by the Plane A RiftHarness (no
+// Docker, no FFM floor) — it advertises and runs the full capability surface, so it only excludes
+// `wiremock` (the two raw-WireMock-only scenarios, samples 17/19, that assert WireMock-specific
+// behavior a rift engine can't and shouldn't satisfy). Mirrors scripts/conformance-rift-external.sh.
+addCommandAlias(
+  "mockRiftExternal",
+  "testOnly samples.mock.* -- --exclude-tags wiremock"
+)
