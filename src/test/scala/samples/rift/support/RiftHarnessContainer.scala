@@ -23,6 +23,7 @@ private final class RiftHarnessContainerLive(
     val adminUrl: String,
     val metricsUrl: String,
     host: String,
+    interceptPort: Int,
     info: RiftBuildInfo,
     val tools: RiftTools
 ) extends RiftHarness:
@@ -30,6 +31,11 @@ private final class RiftHarnessContainerLive(
   def hostFor(imposterPort: Int): String = host // identity — ports are published 1:1 to the host
 
   def buildInfo: UIO[RiftBuildInfo] = ZIO.succeed(info)
+
+  // The container starts a `--intercept-port` listener published 1:1, so feature 12 drives it the
+  // same way external mode does (HTTP /intercept admin on adminUrl + a CONNECT proxy to this port).
+  override def interceptEndpoint: UIO[Option[(String, Int)]] =
+    ZIO.succeed(Some((host, interceptPort)))
 
   // Hand out ports from the published pool by cycling a shared counter — NOT a host-freeness scan
   // (the default): the imposter binds inside the container, while the host port is held by Docker's
@@ -58,12 +64,15 @@ private final class RiftHarnessContainerLive(
 
 object RiftHarnessContainer:
   private val AdminPort = 2525
+  // The opt-in intercept / TLS-MITM listener (feature 12): started with `--intercept-port` and
+  // published 1:1 so a JDK CONNECT-proxy client can reach it at its declared port (#51).
+  private val InterceptPort = 8443
 
-  // Container ports published 1:1 to the host (see the class doc). 2525 admin; 4500–4599 covers the
-  // corpus imposters (declared 4501–4520) with margin; 4800–4899 covers the fixed Plane A fixtures
-  // (4800–4819) and the dynamic probe pool (4820–4899).
+  // Container ports published 1:1 to the host (see the class doc). 2525 admin; 8443 intercept; 4500–
+  // 4599 covers the corpus imposters (declared 4501–4520) with margin; 4800–4899 covers the fixed
+  // Plane A fixtures (4800–4819) and the dynamic probe pool (4820–4899).
   private val PublishedPorts: List[Int] =
-    AdminPort :: ((4500 to 4599) ++ (4800 to 4899)).toList
+    AdminPort :: InterceptPort :: ((4500 to 4599) ++ (4800 to 4899)).toList
 
   // Default tracks build-rift.sh's pinned rift 0.11.3, so the containerised engine and the host
   // rift-lint/rift-verify tools (from RIFT_BUILD_DIR) are one released build. Override with RIFT_IMAGE.
@@ -93,6 +102,7 @@ object RiftHarnessContainer:
       adminUrl,
       adminUrl,
       host,
+      container.mappedPort(InterceptPort),
       info,
       RiftTools.fromBuildDir(cfg.buildDir)
     )
@@ -104,7 +114,13 @@ object RiftHarnessContainer:
         val gc = GenericContainer(
           dockerImage = image,
           exposedPorts = PublishedPorts,
-          command = Seq("--port", AdminPort.toString, "--allow-injection"),
+          command = Seq(
+            "--port",
+            AdminPort.toString,
+            "--allow-injection",
+            "--intercept-port",
+            InterceptPort.toString
+          ),
           waitStrategy = Wait.forHttp("/imposters").forPort(AdminPort)
         )
         // Force fixed 1:1 host bindings (testcontainers otherwise maps to random host ports).
