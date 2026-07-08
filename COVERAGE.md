@@ -295,3 +295,41 @@ scenario-state endpoints over the C-ABI. Embedded also runs the full **portable*
   scenarios assert raw-Rift-only behavior a WireMock backend cannot satisfy — so they auto-skip
   rather than fail there; they run on the `rift`/`embedded` legs instead.
 - Findings and their fixes are tracked in [FINDINGS.md](FINDINGS.md).
+
+## Plane B — `rift-external` backend (issue #14)
+
+`MOCK_BACKEND=rift-external` connects the MockControl adapter (`zio.bdd.mock.rift.Rift.connect`,
+from `zio-bdd-rift` — already published, no library change) to a **real rift engine spawned by the
+Plane A `RiftHarness`** (`samples.rift.support.RiftHarness.layer`) — no Docker, no FFM/JDK-22
+floor, same engine build Plane A uses. `Backends.scala` composes `RiftHarness.layer ++
+Client.default ++ Provisioning` into `Rift.connect(harness.adminUrl, ports)(hostFor)`, where `ports`
+is a private 4600–4639 imposter pool (DESIGN §6.4 — disjoint from the corpus's 45xx and Plane A's
+in-harness probe pool 48xx).
+
+One integration wrinkle: `Rift.connect`'s `hostFor` contract wants the **full** `http://host:port`
+string for a given imposter port (see zio-bdd's own `ProxyRecordConformanceSpec`, which maps a
+testcontainers-published port: `hostFor = p => s"http://${host}:${mappedPort(p)}"`), whereas
+`RiftHarness.hostFor` returns a **bare hostname** (Plane A's own convention is to prepend the
+scheme and append the port itself, unmapped/identity — see `RiftConformanceSupport`'s
+`s"http://$host:$port$path"`). `Backends.scala` wraps it: `p => s"http://${harness.hostFor(p)}:$p"`,
+rather than changing `RiftHarness`'s Plane-A-only convention.
+
+**Exclusion set: `--exclude-tags wiremock`** (`mockRiftExternal` in `build.sbt`) — that's it. Since
+`rift-external` is a full rift engine (the same binary/build Plane A drives), it runs the entire
+capability surface `rift` (the Docker-container leg) does: Faults, StatefulScenarios,
+StateInspection, Scripting, ProxyRecord, Templating, native escape hatch, capability negotiation,
+and the `@rift`-tagged raw-imposter scenarios (samples 09/17/19) — the only tag excluded is
+`wiremock` (the two scenarios, in samples 17 and 19, that assert WireMock-specific behavior — e.g.
+"WireMock does not advertise Scripting" — which a rift engine can't and shouldn't satisfy; they
+`IGNORED`-skip rather than fail under the tag exclusion, same mechanism as every other backend leg).
+
+**Result:** all 23 `samples.mock.*` suites green under `MOCK_BACKEND=rift-external` with that
+exclusion — no capability gaps and no behavioral divergences found against the pinned rift 0.9.1
+build. The capability roll-up above (WireMock / Rift-container / Embedded) now has a fourth column
+in practice: `rift-external` matches the `Rift (container)` column exactly (✅ everywhere except the
+two `@wiremock`-only scenarios, which are `➖` by design on every non-WireMock backend).
+
+Harness: `scripts/conformance-rift-external.sh` fetches the engine (`build-rift.sh`, reusing
+`RIFT_BUILD_DIR` if already set) and runs `MOCK_BACKEND=rift-external sbt -batch mockRiftExternal`
+— no Docker, no `RIFT_IT` gate. `scripts/run-all.sh`'s `rift-external (Plane B)` layer now runs this
+script instead of its former `exit 77` SKIP stub.
