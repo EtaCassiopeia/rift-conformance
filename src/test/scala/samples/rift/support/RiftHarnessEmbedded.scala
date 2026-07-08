@@ -25,6 +25,9 @@ private final class RiftHarnessEmbeddedLive(
     val adminUrl: String,
     corpusRoot: Path,
     reloadConfigFile: Path,
+    interceptHost: String,
+    interceptPort: Int,
+    handle: EmbeddedAdmin.Handle,
     info: RiftBuildInfo,
     val tools: RiftTools,
     pendingRef: Ref[Boolean]
@@ -38,6 +41,22 @@ private final class RiftHarnessEmbeddedLive(
   def hostFor(imposterPort: Int): String = "127.0.0.1" // identity — imposters bind real host ports
 
   def buildInfo: UIO[RiftBuildInfo] = ZIO.succeed(info)
+
+  // Intercept (feature 12, #53): embedded drives it over the FFI, not HTTP — startIntercept gave us
+  // the listener endpoint, and rules/truststore go through the FFI handle. The CA-pem + list/clear
+  // scenarios (HTTP-only, tagged @intercept-http) are excluded for embedded (no FFI binding).
+  override def interceptEndpoint: UIO[Option[(String, Int)]] =
+    ZIO.succeed(Some((interceptHost, interceptPort)))
+
+  override def interceptAddRule(ruleJson: String): Task[Unit] = handle.interceptAddRules(ruleJson)
+
+  override def interceptTruststore(password: String): Task[Array[Byte]] =
+    ZIO.acquireReleaseWith(
+      ZIO.attemptBlocking(Files.createTempFile("rift-embedded-ts-", ".p12"))
+    )(p => ZIO.attemptBlocking(Files.deleteIfExists(p)).ignore) { p =>
+      handle.interceptExportTruststore(password, p.toAbsolutePath.toString) *>
+        ZIO.attemptBlocking(Files.readAllBytes(p))
+    }
 
   private val corpusAbs = corpusRoot.toAbsolutePath.toString
 
@@ -111,12 +130,19 @@ object RiftHarnessEmbedded:
         }
       )(p => ZIO.attemptBlocking(Files.deleteIfExists(p)).ignore)
       admin <- EmbeddedAdmin.serve(0, reloadConfigFile)
+      // Start the intercept/TLS-MITM listener (FFI) so feature 12 can drive it; the endpoint feeds
+      // `interceptEndpoint`. Rules/truststore go through the same handle.
+      intercept <- admin.handle.startIntercept
+      (iHost, iPort) = intercept
       info <- RiftBuildInfo.fromBuildDir(cfg.buildDir, engineVersion = admin.commit)
       pendingRef <- Ref.make(false)
     yield RiftHarnessEmbeddedLive(
       admin.adminUrl,
       cfg.corpusRoot,
       reloadConfigFile,
+      iHost,
+      iPort,
+      admin.handle,
       info,
       RiftTools.fromBuildDir(cfg.buildDir),
       pendingRef

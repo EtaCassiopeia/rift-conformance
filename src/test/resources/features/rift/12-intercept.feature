@@ -5,7 +5,13 @@ Feature: Intercept / TLS-MITM forward-proxy (rift#413) — CONNECT interception 
   # rift TLS-terminates with an intercept CA (minting a per-SNI leaf), matches the decrypted request
   # against intercept rules, and serves an inline stub or forwards to an imposter. Driven here with a
   # JDK HttpClient pointed at the intercept listener as its proxy, trusting the exported truststore.
+  #
+  # @intercept-http marks scenarios that use the HTTP-only intercept admin routes (ca.pem, rules
+  # list/clear) — embedded drives intercept over the C-ABI, which (as of zio-bdd 1.4.1) binds
+  # start/add-rules/export-truststore but not those, so RIFT_MODE=embedded excludes them. The core
+  # MITM matching scenarios (serve inline, forward) run under every intercept-capable mode.
 
+  @intercept-http
   Scenario: the intercept CA and truststore are exported for the SUT to trust
     Then the intercept CA PEM is exported
     And the intercept truststore is exported with password "changeit"
@@ -23,6 +29,7 @@ Feature: Intercept / TLS-MITM forward-proxy (rift#413) — CONNECT interception 
     Then the response status is 200
     And the response body is "upstream-ok"
 
+  @intercept-http
   Scenario: intercept rules can be listed and cleared
     Given an intercept rule serves 200 "hi" for host "a.example.com" path "/"
     Then the intercept rules count is 1

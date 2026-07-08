@@ -36,8 +36,13 @@ object Intercept12Suite
   private val http = HttpClient.newHttpClient()
   private val TrustPassword = "changeit"
 
-  // Rules are host-scoped and accumulate on the shared listener; clear them after every scenario so
-  // the count assertions and cross-scenario isolation hold even if one fails mid-way.
+  // Rules are host-scoped and accumulate on the shared listener. For external/container this HTTP
+  // DELETE actually clears them after each scenario (keeping the list/clear count assertions honest).
+  // Embedded has NO clear capability — the FFI binds start/add-rules/export-truststore but not
+  // list/clear, and its serveAdmin plane serves no `/intercept` HTTP (so the DELETE 404s, a no-op);
+  // embedded rules therefore persist for the engine's lifetime. That's safe only because every
+  // scenario here uses a UNIQUE host, so accumulated rules never shadow each other — a required
+  // convention for any embedded-capable scenario added later (there is no per-scenario reset there).
   afterScenario {
     ZIO
       .serviceWithZIO[RiftHarness](h => deleteRules(h.adminUrl))
@@ -45,17 +50,9 @@ object Intercept12Suite
       .ignore
   }
 
-  // ── admin API (/intercept/rules, ca.pem, truststore.p12) ──────────────────────────────────
-
-  private def postRule(adminUrl: String, ruleJson: String): IO[Throwable, Int] =
-    ZIO.attemptBlocking {
-      val req = HttpRequest
-        .newBuilder(URI.create(s"$adminUrl/intercept/rules"))
-        .header("Content-Type", "application/json")
-        .POST(HttpRequest.BodyPublishers.ofString(ruleJson))
-        .build()
-      http.send(req, HttpResponse.BodyHandlers.discarding()).statusCode()
-    }
+  // ── HTTP-only admin (list/clear/ca.pem) — external/container; embedded lacks these FFI bindings,
+  //    so the scenarios using them are tagged @intercept-http and excluded for embedded. Rule
+  //    creation + truststore export go through the RiftHarness seam (HTTP or FFI per mode) instead.
 
   private def deleteRules(adminUrl: String): IO[Throwable, Unit] =
     ZIO.attemptBlocking {
@@ -86,19 +83,12 @@ object Intercept12Suite
   private def jsonEscape(s: String): String =
     s.replace("\\", "\\\\").replace("\"", "\\\"")
 
-  /** Build an SSLContext that trusts the intercept CA, by loading the PKCS#12 truststore the admin
-    * API exports — exactly what a real SUT would do to trust the MITM leaf certs.
+  /** Build an SSLContext that trusts the intercept CA from the exported PKCS#12 truststore bytes —
+    * exactly what a real SUT would do to trust the MITM leaf certs. The bytes come from the harness
+    * seam (`interceptTruststore`), which is HTTP for external/container and FFI for embedded.
     */
-  private def interceptTrust(adminUrl: String): IO[Throwable, SSLContext] =
+  private def sslFromTruststore(bytes: Array[Byte]): IO[Throwable, SSLContext] =
     ZIO.attemptBlocking {
-      val req = HttpRequest
-        .newBuilder(URI.create(s"$adminUrl/intercept/truststore.p12?password=$TrustPassword"))
-        .GET()
-        .build()
-      val resp = http.send(req, HttpResponse.BodyHandlers.ofByteArray())
-      if resp.statusCode != 200 then
-        throw new RuntimeException(s"GET /intercept/truststore.p12 -> ${resp.statusCode}")
-      val bytes = resp.body()
       val ks = KeyStore.getInstance("PKCS12")
       ks.load(new ByteArrayInputStream(bytes), TrustPassword.toCharArray)
       val tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm)
@@ -117,7 +107,6 @@ object Intercept12Suite
       path: String
   ): ZIO[RiftHarness, Throwable, LastResponse] =
     for
-      admin <- ZIO.serviceWith[RiftHarness](_.adminUrl)
       ep <- ZIO.serviceWithZIO[RiftHarness](_.interceptEndpoint)
       hostPort <- ZIO
         .fromOption(ep)
@@ -125,7 +114,8 @@ object Intercept12Suite
           new RuntimeException("no intercept listener — RIFT_MODE does not support intercept")
         )
       (iHost, iPort) = hostPort
-      ssl <- interceptTrust(admin)
+      bytes <- ZIO.serviceWithZIO[RiftHarness](_.interceptTruststore(TrustPassword))
+      ssl <- sslFromTruststore(bytes)
       resp <- ZIO.attemptBlocking {
         val client = HttpClient
           .newBuilder()
@@ -187,11 +177,7 @@ object Intercept12Suite
         )}"}}],"action":{"serve":{"statusCode":$status,"headers":{"content-type":"text/plain"},"body":"${jsonEscape(
           body
         )}"}}}"""
-    ZIO.serviceWithZIO[RiftHarness](h =>
-      postRule(h.adminUrl, rule).flatMap(code =>
-        Assertions.assertTrue(code == 201, s"POST /intercept/rules (serve) -> $code (expected 201)")
-      )
-    )
+    ZIO.serviceWithZIO[RiftHarness](_.interceptAddRule(rule))
   }
 
   Given("an intercept rule forwards host " / string / " to the current imposter") {
@@ -199,11 +185,7 @@ object Intercept12Suite
       for
         port <- currentPort
         rule = s"""{"host":"${jsonEscape(host)}","action":{"forward":{"port":$port}}}"""
-        code <- ZIO.serviceWithZIO[RiftHarness](h => postRule(h.adminUrl, rule))
-        _ <- Assertions.assertTrue(
-          code == 201,
-          s"POST /intercept/rules (forward) -> $code (expected 201)"
-        )
+        _ <- ZIO.serviceWithZIO[RiftHarness](_.interceptAddRule(rule))
       yield ()
   }
 
