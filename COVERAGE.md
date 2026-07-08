@@ -48,6 +48,14 @@ that file).
   `RiftEmbeddedHarnessSpec` (real admin URL + zero `--allow-injection` child) and the runner's `ps`
   sweep.
 
+- **Intercept / TLS-MITM (#48)** — feature `12-intercept` is **new-capability** coverage (rift 0.10.0
+  intercept admin API + 0.11.0 FFI), with no shell antecedent to port. External mode starts an
+  `--intercept-port` listener (readiness-probed); the suite drives `/intercept/rules` (add/list/clear)
+  + CA/PKCS#12 truststore export, then CONNECT-tunnels a real HTTPS request through the listener with
+  a JDK `HttpClient` trusting the exported CA, asserting the decrypted request is served inline or
+  forwarded to an imposter. External only for now (embedded FFI `startIntercept` + container + a
+  Plane B intercept corpus are follow-ons).
+
 #### Port audit
 
 | Range | Owner | This checkpoint |

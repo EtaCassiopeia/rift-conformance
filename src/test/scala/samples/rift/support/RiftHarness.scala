@@ -4,7 +4,7 @@ import zio.*
 
 import java.net.URI
 import java.net.http.{HttpClient, HttpRequest, HttpResponse}
-import java.net.ServerSocket
+import java.net.{InetSocketAddress, ServerSocket, Socket}
 import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Path, Paths}
 import java.time.Duration as JDuration
@@ -43,6 +43,13 @@ trait RiftHarness:
         )
         .getOrElse(throw new RuntimeException(s"no free probe port in $lo..$hi"))
     }
+
+  /** The intercept / TLS-MITM listener's `(host, port)`, if this mode started one — for driving
+    * HTTPS `CONNECT` requests through it (feature 12, rift 0.10.0+). `None` when no intercept
+    * listener is running (the default; external mode starts one and overrides this). The intercept
+    * rules + CA/truststore admin is served on [[adminUrl]] whenever a listener is running.
+    */
+  def interceptEndpoint: UIO[Option[(String, Int)]] = ZIO.succeed(None)
 
   /** Swap in a `--configfile`-backed engine for the life of the returned `Scope`, reverting to a
     * plain engine (same admin/metrics ports) when the scope closes.
@@ -112,6 +119,7 @@ private final class RiftHarnessLive(
     val metricsUrl: String,
     adminPort: Int,
     metricsPort: Int,
+    interceptPort: Int,
     cfg: RiftHarnessConfig,
     engineRef: Ref[Process],
     pendingConfigRef: Ref[Option[Path]],
@@ -120,6 +128,8 @@ private final class RiftHarnessLive(
 ) extends RiftHarness:
   def hostFor(imposterPort: Int): String = "localhost" // identity in external mode
   def buildInfo: UIO[RiftBuildInfo] = ZIO.succeed(info)
+  override def interceptEndpoint: UIO[Option[(String, Int)]] =
+    ZIO.succeed(Some(("localhost", interceptPort)))
 
   def withConfigFile(json: String): ZIO[Scope, Throwable, Unit] =
     ZIO.acquireRelease(startConfigFileEngine(json))(path => revertToPlainEngine(path).orDie).unit
@@ -147,7 +157,7 @@ private final class RiftHarnessLive(
         Files.write(p, json.getBytes(StandardCharsets.UTF_8))
         p
       }
-      proc <- RiftHarness.rawSpawn(cfg, adminPort, metricsPort, Some(tmp))
+      proc <- RiftHarness.rawSpawn(cfg, adminPort, metricsPort, Some(tmp), Some(interceptPort))
       // Store BEFORE awaiting readiness so the layer finalizer reaps this process no matter what —
       // an engine that spawns but never becomes ready must not be orphaned. On a readiness failure
       // also force-kill it now so it doesn't hold the shared admin port for the rest of the run.
@@ -166,7 +176,7 @@ private final class RiftHarnessLive(
       old <- engineRef.get
       _ <- RiftHarness.killProcess(old)
       _ <- ZIO.attemptBlocking(Files.deleteIfExists(confPath)).ignore
-      proc <- RiftHarness.rawSpawn(cfg, adminPort, metricsPort, None)
+      proc <- RiftHarness.rawSpawn(cfg, adminPort, metricsPort, None, Some(interceptPort))
       // Same discipline as startConfigFileEngine: adopt the process into engineRef before the
       // readiness wait so a never-ready plain engine is still reaped, and force-kill on failure.
       _ <- engineRef.set(proc)
@@ -216,7 +226,7 @@ object RiftHarness:
       // explicitly there), so a retry starts with the ports actually freed.
       spawned <- acquireReadyEngine(cfg, useFreshAdminPort = false)
         .catchAll(_ => acquireReadyEngine(cfg, useFreshAdminPort = true).retry(Schedule.recurs(4)))
-      (proc0, port, metricsPort) = spawned
+      (proc0, port, metricsPort, interceptPort) = spawned
       info <- RiftBuildInfo.fromBuildDir(cfg.buildDir, engineVersion = None)
       engineRef <- Ref.make(proc0)
       pendingConfigRef <- Ref.make(Option.empty[Path])
@@ -228,6 +238,7 @@ object RiftHarness:
       s"http://localhost:$metricsPort",
       port,
       metricsPort,
+      interceptPort,
       cfg,
       engineRef,
       pendingConfigRef,
@@ -242,11 +253,12 @@ object RiftHarness:
   private def acquireReadyEngine(
       cfg: RiftHarnessConfig,
       useFreshAdminPort: Boolean
-  ): IO[Throwable, (Process, Int, Int)] =
+  ): IO[Throwable, (Process, Int, Int, Int)] =
     for
       port <- if useFreshAdminPort then freePort else choosePort(cfg.preferredAdminPort)
       metricsPort <- freePort
-      proc <- rawSpawn(cfg, port, metricsPort, None)
+      interceptPort <- freePort
+      proc <- rawSpawn(cfg, port, metricsPort, None, Some(interceptPort))
       url = s"http://localhost:$port"
       metricsUrl = s"http://localhost:$metricsPort"
       // Readiness can fail with the engine still ALIVE (a probe times out while the process runs —
@@ -258,9 +270,14 @@ object RiftHarness:
           // freshly-probed-then-released ephemeral port, which the OS can briefly delay rebinding) —
           // so "ready" must wait for both, or an immediate metrics probe can race a listener still
           // coming up.
-          awaitReady(s"$metricsUrl/metrics", proc))
+          awaitReady(s"$metricsUrl/metrics", proc) *>
+          // The intercept listener binds a plain TCP port (it speaks CONNECT, not GET-able HTTP), so
+          // probe it with a raw connect. Gating on it means a rift that silently no-ops
+          // `--intercept-port` fails the harness loudly rather than letting feature 12 race a
+          // not-yet-bound (or absent) listener.
+          awaitTcpReady("localhost", interceptPort, proc))
           .onError(_ => ZIO.attemptBlocking(proc.destroyForcibly()).ignore)
-    yield (proc, port, metricsPort)
+    yield (proc, port, metricsPort, interceptPort)
 
   /** Prefer 2525, but fall back to a free port if it is *busy* so a stray engine never wedges the
     * run; `adminUrl` then reflects the port actually chosen. Only a bind failure (IOException)
@@ -295,7 +312,8 @@ object RiftHarness:
       cfg: RiftHarnessConfig,
       port: Int,
       metricsPort: Int,
-      configFile: Option[Path]
+      configFile: Option[Path],
+      interceptPort: Option[Int]
   ): Task[Process] =
     ZIO.attemptBlocking {
       val binary = cfg.buildDir.resolve("rift").toString
@@ -311,7 +329,11 @@ object RiftHarness:
         "--metrics-port",
         metricsPort.toString
       )
-      val args = baseArgs ++ configFile.toList.flatMap(p => List("--configfile", p.toString))
+      // --intercept-port starts the opt-in TLS-MITM listener (rift 0.10.0+); its rules + CA share the
+      // admin API. Harmless when no intercept rules are posted, so external mode always starts one.
+      val args = baseArgs ++
+        configFile.toList.flatMap(p => List("--configfile", p.toString)) ++
+        interceptPort.toList.flatMap(p => List("--intercept-port", p.toString))
       val pb = new ProcessBuilder(args*)
       pb.directory(cfg.corpusRoot.toFile)
       pb.redirectErrorStream(true)
@@ -338,6 +360,37 @@ object RiftHarness:
       if !proc.waitFor(5, TimeUnit.SECONDS) then proc.destroyForcibly()
       if !proc.waitFor(5, TimeUnit.SECONDS) then
         throw new RuntimeException(s"rift (pid ${proc.pid()}) survived teardown")
+    }
+
+  /** Bounded, blocking readiness probe that a plain TCP listener is accepting on `host:port` (the
+    * intercept listener, which speaks `CONNECT` rather than answering a GET). Watches the child: if
+    * the engine exits early it fails fast with the exit code. Same budget/spacing as
+    * [[awaitReady]].
+    */
+  private[support] def awaitTcpReady(host: String, port: Int, proc: Process): IO[Throwable, Unit] =
+    ZIO.attemptBlocking {
+      val deadline = java.lang.System.nanoTime + ReadinessBudgetMs * 1000000L
+      var ready = false
+      var lastErr: Throwable = null
+      while !ready && java.lang.System.nanoTime < deadline do
+        if !proc.isAlive then
+          throw new RuntimeException(
+            s"rift exited early (code ${proc.exitValue()}) before intercept :$port came up"
+          )
+        try
+          val s = new Socket()
+          try s.connect(new InetSocketAddress(host, port), 1000)
+          finally s.close()
+          ready = true
+        catch
+          case e: Throwable =>
+            lastErr = e
+            Thread.sleep(ReadinessSpacingMs)
+      if !ready then
+        throw new RuntimeException(
+          s"intercept listener not ready on $host:$port within ${ReadinessBudgetMs}ms",
+          lastErr
+        )
     }
 
   /** Bounded, blocking readiness probe against `probeUrl` (a full URL — the admin API's
