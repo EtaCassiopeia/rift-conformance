@@ -56,8 +56,12 @@ that file).
   forwarded to an imposter. Runs under **external**, **container** (#51 — publishes an
   `--intercept-port` 1:1), and **embedded** (#53 — via the FFI `startIntercept`/`interceptAddRules`/
   `interceptExportTruststore` behind a `RiftHarness` intercept-admin seam; the HTTP-only ca.pem +
-  rules-list/clear scenarios are tagged `@intercept-http` and skipped for embedded). A Plane B
-  intercept corpus (#54) + a caller-provided-CA scenario (#55) are the remaining follow-ons.
+  rules-list/clear scenarios are tagged `@intercept-http` and skipped for embedded). **Plane B**
+  intercept corpus is `24-intercept.feature` (#54) — the portable `MockControl.Intercept` capability
+  (`respondWith` inline + `redirectTo` a mock space), driven through the FFM backend's TLS-MITM proxy
+  with a CA-trusting JDK client; tagged `@intercept` so it runs on `MOCK_BACKEND=embedded` and is
+  excluded from wiremock + rift-external (which don't advertise the capability). A caller-provided-CA
+  scenario (#55) is the remaining follow-on.
 
 #### Port audit
 

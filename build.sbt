@@ -127,14 +127,15 @@ addCommandAlias(
 // chosen by the MOCK_BACKEND env var (see samples.mock.support.Backends).
 addCommandAlias("lintFeatures", "testOnly samples.* -- --dry-run")
 addCommandAlias("mockSmoke", "testOnly samples.mock.* -- --include-tags smoke")
-// `rift` is excluded alongside scripting/templating/proxyrecord — matching zio-bdd-samples'
-// scripts/conformance.sh (`--exclude-tags scripting,templating,proxyrecord,rift`) — because
-// several @rift-tagged scenarios (samples 09/17/19) assert raw-Rift-only behavior that a WireMock
-// backend cannot satisfy by design (see COVERAGE.md's "Plane B" notes); without this exclusion
-// `mockConformance` is red on MOCK_BACKEND=wiremock for reasons unrelated to library conformance.
+// `rift` is excluded alongside scripting/templating/proxyrecord/intercept — matching zio-bdd-samples'
+// scripts/conformance.sh (`--exclude-tags scripting,templating,proxyrecord,rift`) plus `intercept`
+// (#54, a capability WireMock doesn't advertise) — because several @rift-tagged scenarios (samples
+// 09/17/19) assert raw-Rift-only behavior that a WireMock backend cannot satisfy by design (see
+// COVERAGE.md's "Plane B" notes); without this exclusion `mockConformance` is red on
+// MOCK_BACKEND=wiremock for reasons unrelated to library conformance.
 addCommandAlias(
   "mockConformance",
-  "testOnly samples.mock.* -- --exclude-tags scripting,templating,proxyrecord,rift"
+  "testOnly samples.mock.* -- --exclude-tags scripting,templating,proxyrecord,rift,intercept"
 )
 // The embedded (in-process Rift FFI) backend has different capabilities than wiremock: it CAN
 // run scripting/templating (a real Rift engine) but not the wiremock-native / stateful / negotiation
@@ -146,8 +147,10 @@ addCommandAlias(
 // `rift-external` (issue #14) is a real rift engine spawned by the Plane A RiftHarness (no
 // Docker, no FFM floor) — it advertises and runs the full capability surface, so it only excludes
 // `wiremock` (the two raw-WireMock-only scenarios, samples 17/19, that assert WireMock-specific
-// behavior a rift engine can't and shouldn't satisfy). Mirrors scripts/conformance-rift-external.sh.
+// behavior a rift engine can't and shouldn't satisfy) and `intercept` (#54 — the rift-external
+// MockControl is connected without an intercept proxy, so it doesn't advertise the Intercept
+// capability). Mirrors scripts/conformance-rift-external.sh.
 addCommandAlias(
   "mockRiftExternal",
-  "testOnly samples.mock.* -- --exclude-tags wiremock"
+  "testOnly samples.mock.* -- --exclude-tags wiremock,intercept"
 )
