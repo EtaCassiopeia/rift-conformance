@@ -2,6 +2,14 @@
 
 This file is the audit trail for the shell-suite → two-plane-harness migration (DESIGN §11).
 
+**Corpus location (#16):** the canonical JSON corpus, CSV lookup data, and injection fixtures now
+live in-repo under `./corpus` (`corpus/imposters/*.json`, `corpus/data/products.csv`,
+`corpus/fixtures/injection/*`), vendored from `rift-imposter-samples`. `RIFT_CORPUS_ROOT` defaults
+to `corpus` (`RiftHarnessConfig.DefaultCorpusRoot`) — no sibling checkout is required to run Plane
+A. The historical checkpoint records below predate the vendoring and cite the old sibling-repo
+path (`~/Projects/rift-imposter-samples/...`) as it existed at the time; they are left as-is for
+audit-trail accuracy.
+
 ## The parity-checkpoint rule
 
 A shell leg is **deleted only after** its Plane A replacement has run **green on the same engine

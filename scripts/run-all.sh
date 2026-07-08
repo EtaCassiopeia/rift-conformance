@@ -14,7 +14,7 @@
 #
 # Env:
 #   RIFT_BUILD_DIR    pre-fetched engine dir (skips build-rift.sh's download)
-#   RIFT_CORPUS_ROOT  imposter corpus root (default ../rift-imposter-samples)
+#   RIFT_CORPUS_ROOT  imposter corpus root (default ./corpus, vendored in-repo)
 #   RIFT_IT           set to 1 to attempt the Docker-gated rift-container layer (#12)
 #
 # Exit code: 0 iff the Plane A layer passed and no layer FAILed (SKIPs never fail the run).

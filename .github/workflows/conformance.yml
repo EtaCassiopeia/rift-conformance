@@ -25,11 +25,10 @@ jobs:
         run: sbt -batch "Test/compile; scalafmtCheckAll; scalafmtSbtCheck"
 
   # Plane A against the real rift engine, fetched as a published release (#38 — no Rust build
-  # needed). Gated on workflow_dispatch until the corpus is vendored in-repo (#16); until then
-  # RIFT_CORPUS_ROOT points at a sibling checkout that only exists on a maintainer's machine.
+  # needed). The corpus is vendored in-repo under ./corpus (#16), so this runs on every push/PR,
+  # same as compile-and-format.
   plane-a-engine:
     name: Plane A — engine conformance
-    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -42,6 +41,11 @@ jobs:
 
       - name: Set up sbt
         uses: sbt/setup-sbt@v1
+
+      # The released Linux rift binary dynamically links LuaJIT (the `lua` scripting engine), which
+      # isn't on the bare runner — install it so `rift --version`/spawn works.
+      - name: Install rift runtime deps (LuaJIT)
+        run: sudo apt-get update && sudo apt-get install -y libluajit-5.1-2
 
       - name: Fetch released rift
         run: |
@@ -56,4 +60,5 @@ jobs:
         run: sbt -batch engineConformance
         env:
           RIFT_MODE: external
+          # Explicit for clarity even though this now matches RiftHarnessConfig.DefaultCorpusRoot.
           RIFT_CORPUS_ROOT: ${{ github.workspace }}/corpus

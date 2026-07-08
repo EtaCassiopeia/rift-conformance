@@ -45,7 +45,7 @@ final case class RiftHarnessConfig(
 
 object RiftHarnessConfig:
   val DefaultAdminPort = 2525
-  val DefaultCorpusRoot = "../rift-imposter-samples"
+  val DefaultCorpusRoot = "corpus"
 
   /** Read config from the environment. `RIFT_BUILD_DIR` is required — it names the released build
     * produced by scripts/build-rift.sh; there is no safe default for it.

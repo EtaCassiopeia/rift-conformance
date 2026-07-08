@@ -283,7 +283,7 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
       finally is.close()
     }
 
-  // ── corpus (the numbered, byte-fidelity imposters in rift-imposter-samples) ───────────────
+  // ── corpus (the numbered, byte-fidelity imposters vendored under ./corpus) ────────────────
 
   /** The corpus imposters directory: `$RIFT_CORPUS_ROOT/imposters` (default matches the harness's).
     */
@@ -291,7 +291,7 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
     val root = Option(java.lang.System.getenv("RIFT_CORPUS_ROOT"))
       .map(_.trim)
       .filter(_.nonEmpty)
-      .getOrElse("../rift-imposter-samples")
+      .getOrElse("corpus")
     Paths.get(root).resolve("imposters")
 
   /** The corpus `.json` files, sorted (add-never-renumber ⇒ stable ordering). */
