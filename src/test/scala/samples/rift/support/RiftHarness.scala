@@ -51,6 +51,39 @@ trait RiftHarness:
     */
   def interceptEndpoint: UIO[Option[(String, Int)]] = ZIO.succeed(None)
 
+  /** Add one intercept rule (feature 12). Default: `POST {adminUrl}/intercept/rules` over HTTP
+    * (external/container, where intercept shares the HTTP admin plane). Embedded overrides this
+    * with the FFI (`interceptAddRules`), because its admin plane drives intercept over the C-ABI,
+    * not HTTP.
+    */
+  def interceptAddRule(ruleJson: String): Task[Unit] =
+    ZIO.attemptBlocking {
+      val req = HttpRequest
+        .newBuilder(URI.create(s"$adminUrl/intercept/rules"))
+        .header("Content-Type", "application/json")
+        .POST(HttpRequest.BodyPublishers.ofString(ruleJson))
+        .build()
+      val code = RiftHarness.client.send(req, HttpResponse.BodyHandlers.discarding()).statusCode()
+      if code != 201 then
+        throw new RuntimeException(s"POST /intercept/rules -> $code (expected 201)")
+    }
+
+  /** The intercept truststore (PKCS#12) bytes, for a SUT to trust the MITM leaf certs (feature 12).
+    * Default: HTTP `GET {adminUrl}/intercept/truststore.p12`. Embedded overrides via the FFI
+    * (`interceptExportTruststore` to a temp file, read back) — no HTTP truststore route there.
+    */
+  def interceptTruststore(password: String): Task[Array[Byte]] =
+    ZIO.attemptBlocking {
+      val req = HttpRequest
+        .newBuilder(URI.create(s"$adminUrl/intercept/truststore.p12?password=$password"))
+        .GET()
+        .build()
+      val resp = RiftHarness.client.send(req, HttpResponse.BodyHandlers.ofByteArray())
+      if resp.statusCode != 200 then
+        throw new RuntimeException(s"GET /intercept/truststore.p12 -> ${resp.statusCode}")
+      resp.body()
+    }
+
   /** Swap in a `--configfile`-backed engine for the life of the returned `Scope`, reverting to a
     * plain engine (same admin/metrics ports) when the scope closes.
     */
@@ -189,7 +222,7 @@ object RiftHarness:
   private val ReadinessBudgetMs = 15000L
   private val ReadinessSpacingMs = 100L
   private val httpTimeout = JDuration.ofSeconds(2)
-  private val client = HttpClient.newHttpClient()
+  private[support] val client = HttpClient.newHttpClient()
 
   /** Scoped so the engine process is torn down when the scope closes; shared across suites so the
     * engine starts once per sbt run.

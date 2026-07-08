@@ -27,8 +27,39 @@ object EmbeddedAdmin:
     */
   def available: Boolean = EmbeddedRift.available
 
-  /** The in-process admin API's coordinates plus the engine's build identity. */
-  final case class Admin(adminUrl: String, adminPort: Int, commit: Option[String], version: String)
+  /** The in-process admin API's coordinates + build identity, plus a [[Handle]] for the FFI-only
+    * operations (intercept) the HTTP admin plane doesn't expose in embedded mode.
+    */
+  final case class Admin(
+      adminUrl: String,
+      adminPort: Int,
+      commit: Option[String],
+      version: String,
+      handle: Handle
+  )
+
+  /** Wraps the (package-private) `EmbeddedEngine` so the harness can drive the intercept C-ABI
+    * (`start_intercept`/`add_rules`/`export_truststore`) without naming the private type. The
+    * embedded intercept surface is FFI-only — `serveAdmin` does not expose `/intercept` over HTTP —
+    * so feature 12's rule/truststore admin routes through here for embedded (#53). The engine lives
+    * in the scope opened by [[serve]]; this handle must only be used within that scope.
+    */
+  final class Handle private[EmbeddedAdmin] (engine: EmbeddedEngine):
+    /** Start the intercept/TLS-MITM listener on loopback; yields its `(host, port)`. */
+    def startIntercept: IO[Throwable, (String, Int)] =
+      engine
+        .startIntercept("""{"host":"127.0.0.1","port":0}""")
+        .mapError(mockErr("startIntercept"))
+        .map(i => ("127.0.0.1", i.interceptPort))
+
+    def interceptAddRules(rulesJson: String): IO[Throwable, Unit] =
+      engine.interceptAddRules(rulesJson).mapError(mockErr("interceptAddRules"))
+
+    /** Export the intercept truststore (PKCS#12) to `outPath`. */
+    def interceptExportTruststore(password: String, outPath: String): IO[Throwable, Unit] =
+      engine
+        .interceptExportTruststore("pkcs12", password, outPath)
+        .mapError(mockErr("interceptExportTruststore"))
 
   /** Start the in-process engine and its real admin API on loopback:`port` (0 → OS-assigned),
     * seeding `configFile` so the admin API's `POST /admin/reload` reconciles toward it (feature
@@ -47,7 +78,7 @@ object EmbeddedAdmin:
           )}"}"""
       info <- engine.serveAdmin(opts).mapError(mockErr("serveAdmin"))
       build <- engine.buildInfo.mapError(mockErr("buildInfo"))
-    yield Admin(info.adminUrl, info.adminPort, build.commit, build.version)
+    yield Admin(info.adminUrl, info.adminPort, build.commit, build.version, new Handle(engine))
 
   private def mockErr(op: String): zio.bdd.mock.MockError => Throwable =
     e => new RuntimeException(s"embedded $op failed: $e")

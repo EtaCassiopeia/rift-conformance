@@ -89,14 +89,18 @@ addCommandAlias("engineConformance", "testOnly samples.rift.*")
 // `external` surface — a separate metrics port and the record/replay proxy plane), and the
 // external-only RiftHarnessSpec (which asserts on a spawned child in `ps`, absent by design here).
 // Enumerated explicitly rather than tag-filtered because 03-faults-transport shares `@transport`
-// with 09/10 yet MUST run. rift-lint/verify parse specs run too (engine-independent).
+// with 09/10 yet MUST run. Includes 12-intercept (#53) with `--exclude-tags intercept-http` — the
+// embedded FFI binds start-intercept/add-rules/export-truststore but not the HTTP-only ca.pem +
+// rules-list/clear routes, so those two scenarios (tagged @intercept-http) are skipped here. The
+// zio-test specs run in a second step (the zio-bdd `--exclude-tags` arg is not theirs to parse).
 addCommandAlias(
   "engineEmbedded",
-  "testOnly samples.rift.ConsistencyGateSuite samples.rift.CoreServing02Suite " +
+  "; testOnly samples.rift.ConsistencyGateSuite samples.rift.CoreServing02Suite " +
     "samples.rift.FaultsTransport03Suite samples.rift.ScriptingBounds04Suite " +
     "samples.rift.Templating05Suite samples.rift.Behaviors06Suite samples.rift.SpacesFsm07Suite " +
-    "samples.rift.AdminSurface08Suite samples.rift.Reload11Suite " +
-    "samples.rift.RiftEmbeddedHarnessSpec samples.rift.RiftToolsParseSpec"
+    "samples.rift.AdminSurface08Suite samples.rift.Reload11Suite samples.rift.Intercept12Suite " +
+    "-- --exclude-tags intercept-http" +
+    " ; testOnly samples.rift.RiftEmbeddedHarnessSpec samples.rift.RiftToolsParseSpec"
 )
 
 // Plane A container pass (issue #12, RIFT_MODE=container): the acceptance subset the Docker-run
