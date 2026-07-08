@@ -40,7 +40,7 @@ Feature: Faults and transport errors
     And the response body is "ok"
 
   # rift#309: a top-level `fault` response should abort the connection (Mountebank parity), not
-  # return HTTP 502. This build (0.9.1) resets at the transport level, so the historical @gap is
+  # return HTTP 502. This build (0.11.3) resets at the transport level, so the historical @gap is
   # resolved — we assert the correct behavior, which now guards against a regression.
   # https://github.com/EtaCassiopeia/rift/issues/309
   Scenario: top-level fault resets the connection at the transport level (rift#309)
