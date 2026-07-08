@@ -131,6 +131,27 @@ object Intercept12Suite
 
   // ── steps ─────────────────────────────────────────────────────────────────────────────────
 
+  Then("the exported intercept CA is the caller-provided test CA") {
+    for
+      seeded <- ZIO.serviceWithZIO[RiftHarness](_.interceptCaPem)
+      expected <- ZIO
+        .fromOption(seeded)
+        .orElseFail(new RuntimeException("this mode seeded no caller CA (interceptCaPem is None)"))
+      exported <- ZIO.serviceWithZIO[RiftHarness](h =>
+        ZIO.attemptBlocking {
+          val req =
+            HttpRequest.newBuilder(URI.create(s"${h.adminUrl}/intercept/ca.pem")).GET().build()
+          http.send(req, HttpResponse.BodyHandlers.ofString())
+        }
+      )
+      _ <- Assertions.assertTrue(
+        exported.statusCode == 200 && exported.body.trim == expected.trim,
+        s"exported /intercept/ca.pem (${exported.statusCode}) should byte-equal the provided test CA — " +
+          s"proving rift loaded --intercept-ca-cert rather than minting an ephemeral CA"
+      )
+    yield ()
+  }
+
   Then("the intercept CA PEM is exported") {
     ZIO.serviceWithZIO[RiftHarness] { h =>
       ZIO

@@ -60,8 +60,11 @@ that file).
   intercept corpus is `24-intercept.feature` (#54) — the portable `MockControl.Intercept` capability
   (`respondWith` inline + `redirectTo` a mock space), driven through the FFM backend's TLS-MITM proxy
   with a CA-trusting JDK client; tagged `@intercept` so it runs on `MOCK_BACKEND=embedded` and is
-  excluded from wiremock + rift-external (which don't advertise the capability). A caller-provided-CA
-  scenario (#55) is the remaining follow-on.
+  excluded from wiremock + rift-external (which don't advertise the capability). Finally, external
+  mode seeds a **committed throwaway test CA** (`src/test/resources/rift-fixtures/intercept/ca-*.pem`)
+  via rift 0.11.3's `--intercept-ca-cert/--key` and asserts the exported `/intercept/ca.pem`
+  byte-equals it (feature-12 `@intercept-caller-ca`, external-only, #55) — proving rift loaded the
+  caller CA rather than minting an ephemeral one. All #51 intercept follow-ons are now landed.
 
 #### Port audit
 
