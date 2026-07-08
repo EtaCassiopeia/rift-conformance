@@ -339,7 +339,7 @@ and the `@rift`-tagged raw-imposter scenarios (samples 09/17/19) — the only ta
 `IGNORED`-skip rather than fail under the tag exclusion, same mechanism as every other backend leg).
 
 **Result:** all 23 `samples.mock.*` suites green under `MOCK_BACKEND=rift-external` with that
-exclusion — no capability gaps and no behavioral divergences found against the pinned rift 0.9.1
+exclusion — no capability gaps and no behavioral divergences found against the pinned rift 0.11.3
 build. The capability roll-up above (WireMock / Rift-container / Embedded) now has a fourth column
 in practice: `rift-external` matches the `Rift (container)` column exactly (✅ everywhere except the
 two `@wiremock`-only scenarios, which are `➖` by design on every non-WireMock backend).
