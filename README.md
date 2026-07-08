@@ -11,6 +11,9 @@ The dedicated conformance suite for [Rift](https://github.com/EtaCassiopeia/rift
   WireMock / embedded-FFI backends). A red here with Plane A green is a **library** finding. Migrated
   in from `zio-bdd-samples`.
 
+The Plane B mock corpus (issue #13) now lives in this repo under `src/test/scala/samples/mock/`,
+driven by `MOCK_BACKEND` (default `wiremock`, in-process, no Docker required).
+
 Both planes share one `RiftHarness` (engine lifecycle) and one engine build, so running them together
 gives differential (engine-direct vs engine-via-adapter) coverage. **This is how one suite tests both
 libraries** — the Rift engine *and* the zio-bdd mock stack.

@@ -226,3 +226,72 @@ Harness: `RiftHarness` now spawns the engine with a fresh `--metrics-port` and e
 > deferred to #11.
 
 ## Phase 2 admin/topology/proxy/reload surface — COMPLETE ✅ (features 07–11 all green)
+
+## Plane B — MockControl mock corpus (issue #13)
+
+Migrated from `zio-bdd-samples` (`src/test/scala/samples/mock/`,
+`src/test/resources/features/mock/`). Feature area → sample → per-backend status. Legend: ✅ pass ·
+❌ fail (→ FINDINGS) · ➖ n/a by design (capability not advertised) · ⏳ gated/not-run · 🟡 partial.
+
+### Samples
+
+Backends: **WireMock** (in-process, Correlated), **Rift** (Docker container, all
+capabilities), **Embedded** (in-process Rift via Panama FFI — PerInstance, core
+port + Faults/Scripting/ProxyRecord/Templating; Stateful/StateInspection `➖` by
+design, see F4/zio-bdd#185).
+
+| # | Sample | Area / capability | Tags | WireMock | Rift | Embedded |
+|---|--------|-------------------|------|:--------:|:----:|:--------:|
+| 01 | basic-matching | method + exact path, status, Text/Json/Empty body | `@portable` | ✅ | ✅ | ✅ |
+| 02 | path-matching | PathMatch Exact/Regex/Template/Any | `@portable` | ✅ | ✅ | ✅ |
+| 03 | value-matching | header/query Equals/Contains/Matches | `@portable` | ✅ | ✅ | ✅ |
+| 04 | body-matching | BodyMatch Equals/Contains/JsonPath | `@portable` | ✅ | ✅ | ✅ |
+| 05 | response-fidelity | base64 body, multi-value headers (#162), latency | `@portable` | ✅ | ✅ | ✅ |
+| 06 | rule-precedence | Overlay/Base, add/remove/replaceRules | `@portable` | ✅ | ✅ | ✅ |
+| 07 | lifecycle-isolation | per-space destroy, space-local received() | `@portable` | ✅ | ✅ | ✅ |
+| 08 | received-verification | count, method/path, body | `@portable` | ✅ | ✅ | ✅ |
+| 09 | mock-sources | Dsl (portable); raw Resource/File/Dir on Rift | `@sources` | ✅ (Dsl) | ✅ | ✅ (Dsl) |
+| 10 | fixtures-tags | MockFixtures `@mock(...)` + catalog, auto-teardown | `@fixtures @portable` | ✅ | ✅ | ✅ |
+| 11 | faults | FaultKind ConnReset/Empty/MalformedChunk/RandomThenClose/LatencySpike | `@faults` | ✅ | ✅ | ✅ |
+| 12 | stateful-fsm | StatefulScenarios define/reset | `@stateful` | ✅ | ✅ | ➖ |
+| 13 | state-inspection | currentState/setState | `@stateinspection` | ✅ | ✅ | ➖ |
+| 14 | scripting | Script (Rhai) | `@scripting` | ➖ | ✅ | ✅ |
+| 15 | proxy-record | ProxyRecord (capability surface; round-trip = library conformance) | `@proxyrecord` | ➖ | ✅ | ✅ |
+| 16 | templating | ResponseTemplate path + body captures | `@templating` | ➖ | ✅ | ✅ |
+| 17 | native-escape-hatch | provisionNative WireMock / Rift | `@native` | ✅ | ✅ | ➖ |
+| 18 | error-paths | RuleNotFound/SpaceNotFound/InvalidDefinition | `@errors` | ✅ | ✅ | ✅ |
+| 19 | capability-negotiation | require ok/fail; capabilities honest | `@negotiation` | ✅ | ✅ | ➖ |
+| 20 | inflight-reconfiguration | live replaceRules/addRule/removeRule, no restart | `@portable @reconfig` | ✅ | ✅ | ✅ |
+| 21 | stress-edge-cases | unicode, 100k body, special chars, root path, multi-query, space churn | `@portable @stress` | ✅ | ✅ | ✅ |
+| 22 | overlapping-steps | most-specific step tie-break (#186 verification), no backend | `@portable` | ✅ | ✅ | ✅ |
+| 23 | extractors-advanced | word/rest, bigDecimal precision, uuid, long bound, regex, oneOf, optional | `@portable` | ✅ | ✅ | ✅ |
+
+### Capability roll-up
+
+| Capability | WireMock | Rift (container) | Embedded (FFI) | Sample |
+|------------|:--------:|:----:|:----:|--------|
+| Faults | ✅ | ✅ | ✅ | 11 |
+| StatefulScenarios | ✅ | ✅ | ➖ | 12 |
+| StateInspection | ✅ | ✅ | ➖ | 13 |
+| Scripting | ➖ | ✅ | ✅ | 14 |
+| ProxyRecord | ➖ | ✅ | ✅ | 15 |
+| Templating | ➖ | ✅ | ✅ | 16 |
+
+Since [zio-bdd#185](https://github.com/EtaCassiopeia/zio-bdd/issues/185) landed (F4, now closed),
+the **embedded FFI** adapter advertises **and executes** Faults/Scripting/ProxyRecord/Templating —
+the stub-based caps (`_rift.fault`, `_rift.script`, a Mountebank `proxy`, an `is`+`_behaviors.copy`
+template) wire to the same Rift engine over the C-ABI, verified green on the embedded leg (samples
+11/14/15/16). **StatefulScenarios/StateInspection stay `➖`** on embedded by design — there are no
+scenario-state endpoints over the C-ABI. Embedded also runs the full **portable** surface (01–10,
+18, 20, 21, 22).
+
+### Notes
+
+- **09** raw sources (Json/Resource/File/Dir) are Rift-only via `provision`; WireMock requires
+  `provisionNative` for raw docs (sample 17), so 09 tests only the Dsl source on WireMock — an
+  intentional adapter asymmetry, not a gap.
+- `mockConformance` (the default CI leg) excludes `scripting`, `templating`, `proxyrecord`, `rift` —
+  the three capability tags are `➖` on WireMock by design (see the roll-up above), and `@rift`
+  scenarios assert raw-Rift-only behavior a WireMock backend cannot satisfy — so they auto-skip
+  rather than fail there; they run on the `rift`/`embedded` legs instead.
+- Findings and their fixes are tracked in [FINDINGS.md](FINDINGS.md).
