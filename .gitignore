@@ -1,0 +1,20 @@
+# sbt / build output
+target/
+project/target/
+project/project/
+
+# Metals / Bloop / BSP tooling
+.metals/
+.bloop/
+.bsp/
+
+# IDE
+.idea/
+*.iml
+
+# Ephemeral agent artifacts: ship-issues run-log + isolated worktrees
+.rift-ship/
+.claude/worktrees/
+
+# OS
+.DS_Store
