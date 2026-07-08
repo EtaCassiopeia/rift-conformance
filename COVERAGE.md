@@ -41,6 +41,13 @@ same verdict on the same SHA. The Plane A gate additionally proves version coher
 offending files on failure (its RED path is verified: a corrupted corpus file turns it red naming
 that file).
 
+- **Embedded Plane A (#18)** — `RIFT_MODE=embedded` runs the same suites against the engine
+  **in-process** over Panama FFM (`rift_serve_admin`, zero process spawn, JDK 22+): features 01–08 +
+  11-reload all green (`sbt engineEmbedded`), the corpus lint/verify gate included. 09/10
+  (metrics/proxy-record) stay `external`/`container` (see DESIGN §3.1). Verified via
+  `RiftEmbeddedHarnessSpec` (real admin URL + zero `--allow-injection` child) and the runner's `ps`
+  sweep.
+
 #### Port audit
 
 | Range | Owner | This checkpoint |

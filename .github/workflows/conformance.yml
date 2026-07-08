@@ -62,3 +62,49 @@ jobs:
           RIFT_MODE: external
           # Explicit for clarity even though this now matches RiftHarnessConfig.DefaultCorpusRoot.
           RIFT_CORPUS_ROOT: ${{ github.workspace }}/corpus
+
+  # Same Plane A oracle, run IN-PROCESS over Panama FFM (#18): zero process spawn, no Docker. Needs a
+  # JDK 22+ runtime (the FFM binding jar is Java-22 bytecode — zio-bdd#247), so this job runs on JDK
+  # 25 while the external job stays on 21. The engine is the bundled librift_ffi native; the released
+  # rift is still fetched for the lint/verify tools + BUILD_INFO (used identically in both modes).
+  plane-a-embedded:
+    name: Plane A — engine conformance (embedded, FFM)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - name: Set up sbt
+        uses: sbt/setup-sbt@v1
+
+      # Both the released rift tools and the librift_ffi native dynamically link LuaJIT (scripting).
+      - name: Install rift runtime deps (LuaJIT)
+        run: sudo apt-get update && sudo apt-get install -y libluajit-5.1-2
+
+      - name: Fetch released rift
+        run: |
+          out="$(scripts/build-rift.sh)" || { echo "build-rift.sh failed"; exit 1; }
+          eval "$out"
+          echo "RIFT_BUILD_DIR=$RIFT_BUILD_DIR" >> "$GITHUB_ENV"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # conformance-engine.sh (RIFT_MODE=embedded) runs the engineEmbedded suite subset and asserts
+      # zero rift child processes were spawned.
+      - name: Run Plane A conformance (embedded)
+        run: scripts/conformance-engine.sh
+        env:
+          RIFT_MODE: embedded
+          RIFT_CORPUS_ROOT: ${{ github.workspace }}/corpus
+
+      # Plane B embedded (#18 acceptance): the MockControl corpus against the same in-process FFM
+      # engine. This JDK-25 job is the only leg that can run it (JDK 22+), so AC6 is enforced here.
+      - name: Run Plane B corpus (MOCK_BACKEND=embedded)
+        run: sbt -batch mockEmbedded
+        env:
+          MOCK_BACKEND: embedded

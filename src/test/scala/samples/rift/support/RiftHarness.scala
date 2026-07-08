@@ -20,6 +20,14 @@ trait RiftHarness:
   def tools: RiftTools
   def buildInfo: UIO[RiftBuildInfo]
 
+  /** Rewrite a fixture's engine-cwd-relative data-source paths (e.g. a `lookup`'s
+    * `data/products.csv`) so the engine resolves them regardless of its cwd. External mode returns
+    * the JSON unchanged — the spawned engine's cwd is `$RIFT_CORPUS_ROOT`, so `data/...` already
+    * resolves. Embedded mode absolutizes under the corpus root, because the in-process engine
+    * shares the JVM's cwd (the project root), where `data/...` would not resolve.
+    */
+  def rewriteFixture(json: String): String = json
+
   /** Swap in a `--configfile`-backed engine for the life of the returned `Scope`, reverting to a
     * plain engine (same admin/metrics ports) when the scope closes.
     */
@@ -168,42 +176,47 @@ object RiftHarness:
     */
   val layer: ZLayer[Any, Throwable, RiftHarness] =
     ZLayer.scoped {
-      for
-        cfg <- RiftHarnessConfig.fromEnv
-        // Bounded retry, always on a *fresh ephemeral* admin port after the first attempt. The
-        // preferred port (2525) can be genuinely unbindable even though our own JVM-side probe
-        // (`choosePort`) reports it free: `ServerSocket` sets SO_REUSEADDR so the probe's transient
-        // bind-and-release succeeds regardless, but a lingering TCP TIME_WAIT on that local port
-        // (left behind by earlier short-lived connections to it — admin API calls, readiness
-        // polling, prior engine instances during rapid repeated test runs) can still make the
-        // engine's own bind fail outright. Retrying with the SAME preferred port would just hit the
-        // same wall every time; only a genuinely different (ephemeral) port sidesteps it. A failed
-        // attempt never lingers: `acquireReadyEngine` force-kills its process on any readiness
-        // failure (the bind-failure mode exits on its own; the timeout-while-alive mode is killed
-        // explicitly there), so a retry starts with the ports actually freed.
-        spawned <- acquireReadyEngine(cfg, useFreshAdminPort = false)
-          .catchAll(_ =>
-            acquireReadyEngine(cfg, useFreshAdminPort = true).retry(Schedule.recurs(4))
-          )
-        (proc0, port, metricsPort) = spawned
-        info <- RiftBuildInfo.fromBuildDir(cfg.buildDir, engineVersion = None)
-        engineRef <- Ref.make(proc0)
-        pendingConfigRef <- Ref.make(Option.empty[Path])
-        // A closure over `engineRef`, NOT `proc0` directly — this is what lets a later swap (and
-        // revert) still be reaped at layer-scope close.
-        _ <- ZIO.addFinalizer(engineRef.get.flatMap(killProcess).orDie)
-      yield RiftHarnessLive(
-        s"http://localhost:$port",
-        s"http://localhost:$metricsPort",
-        port,
-        metricsPort,
-        cfg,
-        engineRef,
-        pendingConfigRef,
-        RiftTools.fromBuildDir(cfg.buildDir),
-        info
-      )
+      RiftHarnessConfig.fromEnv.flatMap { cfg =>
+        cfg.mode match
+          case RiftMode.Embedded => RiftHarnessEmbedded.acquire(cfg)
+          case RiftMode.External => acquireExternal(cfg)
+      }
     }
+
+  /** External mode: spawn a real `rift` child, await readiness, adopt it into a restartable ref. */
+  private def acquireExternal(cfg: RiftHarnessConfig): ZIO[Scope, Throwable, RiftHarness] =
+    for
+      // Bounded retry, always on a *fresh ephemeral* admin port after the first attempt. The
+      // preferred port (2525) can be genuinely unbindable even though our own JVM-side probe
+      // (`choosePort`) reports it free: `ServerSocket` sets SO_REUSEADDR so the probe's transient
+      // bind-and-release succeeds regardless, but a lingering TCP TIME_WAIT on that local port
+      // (left behind by earlier short-lived connections to it — admin API calls, readiness
+      // polling, prior engine instances during rapid repeated test runs) can still make the
+      // engine's own bind fail outright. Retrying with the SAME preferred port would just hit the
+      // same wall every time; only a genuinely different (ephemeral) port sidesteps it. A failed
+      // attempt never lingers: `acquireReadyEngine` force-kills its process on any readiness
+      // failure (the bind-failure mode exits on its own; the timeout-while-alive mode is killed
+      // explicitly there), so a retry starts with the ports actually freed.
+      spawned <- acquireReadyEngine(cfg, useFreshAdminPort = false)
+        .catchAll(_ => acquireReadyEngine(cfg, useFreshAdminPort = true).retry(Schedule.recurs(4)))
+      (proc0, port, metricsPort) = spawned
+      info <- RiftBuildInfo.fromBuildDir(cfg.buildDir, engineVersion = None)
+      engineRef <- Ref.make(proc0)
+      pendingConfigRef <- Ref.make(Option.empty[Path])
+      // A closure over `engineRef`, NOT `proc0` directly — this is what lets a later swap (and
+      // revert) still be reaped at layer-scope close.
+      _ <- ZIO.addFinalizer(engineRef.get.flatMap(killProcess).orDie)
+    yield RiftHarnessLive(
+      s"http://localhost:$port",
+      s"http://localhost:$metricsPort",
+      port,
+      metricsPort,
+      cfg,
+      engineRef,
+      pendingConfigRef,
+      RiftTools.fromBuildDir(cfg.buildDir),
+      info
+    )
 
   /** Choose ports, RAW-spawn a plain engine, and block until both its admin and metrics listeners
     * answer — no `Scope`/`acquireRelease` involved (a retry never leaves an orphaned finalizer

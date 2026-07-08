@@ -191,7 +191,7 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
   /** Load a fixture imposter, assign it a fresh 48xx port, POST it to the admin API, and track it.
     */
   protected def postImposterFromFixture(name: String): ZIO[RiftHarness, Throwable, Int] =
-    loadFixture(name).flatMap { raw =>
+    loadFixture(name).flatMap(rewriteFixtureJson).flatMap { raw =>
       // Pick a port and POST it; a non-201 usually means the freshly-probed port was taken between
       // the probe and the engine's bind (TOCTOU) — re-probe a new port and retry a few times.
       val attempt =
@@ -283,6 +283,13 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
       finally is.close()
     }
 
+  /** Apply the harness's fixture rewrite (engine-cwd-relative data-source paths → resolvable)
+    * before POSTing any imposter JSON to the engine. Identity in external mode; absolutizing in
+    * embedded.
+    */
+  private def rewriteFixtureJson(raw: String): URIO[RiftHarness, String] =
+    ZIO.serviceWith[RiftHarness](_.rewriteFixture(raw))
+
   // ── corpus (the numbered, byte-fidelity imposters vendored under ./corpus) ────────────────
 
   /** The corpus imposters directory: `$RIFT_CORPUS_ROOT/imposters` (default matches the harness's).
@@ -333,7 +340,8 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
         .when(files.isEmpty)
       results <- ZIO.foreach(files) { file =>
         for
-          raw <- ZIO.attemptBlocking(Files.readString(file))
+          raw0 <- ZIO.attemptBlocking(Files.readString(file))
+          raw <- rewriteFixtureJson(raw0)
           port <- declaredPort(file)
           code <- postImposter(admin, raw)
           _ <- track(port)
@@ -501,7 +509,8 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
     */
   protected def postImposterVerbatimFixture(name: String): ZIO[RiftHarness, Throwable, Int] =
     for
-      raw <- loadFixture(name)
+      raw0 <- loadFixture(name)
+      raw <- rewriteFixtureJson(raw0)
       port <- ZIO.fromEither(portOfJson(raw)).mapError(new RuntimeException(_))
       admin <- ZIO.serviceWith[RiftHarness](_.adminUrl)
       code <- postImposter(admin, raw)
@@ -909,7 +918,8 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
     */
   private def replaceAllImpostersWithFixture(name: String): ZIO[RiftHarness, Throwable, Unit] =
     for
-      raw <- loadFixture(name)
+      raw0 <- loadFixture(name)
+      raw <- rewriteFixtureJson(raw0)
       ports <- ZIO.fromEither(portsOfBatch(raw)).mapError(new RuntimeException(_))
       admin <- ZIO.serviceWith[RiftHarness](_.adminUrl)
       resp <- httpSend(
