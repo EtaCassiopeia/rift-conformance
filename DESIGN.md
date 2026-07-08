@@ -140,8 +140,8 @@ final case class RiftTools(lint: Path, verify: Path)
 | `RIFT_MODE` | What it does | Docker | Surface | Use |
 |---|---|:---:|---|---|
 | `external` *(default)* | Spawns `rift --port <admin> --allow-injection` (the released engine binary) from `RIFT_BUILD_DIR`, kills it on scope close | no | **full** (TCP faults, HTTPS, proxy, admin, metrics) | release testing, dev inner loop, CI |
+| `embedded` | Runs the engine **in-process** over Panama FFM (`librift_ffi`): `rift_start` + `rift_serve_admin` starts the **real** admin API on a loopback ephemeral port (C-ABI v2), so every Plane A step drives it over HTTP exactly as `external`. **Zero process spawn, no Docker.** Needs JDK 22+. Reload (feature 11) is the real admin API's `POST /admin/reload` reconciling toward a seeded `configFile`. | no | **near-full** (admin, transport faults via real sockets, scripting, spaces/FSM, reload; **no** separate metrics port / proxy-record — 09/10 stay `external`/`container`) | fastest master-testing inner loop, CI job 1 |
 | `container` | `GenericContainer` on `RIFT_IMAGE` (a published tag or the locally-built `rift-proxy:local`) | yes | full | pre-release gate on the shipped image, CI job 2 |
-| *(embedded)* | not a RiftHarness mode — Plane A **requires** `external` or `container`. Embedded (FFI) exists only as a Plane B backend; its C-ABI (`rift_start/stop/create_imposter/replace_stubs/recorded/delete_all`) cannot reach the admin surface, transport faults, or reload. | no | partial | Plane B fast witness only |
 
 Implementation notes for `external`:
 - Spawn via `zio.process` (or `ProcessBuilder` + `ZIO.acquireRelease`); wait for
@@ -386,16 +386,17 @@ rift repo issue tracker as today (one finding → one issue, ref #254).
 
 ```
 scripts/build-rift.sh            # §3.2 — fetch rift release binaries + BUILD_INFO (RIFT_VERSION)
-scripts/conformance-engine.sh    # Plane A: RIFT_MODE=external sbt "testOnly samples.rift.*"
+scripts/conformance-engine.sh    # Plane A: RIFT_MODE=external → engineConformance; RIFT_MODE=embedded → engineEmbedded (#18, JDK22+ or SKIP) + zero-spawn ps assert
 scripts/conformance.sh           # (exists) Plane B wiremock
 scripts/conformance-embedded.sh  # (exists) Plane B embedded — RIFT_FFI_LIB from build-rift --ffi
 scripts/conformance-rift.sh      # (exists) Plane B container — now also accepts RIFT_IMAGE=rift-proxy:local
-scripts/run-all.sh               # extend the layer list:
-                                 #   lint → engine(A) → wiremock(B) → embedded(B) → [rift-container(B)]
+scripts/run-all.sh               # layer list:
+                                 #   engine(A) → engine-embedded(A,#18) → wiremock(B) → embedded(B) → rift-external(B) → [rift-container(B)]
 ```
 
-sbt aliases: `engineConformance` (`testOnly samples.rift.*`), `engineGate`
-(`testOnly samples.rift.Rift01GateSuite`) for the cheap inner loop.
+sbt aliases: `engineConformance` (`testOnly samples.rift.*`), `engineEmbedded`
+(the embedded-supported subset — 01–08 + 11, minus 09/10, #18), `engineGate`
+(`testOnly samples.rift.ConsistencyGateSuite`) for the cheap inner loop.
 
 CI shape:
 - **Job 1 (no Docker, always):** `build-rift.sh --ffi` → Plane A external → Plane B
@@ -453,11 +454,11 @@ reverted. The corpus is never moved, so nothing external breaks.
 | # | Item | Disposition |
 |---|---|---|
 | R1 | **Docstring support in zio-bdd** unverified — fixtures-by-file (§6.1) is the design; docstrings are an optional later ergonomic. Implementer verifies and notes in COVERAGE. | fallback designed |
-| R2 | **Engine version endpoint** — unknown whether the admin API reports version/commit. Preflight falls back to BUILD_INFO + binary `--version` (§3.2). | fallback designed |
+| R2 | **Engine version endpoint** — unknown whether the admin API reports version/commit. Preflight falls back to BUILD_INFO + binary `--version` (§3.2). Embedded additionally reads `rift_build_info().commit` over the FFI (recorded as the engine version), a direct engine identity the external admin API still lacks. | fallback designed; embedded direct (#18) |
 | R3 | **Child-process leak** on hard-killed sbt: scope finalizer + JVM shutdown hook + `pkill`-style guard in `conformance-engine.sh` (belt and braces, as the shell suite did). | mitigated |
 | R4 | **#308 saturation test vs shared engine**: 3 concurrent runaways deliberately occupy blocking threads; feature `04` runs with `scenarioParallelism = 1` and a fresh imposter, matching the proven shell probe. | designed |
-| R5 | **relative-path corpus data** (`data/products.csv`): engine cwd pinned to `RIFT_CORPUS_ROOT` (§3.1). | designed |
-| R6 | **rift-ffi surface too thin** for Plane A. Widen the C-ABI (in-process admin API, apply_config, build-info) so embedded becomes a full Plane A oracle with zero process spawn. **Now designed & filed:** rift-conformance#18 (`RIFT_MODE=embedded`), depending on rift#342/#343/#344 (C-ABI v2) + zio-bdd#193 (FFM bridge v2). Phase 4, optional — not required for parity. | filed (#18) |
+| R5 | **relative-path corpus data** (`data/products.csv`): `external` pins the engine cwd to `RIFT_CORPUS_ROOT` (§3.1); `embedded` shares the JVM cwd (must not chdir), so it absolutizes `data/...` paths in fixtures at load time (`RiftHarness.rewriteFixture`, #18). | designed; embedded done (#18) |
+| R6 | **rift-ffi surface too thin** for Plane A. Widen the C-ABI (in-process admin API, apply_config, build-info) so embedded becomes a full Plane A oracle with zero process spawn. **DONE (#18):** `RIFT_MODE=embedded` drives the real in-process admin API via `rift_serve_admin` (C-ABI v2, zio-bdd 1.4.1) — Plane A features 01–08 + 11 green, zero process spawn. 09/10 (metrics/proxy-record) stay `external`/`container` by design. | done (#18) |
 | R7 | **zio-bdd additions** — none required. Optional niceties: docstring args; a public `Rift.managed` variant exposing adminUrl (would let Plane A container mode reuse the library instead of mirroring 30 lines). File as zio-bdd enhancements when Phase 2 lands. | future (zio-bdd repo) |
 
 ## 13. Implementation checklist (ordered, for the implementing model)

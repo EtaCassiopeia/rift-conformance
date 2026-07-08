@@ -2,10 +2,12 @@ ThisBuild / scalaVersion := "3.3.4"
 ThisBuild / organization := "io.github.etacassiopeia"
 
 val zioVersion = "2.1.17"
-val zioBddVersion = "1.3.1"
+val zioBddVersion = "1.4.1"
 
-// zio-bdd 1.3.1 is a public Maven Central release (no local publishLocal / sibling checkout
-// needed).
+// zio-bdd 1.4.1 is a public Maven Central release (no local publishLocal / sibling checkout
+// needed). 1.4.1 widens the embedded C-ABI (rift#411/#410): the FFM engine exposes serveAdmin (the
+// real in-process admin API), flow-state/space ops, and intercept — enough for the Plane A embedded
+// oracle (RIFT_MODE=embedded, issue #18).
 
 // The RiftHarness, the Plane A steps, and their specs live under src/test — this build hosts the
 // conformance harness, not a shipped library, so its dependencies are test-scoped.
@@ -47,8 +49,9 @@ Test / testFrameworks := Seq(
 // and process teardown run in an isolated JVM, and run suites serially (one engine per run).
 Test / fork := true
 
-// Embedded FFI (MOCK_BACKEND=embedded, Plane B): the in-process Rift engine via Panama FFM.
-// Gated on a JDK **22+** JVM: 1.3.1 publishes the FFM binding only as `zio-bdd-rift-embedded-jdk21`,
+// Embedded FFI (MOCK_BACKEND=embedded Plane B, and RIFT_MODE=embedded Plane A #18): the in-process
+// Rift engine via Panama FFM.
+// Gated on a JDK **22+** JVM: 1.4.1 publishes the FFM binding only as `zio-bdd-rift-embedded-jdk21`,
 // but that jar is compiled to Java-22 bytecode (class 66), so it won't load on JDK 21 despite the
 // name (upstream: zio-bdd#247). FFM is a stable API on 22+, so no --enable-preview is needed (and it
 // would in fact conflict with the class-66 binding). On JDK 11/17/21 the embedded backend is
@@ -80,6 +83,21 @@ addCommandAlias("engineGate", "testOnly samples.rift.ConsistencyGateSuite")
 // Full Plane A pass (issue #15): every samples.rift.* suite, not just the gate. This is what
 // scripts/conformance-engine.sh and scripts/run-all.sh's "engine (Plane A)" layer invoke.
 addCommandAlias("engineConformance", "testOnly samples.rift.*")
+
+// Plane A embedded pass (issue #18, RIFT_MODE=embedded): the subset of suites the in-process FFM
+// oracle supports. Excludes 09-gateway-https-metrics and 10-proxy-record (the §3.1 `container`/
+// `external` surface — a separate metrics port and the record/replay proxy plane), and the
+// external-only RiftHarnessSpec (which asserts on a spawned child in `ps`, absent by design here).
+// Enumerated explicitly rather than tag-filtered because 03-faults-transport shares `@transport`
+// with 09/10 yet MUST run. rift-lint/verify parse specs run too (engine-independent).
+addCommandAlias(
+  "engineEmbedded",
+  "testOnly samples.rift.ConsistencyGateSuite samples.rift.CoreServing02Suite " +
+    "samples.rift.FaultsTransport03Suite samples.rift.ScriptingBounds04Suite " +
+    "samples.rift.Templating05Suite samples.rift.Behaviors06Suite samples.rift.SpacesFsm07Suite " +
+    "samples.rift.AdminSurface08Suite samples.rift.Reload11Suite " +
+    "samples.rift.RiftEmbeddedHarnessSpec samples.rift.RiftToolsParseSpec"
+)
 
 // Plane B (issue #13) harness entry points (mirror scripts/*.sh). `lintFeatures` is the dry-run
 // step-matching validation across both planes; the mock aliases drive the corpus on the backend
