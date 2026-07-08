@@ -385,15 +385,11 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
       case _ => Left("fixture root is not a JSON object")
     }
 
-  private def freeProbePort: IO[Throwable, Int] =
-    ZIO.attemptBlocking {
-      (ProbePortLo to ProbePortHi)
-        .find { p =>
-          try { new ServerSocket(p).close(); true }
-          catch { case _: Throwable => false }
-        }
-        .getOrElse(throw new RuntimeException(s"no free probe port in $ProbePortLo..$ProbePortHi"))
-    }
+  // Delegated to the harness so container mode (whose imposters bind inside the container, with the
+  // host ports held by Docker's 1:1 forward) can hand out from its published pool instead of a
+  // host-freeness scan. External/embedded use the default host scan.
+  private def freeProbePort: ZIO[RiftHarness, Throwable, Int] =
+    ZIO.serviceWithZIO[RiftHarness](_.freshImposterPort(ProbePortLo, ProbePortHi))
 
   private def postImposter(adminUrl: String, json: String): IO[Throwable, Int] =
     ZIO.attemptBlocking {

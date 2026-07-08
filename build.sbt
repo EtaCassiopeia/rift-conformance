@@ -99,6 +99,23 @@ addCommandAlias(
     "samples.rift.RiftEmbeddedHarnessSpec samples.rift.RiftToolsParseSpec"
 )
 
+// Plane A container pass (issue #12, RIFT_MODE=container): the acceptance subset the Docker-run
+// engine is scoped to — feature 01 (gate) + 03 (faults-transport) — plus the container harness
+// acceptance spec. Docker/RIFT_IT-gated by scripts/conformance-engine.sh. Excludes 02/04–11: the
+// image-run engine is only asserted for the gate + transport surface (DESIGN §3.1). `--exclude-tags
+// full-corpus` drops feature 01's two full-corpus-serving scenarios: the published rift-proxy images
+// lack the `lua` feature, so serving the whole corpus (incl. 05-scripting lua) + rift-verify stays
+// external/embedded (agent-filed follow-up, #45). The container harness spec runs FIRST as the
+// "does the container start + serve admin" smoke test — a `;`-chain aborts at the first failure, so
+// putting it first means a broken container fails there with the crispest signal rather than as an
+// opaque BDD "Container startup failed". The zio-test specs are a separate step because the zio-bdd
+// `--exclude-tags` arg is not theirs to parse.
+addCommandAlias(
+  "engineContainer",
+  "; testOnly samples.rift.RiftContainerHarnessSpec samples.rift.RiftToolsParseSpec" +
+    " ; testOnly samples.rift.ConsistencyGateSuite samples.rift.FaultsTransport03Suite -- --exclude-tags full-corpus"
+)
+
 // Plane B (issue #13) harness entry points (mirror scripts/*.sh). `lintFeatures` is the dry-run
 // step-matching validation across both planes; the mock aliases drive the corpus on the backend
 // chosen by the MOCK_BACKEND env var (see samples.mock.support.Backends).
