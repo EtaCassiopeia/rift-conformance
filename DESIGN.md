@@ -147,10 +147,9 @@ Implementation notes for `external`:
 - Spawn via `zio.process` (or `ProcessBuilder` + `ZIO.acquireRelease`); wait for
   `GET /imposters` readiness with a bounded retry; register a JVM shutdown hook *in
   addition to* the scope finalizer so an aborted sbt run can't leak the child process.
-- **Working directory = the corpus repo root** (`RIFT_CORPUS_ROOT`, default
-  `../rift-imposter-samples`). The corpus's `lookup` behavior references
-  `data/products.csv` relatively; the engine must resolve it (this is why the old
-  `start.sh` ran from the project root).
+- **Working directory = the corpus root** (`RIFT_CORPUS_ROOT`, default `./corpus`, vendored
+  in-repo since #38). The corpus's `lookup` behavior references `data/products.csv` relatively;
+  the engine must resolve it (this is why the old `start.sh` ran from the project root).
 - Admin port: default 2525 but **allocate from a free port** when 2525 is busy, so Plane A
   and a developer's manually-running engine can coexist. `adminUrl` reflects reality.
 
@@ -193,15 +192,15 @@ branch deliberately). The default path fetches the pinned rift release.
 
 ## 4. Corpus — canonical location and the consistency gate
 
-### 4.1 The corpus stays in `rift-imposter-samples/imposters/*.json`
+### 4.1 The corpus is vendored in-repo at `corpus/imposters/*.json`
 
-It is the dependency-free, engine-adjacent artifact referenced by rift#254, readable by
-anyone with curl. zio-bdd-samples **consumes** it:
+It is the dependency-free, engine-adjacent artifact (originally in `rift-imposter-samples`,
+vendored here by #38 so the repo is self-contained), readable by anyone with curl. Both planes
+**consume** it:
 
-- `RIFT_CORPUS_ROOT` (default `../rift-imposter-samples`) → corpus at
-  `$RIFT_CORPUS_ROOT/imposters`, fixtures at `$RIFT_CORPUS_ROOT/fixtures`,
-  CSV data at `$RIFT_CORPUS_ROOT/data`.
-- CI checks out both repos side by side.
+- `RIFT_CORPUS_ROOT` (default `./corpus`) → corpus at `$RIFT_CORPUS_ROOT/imposters`, fixtures at
+  `$RIFT_CORPUS_ROOT/fixtures`, CSV data at `$RIFT_CORPUS_ROOT/data`.
+- CI needs no sibling checkout — the corpus ships in this repo.
 - Corpus conventions are unchanged: static, numbered, add-never-renumber, one
   feature-area per file, `_verify` annotations for verify-driveable dynamics.
 
