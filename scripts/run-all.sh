@@ -3,10 +3,10 @@
 #
 # Layer list (DESIGN.md §9):
 #   engine (Plane A)          — samples.rift.* suites against a real rift             [RUNS]
-#   wiremock (Plane B)        — not yet migrated                                  [SKIP see #13/#14]
-#   embedded (Plane B)        — not yet migrated                                  [SKIP see #13/#14]
-#   rift-external (Plane B)   — not yet migrated                                  [SKIP see #13/#14]
-#   rift-container (Plane B)  — Docker-gated (RIFT_IT)                              [SKIP see #12]
+#   wiremock (Plane B)        — samples.mock.* suites against in-process WireMock     [RUNS]
+#   embedded (Plane B)        — samples.mock.* suites against in-process Rift (FFM)  [SKIP <JDK22]
+#   rift-external (Plane B)   — not yet migrated                                     [SKIP see #14]
+#   rift-container (Plane B)  — Docker-gated (RIFT_IT)                                [SKIP see #12]
 #
 # Usage:
 #   ./scripts/run-all.sh            # run against an already-fetched engine (fetched lazily otherwise)
@@ -39,13 +39,12 @@ fi
 
 run_layer "engine (Plane A)" "$SCRIPT_DIR/conformance-engine.sh"
 
-run_layer "wiremock (Plane B)" bash -c \
-  'echo "SKIP: wiremock backend not yet migrated — see #13/#14" >&2; exit 77'
+run_layer "wiremock (Plane B)" "$SCRIPT_DIR/conformance-mock.sh"
 
 run_layer "embedded (Plane B)" "$SCRIPT_DIR/conformance-embedded.sh"
 
 run_layer "rift-external (Plane B)" bash -c \
-  'echo "SKIP: rift-external backend not yet migrated — see #13/#14" >&2; exit 77'
+  'echo "SKIP: rift-external backend not yet migrated — see #14" >&2; exit 77'
 
 run_layer "rift-container (Plane B)" "$SCRIPT_DIR/conformance-rift.sh"
 
