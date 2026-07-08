@@ -28,17 +28,20 @@ the zio-bdd mock stack.
 | Plane A | Plane B (rift backend) | Conclusion |
 |:-------:|:-----------------------:|------------|
 | 🟢 | 🔴 | zio-bdd library bug → file on `zio-bdd` |
-| 🔴 | any | engine or tool bug → confirm with curl, file on `rift` (ref rift#254) |
+| 🔴 | any | engine or tool bug → confirm with curl, file on `rift` (ref this repo — see [CONFORMANCE.md](CONFORMANCE.md)) |
 | 🟢 | 🟢 | ship it |
 
-See **[DESIGN.md](DESIGN.md)** for the full architecture, risk register, and the ordered
-implementation checklist. Coverage bookkeeping lives in **[COVERAGE.md](COVERAGE.md)**; the
-defect ledger in **[FINDINGS.md](FINDINGS.md)**. The triage decision tree (DESIGN.md §8) is
+**[CONFORMANCE.md](CONFORMANCE.md)** is the standing-conformance charter — the runbook pointer,
+ledger pointers, findings-filing convention, and the dated pass log (it replaces the retired
+tracking issue `rift#254`). See **[DESIGN.md](DESIGN.md)** for the full architecture, risk register,
+and the ordered implementation checklist. Coverage bookkeeping lives in **[COVERAGE.md](COVERAGE.md)**;
+the defect ledger in **[FINDINGS.md](FINDINGS.md)**. The triage decision tree (DESIGN.md §8) is
 reproduced at the top of FINDINGS.md.
 
 ## Repo layout
 
 ```
+CONFORMANCE.md                         standing-conformance charter + pass log
 DESIGN.md                              the implementation contract
 COVERAGE.md · FINDINGS.md              coverage matrix + defect ledger
 scripts/build-rift.sh                  fetches the released engine binaries (single source of artifacts)

@@ -5,7 +5,7 @@
 **Source repos (migrated in, then retired/trimmed):** `rift-imposter-samples` (canonical JSON corpus + shell suite → corpus migrates here, then the repo is **retired**), `zio-bdd-samples` (the `MockControl` mock corpus / Plane B → migrated here; its framework-general samples stay).
 **No changes required:** `zio-bdd` library (MVP uses the existing `Rift.connect`; optional items in §12), `rift` engine (source of truth).
 **Supersedes:** the shell conformance legs of `rift-imposter-samples` (`conformance.sh`, `conformance-ext.sh`, `conformance-reload.sh`, `consistency-gate.sh`, `run-all.sh` orchestration).
-**Context:** EtaCassiopeia/rift#254 (standing conformance runbook).
+**Context:** [CONFORMANCE.md](CONFORMANCE.md) — the standing-conformance charter, runbook, and pass log. (This repo supersedes the former tracking issue EtaCassiopeia/rift#254, now closed.)
 
 ---
 
@@ -106,7 +106,7 @@ planes**, so that:
 | Plane A | Plane B (rift backend) | Conclusion |
 |:-------:|:----------------------:|------------|
 | 🟢 | 🔴 | zio-bdd library bug (adapter / SPI / framework) → file on `zio-bdd` |
-| 🔴 | any | engine or tool bug → confirm with curl, file on `rift` (ref #254) |
+| 🔴 | any | engine or tool bug → confirm with curl, file on `rift` (ref this repo — see CONFORMANCE.md) |
 | 🟢 | 🟢 | ship it |
 
 Plane A also *incidentally* battle-tests zio-bdd core (Gherkin parsing, step matching,
@@ -365,7 +365,7 @@ Why keep all four Plane B backends:
 Scenario red
 ├─ Plane A?
 │   ├─ Re-run the emitted curl repro against the harness adminUrl.
-│   │   ├─ Engine misbehaves  → ENGINE finding → file on rift, ref #254.
+│   │   ├─ Engine misbehaves  → ENGINE finding → file on rift, ref this repo (CONFORMANCE.md).
 │   │   ├─ Engine fine, rift-lint/rift-verify disagreed → TOOL-DRIFT finding → file on rift.
 │   │   └─ Engine fine, curl matches expectation → corpus/step bug → fix in samples, no issue.
 │   └─ (@gap scenario started failing = the pinned divergent behavior CHANGED:
@@ -381,7 +381,7 @@ Scenario red
 
 Ledger: `FINDINGS.md` keeps its format; new rows note the plane in the Backend(s) column
 (`plane-A/engine`, `plane-B/rift-external`, …). Engine findings are *also* mirrored to the
-rift repo issue tracker as today (one finding → one issue, ref #254).
+rift repo issue tracker as today (one finding → one issue, referencing this repo — see CONFORMANCE.md).
 
 ## 9. Scripts, Makefile, CI
 

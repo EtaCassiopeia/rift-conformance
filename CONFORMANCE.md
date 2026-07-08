@@ -1,0 +1,51 @@
+# Rift Conformance — Standing Charter & Pass Log
+
+This repository **is** the standing conformance suite for Rift. It supersedes the former tracking
+issue [`EtaCassiopeia/rift#254`](https://github.com/EtaCassiopeia/rift/issues/254) (a
+GitHub-issue-based runbook that pointed at the retired `rift-imposter-samples` + `conformance.sh`
+shell flow) — the runbook, the coverage/finding ledgers, and the pass history now all live in-repo,
+so there is no open issue to "keep doing."
+
+The **engine is the source of truth.** Both planes exercise it as a downstream consumer:
+
+- **Plane A** (`samples.rift.*`) drives the admin API directly and shells out to
+  `rift-lint`/`rift-verify` — no `MockControl` in the path, so a red here is an **engine or tool**
+  finding.
+- **Plane B** (`samples.mock.*`) drives Rift *through* the zio-bdd `MockControl` adapter on four
+  backends (`wiremock` / `rift` / `rift-external` / `embedded`) — a red here with Plane A green is a
+  **library** finding.
+
+## Runbook
+
+Run the standing pass with the **`/rift-conformance [scope]`** command
+(`.claude/commands/rift-conformance.md`). Scopes: `full` (default) · `gate` · `ext` · `mock` ·
+`verify #NNN`. The engine is fetched as a published release by `scripts/build-rift.sh` (pinned by
+`RIFT_VERSION`, default `0.11.3`); the corpus is vendored in-repo under `corpus/`. No sibling
+checkout is needed.
+
+## Ledgers
+
+- **[COVERAGE.md](COVERAGE.md)** — feature → scenario coverage matrix + checkpoint audit trail.
+- **[FINDINGS.md](FINDINGS.md)** — one row per finding (plane-annotated backend, tripping
+  sample/scenario, filed issue link, status).
+- **[DESIGN.md](DESIGN.md)** — architecture, the triage protocol (§8), and the risk register (§12).
+
+## Filing findings
+
+One finding → one issue, confirmed against real behavior with `curl` before filing:
+
+- **Engine / tool** findings → file on **`EtaCassiopeia/rift`**.
+- **Library** findings → file on **`zio-bdd`**.
+
+Reference **this repository** (`EtaCassiopeia/rift-conformance`) — ideally the specific
+`FINDINGS.md` row or failing scenario — for context, so a maintainer can trace the finding back to
+the pass that caught it. (This replaces the old "reference rift#254" convention.)
+
+## Pass log
+
+Append one row per standing pass — newest last. This is the audit trail that the closed issue #254
+used to carry in prose.
+
+| Date | Scope | Engine | Result | Findings |
+|------|-------|--------|--------|----------|
+| 2026-07-08 | `full` | 0.11.3 | ✅ all green — Plane A: external, embedded (JDK 25), container (`RIFT_IT=1`); Plane B: wiremock, rift-external, embedded (JDK 25) | none |
