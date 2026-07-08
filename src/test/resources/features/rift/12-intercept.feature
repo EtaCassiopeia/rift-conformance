@@ -16,6 +16,13 @@ Feature: Intercept / TLS-MITM forward-proxy (rift#413) — CONNECT interception 
     Then the intercept CA PEM is exported
     And the intercept truststore is exported with password "changeit"
 
+  # @intercept-caller-ca: external mode seeds a committed test CA via `--intercept-ca-cert/--key`
+  # (rift 0.11.3), so the exported CA is deterministic. Embedded/container don't seed a caller CA
+  # (they let rift mint an ephemeral one), so this scenario is excluded from their aliases.
+  @intercept-caller-ca
+  Scenario: the intercept CA is the caller-provided persistent CA (rift 0.11.3), not ephemeral
+    Then the exported intercept CA is the caller-provided test CA
+
   Scenario: an intercept rule serves an inline stub over TLS-MITM
     Given an intercept rule serves 200 "{ok:1}" for host "cdn.example.com" path "/config.json"
     When an HTTPS GET to "cdn.example.com" "/config.json" through the intercept proxy

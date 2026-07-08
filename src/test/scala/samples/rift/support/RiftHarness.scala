@@ -84,6 +84,13 @@ trait RiftHarness:
       resp.body()
     }
 
+  /** The PEM of the caller-provided intercept CA this mode seeded at start (rift 0.11.3
+    * `--intercept-ca-cert`, feature 12 / #55), or `None` when the mode lets rift mint an ephemeral
+    * CA. External seeds the committed test CA and overrides this; feature 12 asserts the exported
+    * `/intercept/ca.pem` equals it (proving the caller CA was loaded, not a fresh one).
+    */
+  def interceptCaPem: UIO[Option[String]] = ZIO.succeed(None)
+
   /** Swap in a `--configfile`-backed engine for the life of the returned `Scope`, reverting to a
     * plain engine (same admin/metrics ports) when the scope closes.
     */
@@ -163,6 +170,8 @@ private final class RiftHarnessLive(
   def buildInfo: UIO[RiftBuildInfo] = ZIO.succeed(info)
   override def interceptEndpoint: UIO[Option[(String, Int)]] =
     ZIO.succeed(Some(("localhost", interceptPort)))
+  override def interceptCaPem: UIO[Option[String]] =
+    ZIO.succeed(RiftHarness.interceptCa.map(_._3))
 
   def withConfigFile(json: String): ZIO[Scope, Throwable, Unit] =
     ZIO.acquireRelease(startConfigFileEngine(json))(path => revertToPlainEngine(path).orDie).unit
@@ -223,6 +232,37 @@ object RiftHarness:
   private val ReadinessSpacingMs = 100L
   private val httpTimeout = JDuration.ofSeconds(2)
   private[support] val client = HttpClient.newHttpClient()
+
+  // The committed test intercept CA (#55): a throwaway CA (CN=rift-conformance-test-intercept-ca)
+  // under test resources. Extract cert + key from the classpath to temp files once (rift's
+  // `--intercept-ca-cert/--key` need filesystem paths), and keep the cert PEM so feature 12 can
+  // assert the exported `/intercept/ca.pem` equals exactly the CA we provided (proving rift loaded
+  // the caller CA rather than minting an ephemeral one). `None` if the fixture is absent.
+  private[support] lazy val interceptCa: Option[(Path, Path, String)] =
+    (
+      readResource("/rift-fixtures/intercept/ca-cert.pem"),
+      readResource("/rift-fixtures/intercept/ca-key.pem")
+    ) match
+      case (Some(certPem), Some(keyPem)) =>
+        Some(
+          (
+            writeTemp("rift-intercept-ca-cert-", certPem),
+            writeTemp("rift-intercept-ca-key-", keyPem),
+            certPem
+          )
+        )
+      case _ => None
+
+  private def readResource(path: String): Option[String] =
+    Option(getClass.getResourceAsStream(path)).map { is =>
+      try new String(is.readAllBytes(), StandardCharsets.UTF_8)
+      finally is.close()
+    }
+  private def writeTemp(prefix: String, content: String): Path =
+    val p = Files.createTempFile(prefix, ".pem")
+    p.toFile.deleteOnExit()
+    Files.write(p, content.getBytes(StandardCharsets.UTF_8))
+    p
 
   /** Scoped so the engine process is torn down when the scope closes; shared across suites so the
     * engine starts once per sbt run.
@@ -364,9 +404,18 @@ object RiftHarness:
       )
       // --intercept-port starts the opt-in TLS-MITM listener (rift 0.10.0+); its rules + CA share the
       // admin API. Harmless when no intercept rules are posted, so external mode always starts one.
+      // When a listener runs, seed a committed caller-provided intercept CA (rift 0.11.3, #55) so the
+      // exported CA is deterministic — feature 12 asserts `/intercept/ca.pem` equals that fixture.
+      val caArgs =
+        if interceptPort.isDefined then
+          interceptCa.toList.flatMap((cert, key, _) =>
+            List("--intercept-ca-cert", cert.toString, "--intercept-ca-key", key.toString)
+          )
+        else Nil
       val args = baseArgs ++
         configFile.toList.flatMap(p => List("--configfile", p.toString)) ++
-        interceptPort.toList.flatMap(p => List("--intercept-port", p.toString))
+        interceptPort.toList.flatMap(p => List("--intercept-port", p.toString)) ++
+        caArgs
       val pb = new ProcessBuilder(args*)
       pb.directory(cfg.corpusRoot.toFile)
       pb.redirectErrorStream(true)
