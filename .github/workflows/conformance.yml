@@ -42,6 +42,11 @@ jobs:
       - name: Set up sbt
         uses: sbt/setup-sbt@v1
 
+      # The released Linux rift binary dynamically links LuaJIT (the `lua` scripting engine), which
+      # isn't on the bare runner — install it so `rift --version`/spawn works.
+      - name: Install rift runtime deps (LuaJIT)
+        run: sudo apt-get update && sudo apt-get install -y libluajit-5.1-2
+
       - name: Fetch released rift
         run: |
           # Fail the step if the fetch fails, rather than surfacing later as an empty RIFT_BUILD_DIR.
