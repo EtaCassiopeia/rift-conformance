@@ -53,8 +53,9 @@ that file).
   `--intercept-port` listener (readiness-probed); the suite drives `/intercept/rules` (add/list/clear)
   + CA/PKCS#12 truststore export, then CONNECT-tunnels a real HTTPS request through the listener with
   a JDK `HttpClient` trusting the exported CA, asserting the decrypted request is served inline or
-  forwarded to an imposter. External only for now (embedded FFI `startIntercept` + container + a
-  Plane B intercept corpus are follow-ons).
+  forwarded to an imposter. Runs under **external** and **container** (#51 — the container publishes
+  an `--intercept-port` 1:1, so `engineContainer` includes `Intercept12Suite` unchanged); embedded
+  (FFI `startIntercept`) + a Plane B intercept corpus + the caller-provided-CA scenario are follow-ons.
 
 #### Port audit
 

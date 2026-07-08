@@ -100,9 +100,10 @@ addCommandAlias(
 )
 
 // Plane A container pass (issue #12, RIFT_MODE=container): the acceptance subset the Docker-run
-// engine is scoped to — feature 01 (gate) + 03 (faults-transport) — plus the container harness
-// acceptance spec. Docker/RIFT_IT-gated by scripts/conformance-engine.sh. Excludes 02/04–11: the
-// image-run engine is only asserted for the gate + transport surface (DESIGN §3.1). `--exclude-tags
+// engine is scoped to — feature 01 (gate) + 03 (faults-transport) + 12 (intercept/TLS-MITM, #51 —
+// the container publishes an `--intercept-port` 1:1) — plus the container harness acceptance spec.
+// Docker/RIFT_IT-gated by scripts/conformance-engine.sh. Excludes 02/04–11: the image-run engine is
+// only asserted for the gate + transport + intercept surfaces (DESIGN §3.1). `--exclude-tags
 // full-corpus` drops feature 01's two full-corpus-serving scenarios: the published rift-proxy images
 // lack the `lua` feature, so serving the whole corpus (incl. 05-scripting lua) + rift-verify stays
 // external/embedded (agent-filed follow-up, #45). The container harness spec runs FIRST as the
@@ -113,7 +114,8 @@ addCommandAlias(
 addCommandAlias(
   "engineContainer",
   "; testOnly samples.rift.RiftContainerHarnessSpec samples.rift.RiftToolsParseSpec" +
-    " ; testOnly samples.rift.ConsistencyGateSuite samples.rift.FaultsTransport03Suite -- --exclude-tags full-corpus"
+    " ; testOnly samples.rift.ConsistencyGateSuite samples.rift.FaultsTransport03Suite " +
+    "samples.rift.Intercept12Suite -- --exclude-tags full-corpus"
 )
 
 // Plane B (issue #13) harness entry points (mirror scripts/*.sh). `lintFeatures` is the dry-run
