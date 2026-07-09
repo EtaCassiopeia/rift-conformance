@@ -64,7 +64,15 @@ that file).
   mode seeds a **committed throwaway test CA** (`src/test/resources/rift-fixtures/intercept/ca-*.pem`)
   via rift 0.11.3's `--intercept-ca-cert/--key` and asserts the exported `/intercept/ca.pem`
   byte-equals it (feature-12 `@intercept-caller-ca`, external-only, #55) — proving rift loaded the
-  caller CA rather than minting an ephemeral one. All #51 intercept follow-ons are now landed.
+  caller CA rather than minting an ephemeral one. All #51 intercept follow-ons are now landed. The
+  **embedded** `EmbeddedRift.InterceptConfig` — non-loopback bind host, pinned fixed port, and a
+  persistent caller CA (`caCert`/`caKey`, rift ≥ 0.11.3) — gets its own Plane B check in
+  `EmbeddedInterceptConfigSpec` (#62): a self-gating zio-test spec (`MOCK_BACKEND=embedded` + FFM
+  available) that builds `EmbeddedRift.layer(InterceptConfig(bindHost="0.0.0.0", port=Some(N),
+  caCert=…, caKey=…))` and asserts `Intercept.proxyEndpoint` reports the configured host/port and the
+  exported truststore's CA byte-equals the supplied one — the embedded mirror of `@intercept-caller-ca`
+  (a distinct subsystem from Plane A's `--intercept-ca-cert/--key`). The full container-reachability
+  leg stays out of scope (macOS Docker host-networking limit, #45).
 
 #### Port audit
 
