@@ -291,7 +291,7 @@ design, see F4/zio-bdd#185).
 | 06 | rule-precedence | Overlay/Base, add/remove/replaceRules | `@portable` | ✅ | ✅ | ✅ |
 | 07 | lifecycle-isolation | per-space destroy, space-local received() | `@portable` | ✅ | ✅ | ✅ |
 | 08 | received-verification | count, method/path, body | `@portable` | ✅ | ✅ | ✅ |
-| 09 | mock-sources | Dsl (portable); raw Resource/File/Dir on Rift; `received()` on a raw Resource-provisioned space (#63) | `@sources` | ✅ (Dsl) | ✅ | ✅ (Dsl) |
+| 09 | mock-sources | Dsl (portable); raw Resource/File/Dir on Rift; `received()` on a raw Resource-provisioned space (#63); multi-stub raw imposter doc (#65) | `@sources` | ✅ (Dsl) | ✅ | ✅ (Dsl) |
 | 10 | fixtures-tags | MockFixtures `@mock(...)` + catalog (mixed Dsl + Resource entries, #64), auto-teardown | `@fixtures @portable` | ✅ | ✅ | ✅ |
 | 11 | faults | FaultKind ConnReset/Empty/MalformedChunk/RandomThenClose/LatencySpike | `@faults` | ✅ | ✅ | ✅ |
 | 12 | stateful-fsm | StatefulScenarios define/reset | `@stateful` | ✅ | ✅ | ➖ |

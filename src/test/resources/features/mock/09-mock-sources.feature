@@ -36,6 +36,16 @@ Feature: MockSource variants — Dsl (portable) and raw Resource/File/Dir (Rift)
     And the mock recorded 1 requests
     And a "GET" to "/recorded" was recorded
 
+  # A single raw imposter document declaring MULTIPLE stubs — a distinct parsing/plumbing path from
+  # the well-covered DSL multi-rule case; every other raw fixture here has exactly one stub (#65).
+  @rift
+  Scenario: A raw imposter document with multiple stubs serves each distinctly
+    Given a resource source "mocksources/rift/multi-stub.json"
+    When the client sends "GET" "/alpha"
+    Then the response body is "alpha-body"
+    When the client sends "GET" "/beta"
+    Then the response body is "beta-body"
+
   @rift
   Scenario: A Dir source provisions one space per file
     Given a directory source "src/test/resources/mocksources/rift-dir"
