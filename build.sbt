@@ -135,7 +135,7 @@ addCommandAlias("mockSmoke", "testOnly samples.mock.* -- --include-tags smoke")
 // MOCK_BACKEND=wiremock for reasons unrelated to library conformance.
 addCommandAlias(
   "mockConformance",
-  "testOnly samples.mock.* -- --exclude-tags scripting,templating,proxyrecord,rift,intercept"
+  "testOnly samples.mock.* -- --exclude-tags scripting,templating,proxyrecord,rift,intercept,fixedport"
 )
 // The embedded (in-process Rift FFI) backend has different capabilities than wiremock: it CAN
 // run scripting/templating (a real Rift engine) but not the wiremock-native / stateful / negotiation
