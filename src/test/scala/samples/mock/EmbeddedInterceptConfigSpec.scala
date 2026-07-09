@@ -117,10 +117,14 @@ object EmbeddedInterceptConfigSpec extends ZIOSpecDefault:
             endpoint <- ic.proxyEndpoint.mapError(e => new RuntimeException(s"proxyEndpoint: $e"))
             ts <- ic.trustStore().mapError(e => new RuntimeException(s"trustStore export: $e"))
             exported <- truststoreCert(ts)
+            // Compare the DER bytes OUTSIDE `assertTrue`: that macro mis-reifies an inline
+            // `java.util.Arrays.equals(...)` into a non-existent `java.util.Arrays$` module access,
+            // which throws NoClassDefFoundError at runtime — so bind the plain Boolean first.
+            caMatches = exported.getEncoded.sameElements(expected.getEncoded)
           yield assertTrue(
             endpoint._1 == "0.0.0.0",
             endpoint._2 == port,
-            java.util.Arrays.equals(exported.getEncoded, expected.getEncoded)
+            caMatches
           )
         }
     }
