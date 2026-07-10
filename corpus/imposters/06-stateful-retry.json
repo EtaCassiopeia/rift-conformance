@@ -4,7 +4,7 @@
   "name": "06 · Stateful Retry Simulation (flow state)",
   "recordRequests": true,
   "_rift": {
-    "flowState": { "backend": "inmemory", "ttlSeconds": 300 }
+    "flowState": { "backend": "inmemory", "ttlSeconds": 300, "flowIdSource": "header:X-Flow-Id" }
   },
   "stubs": [
     {
@@ -14,7 +14,7 @@
         "_rift": {
           "script": {
             "engine": "rhai",
-            "code": "fn should_inject(request, flow_store) { let flow_id = request.headers[\"x-flow-id\"]; if flow_id == () { flow_id = \"default\"; }; let attempts = flow_store.get(flow_id, \"attempts\"); if attempts == () { attempts = 0; }; attempts += 1; flow_store.set(flow_id, \"attempts\", attempts); if attempts <= 2 { #{ inject: true, fault: \"error\", status: 503, body: `{\"error\":\"service unavailable\",\"attempt\":${attempts}}`, headers: #{\"Content-Type\": \"application/json\", \"Retry-After\": \"1\", \"X-Attempt\": `${attempts}`} } } else { #{ inject: true, fault: \"error\", status: 200, body: `{\"ok\":true,\"succeededOnAttempt\":${attempts}}`, headers: #{\"Content-Type\": \"application/json\", \"X-Attempt\": `${attempts}`} } } }"
+            "code": "fn respond(ctx) { let attempts = ctx.state.incr_by(\"attempts\", 1); if attempts <= 2 { http(503, #{error: \"service unavailable\", attempt: attempts}).header(\"Retry-After\", \"1\").header(\"X-Attempt\", `${attempts}`) } else { http(200, #{ok: true, succeededOnAttempt: attempts}).header(\"X-Attempt\", `${attempts}`) } }"
           }
         }
       }]
@@ -26,7 +26,7 @@
         "_rift": {
           "script": {
             "engine": "rhai",
-            "code": "fn should_inject(request, flow_store) { let flow_id = request.headers[\"x-flow-id\"]; if flow_id == () { flow_id = \"default\"; }; let attempts = flow_store.get(flow_id, \"attempts\"); if attempts == () { attempts = 0; }; #{ inject: true, fault: \"error\", status: 200, body: `{\"flowId\":\"${flow_id}\",\"attempts\":${attempts}}`, headers: #{\"Content-Type\": \"application/json\"} } }"
+            "code": "fn respond(ctx) { let flow_id = ctx.request.header(\"x-flow-id\"); if flow_id == () { flow_id = \"default\"; }; let attempts = ctx.state.get_or(\"attempts\", 0); http(200, #{flowId: flow_id, attempts: attempts}) }"
           }
         }
       }]
@@ -38,7 +38,7 @@
         "_rift": {
           "script": {
             "engine": "rhai",
-            "code": "fn should_inject(request, flow_store) { let flow_id = request.headers[\"x-flow-id\"]; if flow_id == () { flow_id = \"default\"; }; flow_store.delete(flow_id, \"attempts\"); #{ inject: true, fault: \"error\", status: 200, body: `{\"message\":\"reset\",\"flowId\":\"${flow_id}\"}`, headers: #{\"Content-Type\": \"application/json\"} } }"
+            "code": "fn respond(ctx) { let flow_id = ctx.request.header(\"x-flow-id\"); if flow_id == () { flow_id = \"default\"; }; ctx.state.delete(\"attempts\"); http(200, #{message: \"reset\", flowId: flow_id}) }"
           }
         }
       }]

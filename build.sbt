@@ -108,9 +108,11 @@ addCommandAlias(
 // the container publishes an `--intercept-port` 1:1) — plus the container harness acceptance spec.
 // Docker/RIFT_IT-gated by scripts/conformance-engine.sh. Excludes 02/04–11: the image-run engine is
 // only asserted for the gate + transport + intercept surfaces (DESIGN §3.1). `--exclude-tags
-// full-corpus` drops feature 01's two full-corpus-serving scenarios: the published rift-proxy images
-// lack the `lua` feature, so serving the whole corpus (incl. 05-scripting lua) + rift-verify stays
-// external/embedded (agent-filed follow-up, #45). The container harness spec runs FIRST as the
+// full-corpus` drops feature 01's two full-corpus-serving scenarios: historically the published
+// rift-proxy images lacked the `lua` feature the corpus exercised. Rift 0.12.0 removed the Lua
+// engine entirely (#451) and 05-scripting is now rhai + JS (both built-in), so that blocker is gone
+// — re-enabling container full-corpus + rift-verify is pending a green RIFT_IT container run against
+// the v0.12.0 image (agent-filed follow-up, #45). The container harness spec runs FIRST as the
 // "does the container start + serve admin" smoke test — a `;`-chain aborts at the first failure, so
 // putting it first means a broken container fails there with the crispest signal rather than as an
 // opaque BDD "Container startup failed". The zio-test specs are a separate step because the zio-bdd

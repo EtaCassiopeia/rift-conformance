@@ -934,7 +934,7 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
   // A response-level `_rift.script` with intentionally broken rhai syntax — the engine's
   // validate-then-swap must reject the WHOLE batch with 400 and leave the previous set untouched.
   private val invalidImposterBatch: String =
-    """{"imposters":[{"port":4810,"protocol":"http","stubs":[{"predicates":[{"equals":{"path":"/x"}}],"responses":[{"_rift":{"script":{"engine":"rhai","code":"fn should_inject(request, flow_store) { broken @#$ syntax"}}}]}]}]}"""
+    """{"imposters":[{"port":4810,"protocol":"http","stubs":[{"predicates":[{"equals":{"path":"/x"}}],"responses":[{"_rift":{"script":{"engine":"rhai","code":"fn respond(ctx) { broken @#$ syntax"}}}]}]}]}"""
 
   /** `PUT {admin}/imposters` with a batch containing an invalid response script — must 400 and
     * leave the previous imposter set untouched (validate-then-swap, never partially applied).

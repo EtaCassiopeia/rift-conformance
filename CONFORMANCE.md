@@ -20,7 +20,7 @@ The **engine is the source of truth.** Both planes exercise it as a downstream c
 Run the standing pass with the **`/rift-conformance [scope]`** command
 (`.claude/commands/rift-conformance.md`). Scopes: `full` (default) · `gate` · `ext` · `mock` ·
 `verify #NNN`. The engine is fetched as a published release by `scripts/build-rift.sh` (pinned by
-`RIFT_VERSION`, default `0.11.3`); the corpus is vendored in-repo under `corpus/`. No sibling
+`RIFT_VERSION`, default `0.12.0`); the corpus is vendored in-repo under `corpus/`. No sibling
 checkout is needed.
 
 ## Ledgers
@@ -49,3 +49,4 @@ used to carry in prose.
 | Date | Scope | Engine | Result | Findings |
 |------|-------|--------|--------|----------|
 | 2026-07-08 | `full` | 0.11.3 | ✅ all green — Plane A: external, embedded (JDK 25), container (`RIFT_IT=1`); Plane B: wiremock, rift-external, embedded (JDK 25) | none |
+| 2026-07-10 | `scripting+gate` | 0.12.0 | ✅ green (0.12.0 bump + Script API v2 migration) — `Test/compile`; rift-lint 0 errors/15 files; ScriptingBounds04Suite 4/4 + ConsistencyGateSuite 5/5 (incl. `@full-corpus` + rift-verify) external; Scripting14Suite 1/1 rift-external. Full external/embedded/container + Plane-B sweep not re-run this pass | none in scope; new-capability coverage gaps + container `@full-corpus` re-enable logged in COVERAGE.md |

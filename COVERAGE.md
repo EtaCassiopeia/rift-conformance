@@ -131,8 +131,7 @@ Remaining: `04-scripting-bounds`, `05-templating`, `06-behaviors`. #7 closes whe
 
 | Shell assert | Plane A scenario | Fixture |
 |--------------|------------------|---------|
-| rhai flow_store counter increments across requests | `rhai flow_store counter increments across requests` | `scripting/scripts` |
-| lua script injects a result | `a lua script injects its response` (Outline) | `scripting/scripts` |
+| rhai ctx.state counter increments across requests | `rhai ctx.state counter increments across requests` | `scripting/scripts` |
 | js inject result | `a js script injects its response` (Outline) | `scripting/scripts` |
 | rift#308 runaway rhai `timeoutMs:300` → 500 + `x-rift-script-error` ~300ms | `a runaway rhai script is bounded by its timeout` (≥250ms & ≤2000ms) | `scripting/runaway` |
 | rift#308 engine + sibling stay responsive with 3 concurrent runaways **in flight** | `a sibling imposter stays responsive while concurrent runaways are in flight` (burst forked; sibling+admin probed while in flight; all 500 on join) | `scripting/sibling`, `scripting/runaway` |
@@ -374,3 +373,26 @@ Harness: `scripts/conformance-rift-external.sh` fetches the engine (`build-rift.
 `RIFT_BUILD_DIR` if already set) and runs `MOCK_BACKEND=rift-external sbt -batch mockRiftExternal`
 — no Docker, no `RIFT_IT` gate. `scripts/run-all.sh`'s `rift-external (Plane B)` layer now runs this
 script instead of its former `exit 77` SKIP stub.
+
+## v0.12.0 new-capability coverage gaps (backlog) — tracked by [#72](https://github.com/EtaCassiopeia/rift-conformance/issues/72)
+
+Rift 0.12.0 shipped the scripting DX redesign. Existing scripting coverage was **migrated** to the
+new contract (Script API v2 `respond(ctx)` / `ctx.state`; Lua dropped) so the gate stays green — but
+the release added capabilities this harness does not yet exercise. Tracked here as coverage gaps
+(umbrella issue **#72**), not divergences:
+
+| Capability | rift | Gap | Sketch |
+|------------|------|-----|--------|
+| Script API v2 result constructors beyond `http()` | #442 | `delay(ms)`, `reset()`, `pass()` are not exercised | a stub whose `respond(ctx)` returns `delay(N)` (latency then normal), `reset()` (transport reset), `pass()` (no injection) |
+| `ctx.state` atomics | #443 | only `incr_by`/`get_or`/`delete` are driven; `cas`/`ttl`/`exists` are not | a CAS-guarded state transition + a TTL-expiry assertion |
+| Declarative response templating | #444 | `{{ … }}` body/header template functions behind the opt-in `templated` flag — no coverage | `templated: true` stub rendering a request field into the body |
+| File-based script authoring | #441 | `file:`/`ref:` script references + named library via `--scripts-dir`/`RIFT_SCRIPTS_DIR` — no coverage | post an imposter whose script is a `ref:` into a `--scripts-dir` library |
+| `rift script` tooling | #445 | `rift script check` / `rift script run` subcommands + debug-mode script trace — no coverage | a `RiftTools` seam driving `rift script check` over a fixture, asserting pass/fail |
+| Mountebank v2 fidelity bundle | #438 | v2 `config`-first inject convention, native `logger`, `--allowInjection`, wait fns, EJS stringify — partially exercised via JS inject only | targeted MB-parity scenarios |
+| `request.pathParams` | #435 | route-pattern path-parameter extraction as a stub field (predicates + templating) — no coverage | a stub with a `routePattern` asserting `pathParams` in predicate/response |
+| `ffi-manifest.json` release asset | #459 | `{version, abi, artifacts[]}` map — the embedded (Panama FFI) leg still resolves natives without consulting it | assert the manifest resolves the platform cdylib the embedded leg loads |
+| `rift_stub_warnings` FFI accessor | #423 | stub-overlap warnings over the C-ABI — not asserted on the embedded leg | drive `rift_stub_warnings` and compare with the HTTP admin plane's overlap analysis |
+
+Container-mode `@full-corpus` re-enablement is also unblocked by the Lua removal — tracked by
+[#71](https://github.com/EtaCassiopeia/rift-conformance/issues/71) (supersedes closed #45); see the
+container row in DESIGN §3.1; pending a green `RIFT_IT` run against the v0.12.0 image.

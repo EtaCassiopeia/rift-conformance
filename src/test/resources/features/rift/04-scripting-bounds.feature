@@ -1,9 +1,9 @@
 @rift @scripting
 Feature: Scripting engines and runaway bounds
 
-  # Stateful: the flow_store counter persists across requests to the same imposter, so this is one
+  # Stateful: the ctx.state counter persists across requests to the same imposter, so this is one
   # ordered scenario (a fresh imposter resets the counter to 0).
-  Scenario: rhai flow_store counter increments across requests
+  Scenario: rhai ctx.state counter increments across requests
     Given a fresh imposter from fixture "scripting/scripts"
     When the client sends "GET" "/rhai"
     Then the response status is 200
@@ -19,9 +19,8 @@ Feature: Scripting engines and runaway bounds
     And the response body is "<body>"
 
     Examples:
-      | engine | path | body   |
-      | lua    | /lua | lua-ok |
-      | js     | /js  | js-ok  |
+      | engine | path | body  |
+      | js     | /js  | js-ok |
 
   # rift#308: a runaway script is bounded by timeoutMs (300) — it returns 500 with x-rift-script-error
   # in about 300ms rather than hanging.
