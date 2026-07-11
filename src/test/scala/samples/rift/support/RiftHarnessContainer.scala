@@ -74,9 +74,9 @@ object RiftHarnessContainer:
   private val PublishedPorts: List[Int] =
     AdminPort :: InterceptPort :: ((4500 to 4599) ++ (4800 to 4899)).toList
 
-  // Default tracks build-rift.sh's pinned rift 0.11.3, so the containerised engine and the host
+  // Default tracks build-rift.sh's pinned rift 0.13.1, so the containerised engine and the host
   // rift-lint/rift-verify tools (from RIFT_BUILD_DIR) are one released build. Override with RIFT_IMAGE.
-  private val DefaultImage = "zainalpour/rift-proxy:v0.11.3"
+  private val DefaultImage = "zainalpour/rift-proxy:v0.13.1"
 
   // Process-wide singleton: zio-bdd builds the `environment` layer more than once per run, and a
   // container on FIXED host ports cannot be started twice (the second bind fails "port already

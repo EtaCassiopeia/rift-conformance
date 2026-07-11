@@ -15,10 +15,11 @@ Feature: Cross-tool consistency — engine, rift-lint, and rift-verify agree on 
   Scenario: rift-lint accepts every corpus file
     Then rift-lint reports 0 errors across the corpus
 
-  # @full-corpus: posts/serves the ENTIRE corpus, including the lua-scripting imposter
-  # (05-scripting-engines.json). RIFT_MODE=container excludes these because the published
-  # rift-proxy images are built without the `lua` cargo feature (unlike the released binary); the
-  # full-corpus + rift-verify oracle stays external/embedded. Tracked by the agent-filed follow-up.
+  # @full-corpus: posts/serves the ENTIRE corpus, including the scripting imposter
+  # (05-scripting-engines.json). RIFT_MODE=container still excludes these, but the original reason —
+  # the published images lacking the `lua` cargo feature the corpus used — is void: rift 0.12.0
+  # removed Lua (#451) and 05-scripting is now rhai + JS (both built-in). Re-enabling container
+  # full-corpus + rift-verify is pending a green RIFT_IT run on the v0.12.0 image (follow-up #45).
   @full-corpus
   Scenario: The engine serves every corpus imposter on its declared port
     Given every corpus imposter is posted to the engine

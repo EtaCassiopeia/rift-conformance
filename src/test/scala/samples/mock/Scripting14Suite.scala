@@ -17,11 +17,11 @@ import samples.mock.support.{Backends, MockState, MockSupport}
 )
 object Scripting14Suite extends ZIOSteps[MockControl, MockState] with MockSupport[MockState]:
 
-  // Rhai script that echoes the request method into the body — a static stub
+  // Rhai script (Script API v2) that echoes the request method into the body — a static stub
   // couldn't do this, so a passing round-trip proves the engine ran the script.
   private val rhaiEchoMethod =
-    "fn should_inject(request, flow_store) { #{inject: true, fault: \"error\", status: 200, " +
-      "body: `scripted-${request.method}`, headers: #{\"Content-Type\": \"text/plain\"}} }"
+    "fn respond(ctx) { http(200, `scripted-${ctx.request.method}`)" +
+      ".header(\"Content-Type\", \"text/plain\") }"
 
   Given("the backend supports scripting") {
     requiring(Capability.Scripting)
@@ -29,9 +29,9 @@ object Scripting14Suite extends ZIOSteps[MockControl, MockState] with MockSuppor
 
   Given("a " / string / " script echoing the method for GET " / string) {
     (engine: String, path: String) =>
+      // Lua was removed in rift 0.12.0 (#451); the engine consolidates on Rhai + JavaScript.
       val eng = engine match
         case "Rhai" => ScriptEngine.Rhai
-        case "Lua" => ScriptEngine.Lua
         case "JavaScript" => ScriptEngine.JavaScript
         case other => throw new IllegalArgumentException(s"unknown engine '$other'")
       for

@@ -20,7 +20,7 @@ The **engine is the source of truth.** Both planes exercise it as a downstream c
 Run the standing pass with the **`/rift-conformance [scope]`** command
 (`.claude/commands/rift-conformance.md`). Scopes: `full` (default) · `gate` · `ext` · `mock` ·
 `verify #NNN`. The engine is fetched as a published release by `scripts/build-rift.sh` (pinned by
-`RIFT_VERSION`, default `0.11.3`); the corpus is vendored in-repo under `corpus/`. No sibling
+`RIFT_VERSION`, default `0.13.1`); the corpus is vendored in-repo under `corpus/`. No sibling
 checkout is needed.
 
 ## Ledgers
@@ -49,3 +49,5 @@ used to carry in prose.
 | Date | Scope | Engine | Result | Findings |
 |------|-------|--------|--------|----------|
 | 2026-07-08 | `full` | 0.11.3 | ✅ all green — Plane A: external, embedded (JDK 25), container (`RIFT_IT=1`); Plane B: wiremock, rift-external, embedded (JDK 25) | none |
+| 2026-07-10 | `scripting+gate` | 0.12.0 | ✅ green (0.12.0 bump + Script API v2 migration) — `Test/compile`; rift-lint 0 errors/15 files; ScriptingBounds04Suite 4/4 + ConsistencyGateSuite 5/5 (incl. `@full-corpus` + rift-verify) external; Scripting14Suite 1/1 rift-external. Full external/embedded/container + Plane-B sweep not re-run this pass | none in scope; new-capability coverage gaps + container `@full-corpus` re-enable logged in COVERAGE.md |
+| 2026-07-11 | `full (ext + embedded + container CI)` | 0.13.1 | ✅ green (0.13.1 + zio-bdd 1.4.2 pin bump) — `Test/compile` + `scalafmtCheckAll` clean on 1.4.2; rift-lint 0 errors/15 files. **external:** ScriptingBounds04 4/4 + Gate 5/5 (incl. `@full-corpus` + rift-verify) + Scripting14 1/1 rift-external. **embedded (FFM, JDK 25):** full `engineEmbedded` green — 01–08/11/12 + zio-test specs. **container:** green in CI. Direct smoke confirms the new timeout contract | **(1) Conformed behavior change:** rift 0.13.0 refined the script-timeout contract — status `500 → 504 Gateway Timeout` + new `x-rift-script-timeout: true` header (keeps `x-rift-script-error: true`, rift#499/#515); `04-scripting-bounds` updated. **(2) Embedded interaction:** rift 0.13.0 gated `serve_admin` injection behind an `allowInjection` option defaulting to `false` (rift#492/#511) — the embedded bridge (`EmbeddedAdmin.serve`) now opts in, matching external mode's `--allowInjection`. Both intended refinements, not defects. New-capability gaps for 0.13.0 tracked in COVERAGE.md / issue #72 |
