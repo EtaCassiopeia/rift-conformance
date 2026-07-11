@@ -834,6 +834,61 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
   private def urlEnc(s: String): String =
     java.net.URLEncoder.encode(s, StandardCharsets.UTF_8)
 
+  /** Parsed `POST .../imposters/{port}/verify` result (rift#494): the `{matched, total}` counts
+    * plus, when `includeClosest` was requested and nothing matched, the best-scoring non-match —
+    * its request path and the number of failed predicate clauses.
+    */
+  private final case class VerifyResult(
+      matched: Int,
+      total: Int,
+      closestPath: Option[String],
+      failedPredicateCount: Int
+  )
+
+  /** Server-side verify: the ENGINE evaluates a predicate set against its own recorded requests
+    * (rift#494 / PR#512), distinct from the client-side `savedRequests ?match=` count. Drives a
+    * single `equals`-on-path predicate — enough to prove the count and the `includeClosest` diff.
+    */
+  private def serverVerify(
+      pathEquals: String,
+      includeClosest: Boolean
+  ): ZIO[RiftHarness, Throwable, VerifyResult] =
+    for
+      port <- currentPort
+      admin <- ZIO.serviceWith[RiftHarness](_.adminUrl)
+      closestField = if includeClosest then ""","includeClosest":true""" else ""
+      body = s"""{"predicates":[{"equals":{"path":"${jsonEscape(pathEquals)}"}}]$closestField}"""
+      resp <- httpSend(
+        s"$admin/imposters/$port/verify",
+        "POST",
+        Map("Content-Type" -> "application/json"),
+        Some(body)
+      )
+      _ <- assertRepro(
+        resp.status == 200,
+        s"POST imposters/$port/verify -> ${resp.status} (expected 200): ${resp.body}"
+      )
+      json <- parseAdminJson(resp.body)
+    yield parseVerifyResult(json)
+
+  private def parseVerifyResult(json: Json): VerifyResult =
+    val fields = json match
+      case Json.Obj(fs) => fs.toMap
+      case _ => Map.empty[String, Json]
+    def intOf(k: String): Int =
+      fields.get(k).collect { case Json.Num(n) => n.intValue }.getOrElse(-1)
+    val closest = fields.get("closest").collect { case Json.Obj(fs) => fs.toMap }
+    val closestPath = closest
+      .flatMap(_.get("request"))
+      .collect { case Json.Obj(fs) => fs.toMap }
+      .flatMap(_.get("path"))
+      .collect { case Json.Str(s) => s }
+    val failedCount = closest
+      .flatMap(_.get("failedPredicates"))
+      .collect { case Json.Arr(es) => es.length }
+      .getOrElse(0)
+    VerifyResult(intOf("matched"), intOf("total"), closestPath, failedCount)
+
   /** `PUT .../admin/imposters/{port}/flow-state/{flowId}/{key}` body `{"value":"..."}` — note the
     * `/admin/` prefix, distinct from every other admin-surface path in this trait.
     */
@@ -1293,6 +1348,29 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
 
   When("the client deletes recorded requests matching header " / string / " value " / string) {
     (h: String, v: String) => deleteRecordedRequests(h, v)
+  }
+
+  Then("a verify for path " / string / " matches " / int / " of " / int / " recorded requests") {
+    (path: String, matched: Int, total: Int) =>
+      serverVerify(path, includeClosest = false).flatMap(r =>
+        assertRepro(
+          r.matched == matched && r.total == total,
+          s"verify path=$path: expected matched=$matched total=$total, got matched=${r.matched} total=${r.total}"
+        )
+      )
+  }
+
+  Then(
+    "a verify for path " / string / " with includeClosest reports the closest request path " / string
+  ) { (path: String, closestPath: String) =>
+    serverVerify(path, includeClosest = true).flatMap(r =>
+      assertRepro(
+        r.matched == 0 && r.closestPath.contains(closestPath) && r.failedPredicateCount > 0,
+        s"verify path=$path includeClosest: expected matched=0, closest path=$closestPath, " +
+          s"failedPredicates>0; got matched=${r.matched}, closest=${r.closestPath}, " +
+          s"failed=${r.failedPredicateCount}"
+      )
+    )
   }
 
   When("the client sets flow-state " / string / " in flow " / string / " to " / string) {

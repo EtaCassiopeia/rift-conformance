@@ -51,6 +51,23 @@ Feature: Admin surface — stub-by-id, enable/disable, savedRequests filtering, 
     Then recorded requests total 1
     And recorded requests matching header "X-Tag" value "b" total 1
 
+  # rift#494 / PR#512: server-side verify — POST /imposters/{port}/verify has the ENGINE evaluate a
+  # predicate set against its own recorded requests, returning {matched, total}. Distinct from the
+  # client-side savedRequests ?match= count above: the predicates are the full matcher language, and
+  # includeClosest returns the best-scoring non-match with a per-clause failedPredicates diff.
+  Scenario: server-side verify counts recorded requests matching a predicate set
+    Given a fresh imposter from fixture "admin/base"
+    When the client sends "GET" "/hi"
+    And the client sends "GET" "/hi"
+    And the client sends "GET" "/other"
+    Then a verify for path "/hi" matches 2 of 3 recorded requests
+    And a verify for path "/absent" matches 0 of 3 recorded requests
+
+  Scenario: verify includeClosest reports the best non-match with a failedPredicates diff
+    Given a fresh imposter from fixture "admin/base"
+    When the client sends "GET" "/other"
+    Then a verify for path "/absent" with includeClosest reports the closest request path "/other"
+
   Scenario: flow-state KV full lifecycle — set, get, delete, then 404
     Given a fresh imposter from fixture "admin/base"
     When the client sets flow-state "k1" in flow "f1" to "v1"
