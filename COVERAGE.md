@@ -383,7 +383,7 @@ the release added capabilities this harness does not yet exercise. Tracked here 
 
 | Capability | rift | Gap | Sketch |
 |------------|------|-----|--------|
-| Script API v2 result constructors beyond `http()` | #442 | `delay(ms)`, `reset()`, `pass()` are not exercised | a stub whose `respond(ctx)` returns `delay(N)` (latency then normal), `reset()` (transport reset), `pass()` (no injection) |
+| Script API v2 result constructors beyond `http()` | #442 | **covered (#84)** — a `respond(ctx)` rhai script returning `delay(300)` (≈300 ms latency then a default 200), `reset()` (transport-level connection reset), and `pass()` (script ran but declined to inject → default empty 200 tagged `x-rift-script: rhai`), in `04-scripting-bounds` via `scripting/script-constructors` | covered by `04-scripting-bounds` — 3 scenarios, one per constructor |
 | `ctx.state` atomics | #443 | only `incr_by`/`get_or`/`delete` are driven; `cas`/`ttl`/`exists` are not | a CAS-guarded state transition + a TTL-expiry assertion |
 | Declarative response templating | #444 | `{{ … }}` body/header template functions behind the opt-in `templated` flag — no coverage | `templated: true` stub rendering a request field into the body |
 | File-based script authoring | #441 | `file:`/`ref:` script references + named library via `--scripts-dir`/`RIFT_SCRIPTS_DIR` — no coverage | post an imposter whose script is a `ref:` into a `--scripts-dir` library |

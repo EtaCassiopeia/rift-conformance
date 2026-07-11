@@ -131,3 +131,25 @@ Feature: Scripting engines and runaway bounds
     And the response header "x-rift-decorate-error" is "true"
     And the response has no header "x-rift-script-timeout"
     And the response body contains "strictBehaviors"
+
+  # Script API v2 (rift#442) result constructors beyond http(): a respond(ctx) can return delay(N)
+  # (latency, then a default 200), reset() (a transport-level connection reset), or pass() (the
+  # script ran but declined to inject, so a default empty 200 is served — still tagged x-rift-script).
+  Scenario: a respond() returning delay(N) adds latency then serves a 200
+    Given a fresh imposter from fixture "scripting/script-constructors"
+    When the client sends "GET" "/delay"
+    Then the response status is 200
+    And the response took at least 250 ms
+    And the response took at most 2000 ms
+
+  Scenario: a respond() returning reset() aborts the connection at the transport level
+    Given a fresh imposter from fixture "scripting/script-constructors"
+    When the client sends "GET" "/reset" expecting a transport error
+    Then the request fails at the transport level
+
+  Scenario: a respond() returning pass() serves a default 200 without injecting
+    Given a fresh imposter from fixture "scripting/script-constructors"
+    When the client sends "GET" "/pass"
+    Then the response status is 200
+    And the response body is ""
+    And the response header "x-rift-script" is "rhai"
