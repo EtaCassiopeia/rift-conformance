@@ -214,6 +214,12 @@ each file's `_verify` presence, count), then loads the corpus into a dedicated e
 `corpus/`, `--allow-injection`) and drives `rift-verify --skip-dynamic --verify-dynamic` over it → 0
 failures. Self-gating: no-op when offline or `RIFT_BUILD_DIR` unset.
 
+**`ffi-manifest.json` release asset (#91, rift#459).** `FfiManifest91Spec` fetches the release
+`ffi-manifest.json` (`{version, abi, artifacts[{platform,file,sha256,url}]}`) and asserts it resolves
+the running platform's `librift_ffi` cdylib — the native the embedded Panama-FFM leg loads: the
+manifest lists an artifact for the JVM's `os.name`/`os.arch` (`librift_ffi-<platform>.<dylib|so|dll>`)
+under `abi: "v2"` at the pinned `version`, with a well-formed `sha256`/`url`. Self-gating on offline.
+
 **`rift script` tooling (#88, rift#445).** `RiftTools` exposes `riftScriptCheck`/`riftScriptRun`
 (the released `rift` binary), and `RiftScriptTooling88Spec` drives them offline (no server):
 `rift script check` accepts a valid script (exit 0, "OK") and rejects a syntactically broken one
