@@ -1145,6 +1145,15 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
     }
   }
 
+  // Distinguishes a script *error* from a script *timeout*: both tag x-rift-inject-error /
+  // x-rift-decorate-error, but only a timeout also carries x-rift-script-timeout (feature 04, #79).
+  Then("the response has no header " / string) { (h: String) =>
+    lastResponse.flatMap { r =>
+      val got = r.headers.get(h.toLowerCase).map(_.mkString(","))
+      assertRepro(got.isEmpty, s"expected no header $h, got ${got.getOrElse("<absent>")}")
+    }
+  }
+
   Given("a fresh verbatim imposter from fixture " / string) { (name: String) =>
     postImposterVerbatimFixture(name).unit
   }
