@@ -36,3 +36,28 @@ Feature: Response templating — request variables and date tokens
       | DAYS-5   | /dm5 | -5     | days   |
       | MONTHS+1 | /m1  | 1      | months |
       | MONTHS-1 | /mm1 | -1     | months |
+
+  # rift 0.13.0 (rift#444): the richer `{{ ... }}` template FUNCTIONS (handlebars-style args) are opt-in
+  # behind the `_rift.templated: true` response flag — distinct from the always-on `${...}` vars and the
+  # `{{NOW}}`/`{{DAYS±N}}` date tokens above. `{{ request.header 'X-Name' }}` renders the request header.
+  Scenario: a templated response renders a {{ }} request-field function into the body
+    Given a fresh imposter from fixture "templating/templated"
+    When the request header "X-Name" is "world"
+    And the client sends "GET" "/hdr"
+    Then the response status is 200
+    And the response body is "hi world"
+
+  # The flag is opt-in: WITHOUT `_rift.templated`, the same `{{ ... }}` is served verbatim (not rendered).
+  Scenario: without the templated flag the {{ }} function is left literal
+    Given a fresh imposter from fixture "templating/templated"
+    When the request header "X-Name" is "world"
+    And the client sends "GET" "/plain"
+    Then the response status is 200
+    And the response body is "hi {{ request.header 'X-Name' }}"
+
+  # A second {{ }} function — randomInt with equal bounds renders deterministically.
+  Scenario: a templated response renders the randomInt {{ }} function
+    Given a fresh imposter from fixture "templating/templated"
+    When the client sends "GET" "/rand"
+    Then the response status is 200
+    And the response body is "n=7"
