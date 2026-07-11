@@ -9,8 +9,8 @@
 # Usage: scripts/conformance-engine.sh
 #
 # RIFT_MODE=container (#12) runs the engine in a Docker container on a published image (RIFT_IMAGE)
-# and runs the container-safe subset (engineContainer: feature 01 gate minus the @full-corpus lua
-# scenarios + feature 03 transport faults). Docker/RIFT_IT-gated — SKIPs when RIFT_IT!=1 or docker
+# and runs the container-safe subset (engineContainer: feature 01 gate incl. @full-corpus serve,
+# minus @full-corpus-verify + feature 03 transport faults). Docker/RIFT_IT-gated — SKIPs when RIFT_IT!=1 or docker
 # is absent, like the Plane B rift-container leg.
 #
 # Usage: scripts/conformance-engine.sh

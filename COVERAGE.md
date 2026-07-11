@@ -393,9 +393,12 @@ the release added capabilities this harness does not yet exercise. Tracked here 
 | `ffi-manifest.json` release asset | #459 | `{version, abi, artifacts[]}` map — the embedded (Panama FFI) leg still resolves natives without consulting it | assert the manifest resolves the platform cdylib the embedded leg loads |
 | `rift_stub_warnings` FFI accessor | #423 | stub-overlap warnings over the C-ABI — not asserted on the embedded leg | drive `rift_stub_warnings` and compare with the HTTP admin plane's overlap analysis |
 
-Container-mode `@full-corpus` re-enablement is also unblocked by the Lua removal — tracked by
-[#71](https://github.com/EtaCassiopeia/rift-conformance/issues/71) (supersedes closed #45); see the
-container row in DESIGN §3.1; pending a green `RIFT_IT` run against the v0.13.1 image.
+Container-mode `@full-corpus` **serve** was re-enabled by the Lua removal ([#71](https://github.com/EtaCassiopeia/rift-conformance/issues/71),
+supersedes closed #45) — verified green on the v0.13.1 image via `RIFT_IT`. The `rift-verify
+--verify-dynamic` scenario (`@full-corpus-verify`) stays external/embedded-only: `--verify-dynamic`
+allocates ephemeral imposters on dynamic high ports that bind inside the container's network
+namespace, unreachable from the host tool over the 1:1 published-port topology — a standing
+container constraint, not a lua/image gap. See the container row in DESIGN §3.1.
 
 ## v0.13.0 new-capability coverage gaps (backlog) — tracked by [#72](https://github.com/EtaCassiopeia/rift-conformance/issues/72)
 
