@@ -42,7 +42,22 @@ final case class VerifyReport(
 /** Typed shell-outs to rift-lint and rift-verify — the SAME binaries built alongside the engine, so
   * lint/verify judgements always come from the commit under test (version coherence, DESIGN §6).
   */
-final case class RiftTools(lint: Path, verify: Path):
+final case class RiftTools(lint: Path, verify: Path, engine: Path):
+
+  /** `rift script check <target>` — statically validate a script (or a config's `_rift.script`
+    * entries): engine syntax, entrypoint presence/arity, v1-shape deprecation. Exits non-zero on
+    * any error (issue #360, #88). No server started. `raw` keeps stdout+stderr so a failing gate
+    * quotes exactly what the tool said.
+    */
+  def riftScriptCheck(target: Path): IO[Throwable, RiftTools.RawRun] =
+    runCapture(Command(engine.toString, "script", "check", target.toString))
+
+  /** `rift script run <target>` — execute a script against a default request and print the
+    * decision, the mutated flow state, captured `ctx.logger` output and the duration (the
+    * debug-mode script trace, #88). No server running.
+    */
+  def riftScriptRun(target: Path): IO[Throwable, RiftTools.RawRun] =
+    runCapture(Command(engine.toString, "script", "run", target.toString))
 
   /** `rift-lint -o json <path>` — since rift#347 stdout is pure JSON (the banner goes to stderr),
     * so counts come straight from the tool's own JSON summary.
@@ -84,7 +99,11 @@ final case class RiftTools(lint: Path, verify: Path):
 object RiftTools:
   /** Build the tools from the directory that scripts/build-rift.sh populated. */
   def fromBuildDir(buildDir: Path): RiftTools =
-    RiftTools(buildDir.resolve("rift-lint"), buildDir.resolve("rift-verify"))
+    RiftTools(
+      buildDir.resolve("rift-lint"),
+      buildDir.resolve("rift-verify"),
+      buildDir.resolve("rift")
+    )
 
   /** Captured process output; kept whole so a failing gate can quote exactly what the tool said. */
   final case class RawRun(stdout: String, stderr: String, exitCode: Int)

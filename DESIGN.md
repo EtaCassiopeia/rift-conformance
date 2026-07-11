@@ -214,6 +214,11 @@ each file's `_verify` presence, count), then loads the corpus into a dedicated e
 `corpus/`, `--allow-injection`) and drives `rift-verify --skip-dynamic --verify-dynamic` over it → 0
 failures. Self-gating: no-op when offline or `RIFT_BUILD_DIR` unset.
 
+**`rift script` tooling (#88, rift#445).** `RiftTools` exposes `riftScriptCheck`/`riftScriptRun`
+(the released `rift` binary), and `RiftScriptTooling88Spec` drives them offline (no server):
+`rift script check` accepts a valid script (exit 0, "OK") and rejects a syntactically broken one
+(non-zero, "FAILED"); `rift script run` prints the `respond` decision trace. Self-gating on `RIFT_BUILD_DIR`.
+
 **File-based script authoring (#87, rift#441).** `FileScriptAuthoring87Spec` spawns a dedicated
 engine with `--scripts-dir` pointed at a committed script library (`src/test/resources/rift-scripts`)
 and drives, over the admin API: `_rift.script.file: "greet.rhai"` (resolved under the `--scripts-dir`
