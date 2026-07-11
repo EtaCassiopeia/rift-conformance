@@ -204,6 +204,16 @@ vendored here by #38 so the repo is self-contained), readable by anyone with cur
 - Corpus conventions are unchanged: static, numbered, add-never-renumber, one
   feature-area per file, `_verify` annotations for verify-driveable dynamics.
 
+**Release-artifact replay (#83, rift#460/#524).** Beyond the vendored copy, each Rift release
+publishes the upstream-authored `sdk-conformance-<version>.tar.gz` (imposter fixtures + `_verify`
+transcripts + `manifest.json`) — the engine-canonical DSL↔engine parity oracle. `SdkCorpusReplay83Spec`
+downloads the pinned artifact (`scripts/fetch-sdk-corpus.sh`, cached in `RIFT_BUILD_CACHE` next to the
+engine, sha256-verified, exposes `RIFT_SDK_CORPUS_DIR`), asserts `manifest.json` matches the fixtures on
+disk (`schemaVersion`, `engineVersion == v<pin>`, every `fixtures[].file` present, `hasVerify` flag ==
+each file's `_verify` presence, count), then loads the corpus into a dedicated engine (cwd = extracted
+`corpus/`, `--allow-injection`) and drives `rift-verify --skip-dynamic --verify-dynamic` over it → 0
+failures. Self-gating: no-op when offline or `RIFT_BUILD_DIR` unset.
+
 ### 4.2 The consistency gate bypasses the adapter — by design
 
 Verified fact: the Rift adapter's `serveImposter` **rewrites every imposter's port** to a
