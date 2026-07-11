@@ -153,3 +153,25 @@ Feature: Scripting engines and runaway bounds
     Then the response status is 200
     And the response body is ""
     And the response header "x-rift-script" is "rhai"
+
+  # ctx.state atomics beyond incr_by/get_or/delete (rift#443): exists() reflects a key's presence,
+  # cas() does a compare-and-swap (applied only when the current value matches the expected), and a
+  # `flowState.ttlSeconds` key expires in real time. One ordered scenario — the state persists across
+  # requests to the same imposter (scenarioParallelism=1), so the wait observes a real expiry.
+  Scenario: ctx.state cas/ttl/exists atomics
+    Given a fresh imposter from fixture "scripting/state-atomics"
+    When the client sends "GET" "/exists"
+    Then the response body is "false"
+    When the client sends "GET" "/set"
+    Then the response body is "ok"
+    When the client sends "GET" "/exists"
+    Then the response body is "true"
+    When the client sends "GET" "/cas"
+    Then the response body is "true"
+    When the client sends "GET" "/cas-stale"
+    Then the response body is "false"
+    When the client waits 3000 ms
+    And the client sends "GET" "/ttl-get"
+    Then the response body is "EXPIRED"
+    When the client sends "GET" "/exists"
+    Then the response body is "false"
