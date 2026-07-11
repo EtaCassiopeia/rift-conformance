@@ -61,3 +61,32 @@ Feature: Response templating — request variables and date tokens
     When the client sends "GET" "/rand"
     Then the response status is 200
     And the response body is "n=7"
+
+  # rift 0.13.0 (rift#435): a stub's `routePattern` extracts path parameters into
+  # `request.pathParams.<name>`, usable from a response template. (By engine design pathParams feeds
+  # templates and scripts — not predicate matching — so ordinary predicates route to the stub.)
+  Scenario Outline: routePattern extracts a path parameter into a response template
+    Given a fresh imposter from fixture "templating/path-params"
+    When the client sends "GET" "<path>"
+    Then the response status is 200
+    And the response body is "<body>"
+
+    Examples:
+      | path         | body       |
+      | /users/42    | user=42    |
+      | /users/alice | user=alice |
+
+  # The same extraction is visible to a script via `ctx.request.pathParams`.
+  Scenario: routePattern extracts a path parameter visible to a script
+    Given a fresh imposter from fixture "templating/path-params"
+    When the client sends "GET" "/s/77"
+    Then the response status is 200
+    And the response body is "script=77"
+
+  # routePattern is NOT a predicate: a path that satisfies the stub's predicate (startsWith /users/)
+  # but does not fit the pattern shape (/users/:id) still serves the stub — pathParams is simply empty.
+  Scenario: a routePattern that the path does not fit still serves the stub with empty pathParams
+    Given a fresh imposter from fixture "templating/path-params"
+    When the client sends "GET" "/users/42/extra"
+    Then the response status is 200
+    And the response body is "user="
