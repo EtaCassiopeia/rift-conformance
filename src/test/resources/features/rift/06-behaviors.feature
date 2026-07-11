@@ -51,3 +51,25 @@ Feature: Response behaviors — copy, lookup, wait, shellTransform, decorate
     When the client sends "GET" "/dec"
     Then the response status is 200
     And the response body is "decorated"
+
+  # Mountebank v2 inject parity (rift#438): the `inject` function is config-first — its single
+  # argument IS the request, exposing method/path/body directly (mirroring Mountebank's convention).
+  Scenario: a config-first inject reads the request method and path
+    Given a fresh imposter from fixture "behaviors/mb-inject"
+    When the client sends "GET" "/cfg"
+    Then the response status is 200
+    And the response body is "GET /cfg"
+
+  Scenario: a config-first inject reads the request body
+    Given a fresh imposter from fixture "behaviors/mb-inject"
+    When the request body is payload-123
+    And the client sends "POST" "/body"
+    Then the response status is 200
+    And the response body is "got:payload-123"
+
+  # The inject function has a native `logger` (config.logger) — using it does not fail the response.
+  Scenario: an inject function can use the native logger
+    Given a fresh imposter from fixture "behaviors/mb-inject"
+    When the client sends "GET" "/log"
+    Then the response status is 200
+    And the response body is "logged"
