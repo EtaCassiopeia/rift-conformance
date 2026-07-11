@@ -214,6 +214,13 @@ each file's `_verify` presence, count), then loads the corpus into a dedicated e
 `corpus/`, `--allow-injection`) and drives `rift-verify --skip-dynamic --verify-dynamic` over it → 0
 failures. Self-gating: no-op when offline or `RIFT_BUILD_DIR` unset.
 
+**File-based script authoring (#87, rift#441).** `FileScriptAuthoring87Spec` spawns a dedicated
+engine with `--scripts-dir` pointed at a committed script library (`src/test/resources/rift-scripts`)
+and drives, over the admin API: `_rift.script.file: "greet.rhai"` (resolved under the `--scripts-dir`
+root) serves; `_rift.script.ref: "greet"` (a named entry in the imposter's own `_rift.scripts` map,
+needing no `--scripts-dir`) serves; and a path-traversal `file: "../../etc/passwd"` is rejected `400`
+(the resolved path may not escape the root). External-leg only, self-gating on `RIFT_BUILD_DIR`.
+
 ### 4.2 The consistency gate bypasses the adapter — by design
 
 Verified fact: the Rift adapter's `serveImposter` **rewrites every imposter's port** to a
