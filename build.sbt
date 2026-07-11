@@ -100,7 +100,7 @@ addCommandAlias(
     "samples.rift.FaultsTransport03Suite samples.rift.ScriptingBounds04Suite " +
     "samples.rift.Templating05Suite samples.rift.Behaviors06Suite samples.rift.SpacesFsm07Suite " +
     "samples.rift.AdminSurface08Suite samples.rift.Reload11Suite samples.rift.Intercept12Suite " +
-    "-- --exclude-tags intercept-http,intercept-caller-ca" +
+    "-- --exclude-tags intercept-http,intercept-caller-ca,intercept-runtime" +
     " ; testOnly samples.rift.RiftEmbeddedHarnessSpec samples.rift.RiftToolsParseSpec"
 )
 
@@ -124,7 +124,7 @@ addCommandAlias(
   "engineContainer",
   "; testOnly samples.rift.RiftContainerHarnessSpec samples.rift.RiftToolsParseSpec" +
     " ; testOnly samples.rift.ConsistencyGateSuite samples.rift.FaultsTransport03Suite " +
-    "samples.rift.Intercept12Suite -- --exclude-tags full-corpus-verify,intercept-caller-ca"
+    "samples.rift.Intercept12Suite -- --exclude-tags full-corpus-verify,intercept-caller-ca,intercept-runtime"
 )
 
 // Plane B (issue #13) harness entry points (mirror scripts/*.sh). `lintFeatures` is the dry-run

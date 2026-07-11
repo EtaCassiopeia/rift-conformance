@@ -91,6 +91,27 @@ trait RiftHarness:
     */
   def interceptCaPem: UIO[Option[String]] = ZIO.succeed(None)
 
+  /** Start a dedicated plain engine with NO intercept listener and return its admin URL, for
+    * exercising the runtime intercept start/stop lifecycle (rift 0.13.0 `POST`/`GET`/`DELETE
+    * /intercept`, feature 12). The shared harness engine always runs an `--intercept-port`
+    * listener, so the off→on→off lifecycle needs a second engine that starts with intercept OFF.
+    * External mode overrides this (raw-spawns a child on fresh ports, remembered and reaped by
+    * [[stopRuntimeInterceptEngine]] and the layer scope). Other modes cannot spawn a second
+    * no-intercept engine, so they fail — the scenario is tagged `@intercept-runtime` and runs
+    * external-only.
+    */
+  def startRuntimeInterceptEngine: Task[String] =
+    ZIO.fail(new UnsupportedOperationException("runtime intercept lifecycle is external-mode only"))
+
+  /** The admin URL of the [[startRuntimeInterceptEngine]] engine; fails if none is running. */
+  def runtimeInterceptAdminUrl: Task[String] =
+    ZIO.fail(new UnsupportedOperationException("runtime intercept lifecycle is external-mode only"))
+
+  /** Reap the [[startRuntimeInterceptEngine]] engine if one is running; a no-op otherwise, so it is
+    * safe to call unconditionally from a cleanup hook.
+    */
+  def stopRuntimeInterceptEngine: Task[Unit] = ZIO.unit
+
   /** Swap in a `--configfile`-backed engine for the life of the returned `Scope`, reverting to a
     * plain engine (same admin/metrics ports) when the scope closes.
     */
@@ -163,6 +184,7 @@ private final class RiftHarnessLive(
     cfg: RiftHarnessConfig,
     engineRef: Ref[Process],
     pendingConfigRef: Ref[Option[Path]],
+    runtimeInterceptRef: Ref[Option[(Process, String)]],
     val tools: RiftTools,
     info: RiftBuildInfo
 ) extends RiftHarness:
@@ -172,6 +194,38 @@ private final class RiftHarnessLive(
     ZIO.succeed(Some(("localhost", interceptPort)))
   override def interceptCaPem: UIO[Option[String]] =
     ZIO.succeed(RiftHarness.interceptCa.map(_._3))
+
+  /** Raw-spawn a plain engine started WITHOUT `--intercept-port` (so its `/intercept` admin routes
+    * report "not running" until a `POST /intercept` starts the listener). Remembered in
+    * `runtimeInterceptRef` so later steps read its admin URL and `stopRuntimeInterceptEngine` (or
+    * the layer finalizer) reaps it. Adopts the process into the ref BEFORE the readiness wait — the
+    * same "never orphan a spawned child" discipline as the reload path — and force-kills it on a
+    * readiness failure so a never-ready engine doesn't hold its ports for the rest of the run.
+    */
+  override def startRuntimeInterceptEngine: Task[String] =
+    for
+      _ <- stopRuntimeInterceptEngine // never leak a prior sidecar if a scenario forgot to stop it
+      port <- RiftHarness.freePort
+      metricsPort <- RiftHarness.freePort
+      proc <- RiftHarness.rawSpawn(cfg, port, metricsPort, None, None)
+      url = s"http://localhost:$port"
+      _ <- runtimeInterceptRef.set(Some((proc, url)))
+      _ <- RiftHarness
+        .awaitReady(s"$url/imposters", proc)
+        .onError(_ => RiftHarness.killProcess(proc).ignore)
+    yield url
+
+  override def runtimeInterceptAdminUrl: Task[String] =
+    runtimeInterceptRef.get.flatMap {
+      case Some((_, url)) => ZIO.succeed(url)
+      case None => ZIO.fail(new IllegalStateException("no runtime-intercept engine started"))
+    }
+
+  override def stopRuntimeInterceptEngine: Task[Unit] =
+    runtimeInterceptRef.getAndSet(None).flatMap {
+      case Some((proc, _)) => RiftHarness.killProcess(proc)
+      case None => ZIO.unit
+    }
 
   def withConfigFile(json: String): ZIO[Scope, Throwable, Unit] =
     ZIO.acquireRelease(startConfigFileEngine(json))(path => revertToPlainEngine(path).orDie).unit
@@ -303,9 +357,16 @@ object RiftHarness:
       info <- RiftBuildInfo.fromBuildDir(cfg.buildDir, engineVersion = None)
       engineRef <- Ref.make(proc0)
       pendingConfigRef <- Ref.make(Option.empty[Path])
+      // The runtime-intercept sidecar engine (feature 12, @intercept-runtime): started/stopped
+      // per-scenario, but reaped here too so an aborted scenario never leaks it past layer-scope.
+      runtimeInterceptRef <- Ref.make(Option.empty[(Process, String)])
       // A closure over `engineRef`, NOT `proc0` directly — this is what lets a later swap (and
       // revert) still be reaped at layer-scope close.
       _ <- ZIO.addFinalizer(engineRef.get.flatMap(killProcess).orDie)
+      _ <- ZIO.addFinalizer(runtimeInterceptRef.get.flatMap {
+        case Some((proc, _)) => killProcess(proc).orDie
+        case None => ZIO.unit
+      })
     yield RiftHarnessLive(
       s"http://localhost:$port",
       s"http://localhost:$metricsPort",
@@ -315,6 +376,7 @@ object RiftHarness:
       cfg,
       engineRef,
       pendingConfigRef,
+      runtimeInterceptRef,
       RiftTools.fromBuildDir(cfg.buildDir),
       info
     )
@@ -367,7 +429,7 @@ object RiftHarness:
       s.close()
       port
     }
-  private def freePort: IO[Throwable, Int] =
+  private[support] def freePort: IO[Throwable, Int] =
     ZIO.attemptBlocking {
       val s = new ServerSocket(0)
       val p = s.getLocalPort

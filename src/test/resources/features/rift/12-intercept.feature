@@ -42,3 +42,29 @@ Feature: Intercept / TLS-MITM forward-proxy (rift#413) — CONNECT interception 
     Then the intercept rules count is 1
     When the intercept rules are cleared
     Then the intercept rules count is 0
+
+  # @intercept-runtime: rift 0.13.0 (rift#493) lets the TLS-MITM listener be started/stopped at
+  # runtime over the admin API on a server that was started WITHOUT `--intercept-port`. External-only
+  # (embedded drives intercept over the C-ABI, and container publishes a fixed `--intercept-port`
+  # 1:1) — so this drives a dedicated no-intercept engine the external harness spawns for it, and the
+  # embedded/container aliases exclude the tag.
+  @intercept-runtime
+  Scenario: the TLS-MITM listener starts and stops at runtime over the admin API (rift 0.13.0)
+    Given a rift server started without an intercept listener
+    When the intercept listener is queried over the admin API
+    Then the response status is 404
+    And the response body contains "intercept listener not running"
+    When the intercept listener is started over the admin API
+    Then the response status is 201
+    And the response body contains "interceptPort"
+    And the response body contains "interceptUrl"
+    When the intercept listener is queried over the admin API
+    Then the response status is 200
+    When the intercept listener is started over the admin API
+    Then the response status is 409
+    When the intercept listener is stopped over the admin API
+    Then the response status is 204
+    When the intercept listener is queried over the admin API
+    Then the response status is 404
+    When the intercept listener is stopped over the admin API
+    Then the response status is 204

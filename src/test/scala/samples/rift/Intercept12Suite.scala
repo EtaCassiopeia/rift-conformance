@@ -45,8 +45,16 @@ object Intercept12Suite
   // convention for any embedded-capable scenario added later (there is no per-scenario reset there).
   afterScenario {
     ZIO
-      .serviceWithZIO[RiftHarness](h => deleteRules(h.adminUrl))
-      .tapError(e => ZIO.logWarning(s"intercept rules cleanup failed: ${e.getMessage}"))
+      .serviceWithZIO[RiftHarness](h =>
+        // Clear accumulated rules on the shared listener AND reap the @intercept-runtime sidecar
+        // engine if a scenario started one (a no-op otherwise). The rule-clear is logged-then-ignored
+        // (a non-404 failure is a real admin fault worth surfacing, per deleteRules) but must never
+        // block the sidecar reap that follows.
+        deleteRules(h.adminUrl)
+          .tapError(e => ZIO.logWarning(s"intercept rules cleanup failed: ${e.getMessage}"))
+          .ignore *> h.stopRuntimeInterceptEngine
+      )
+      .tapError(e => ZIO.logWarning(s"intercept sidecar cleanup failed: ${e.getMessage}"))
       .ignore
   }
 
@@ -82,6 +90,33 @@ object Intercept12Suite
 
   private def jsonEscape(s: String): String =
     s.replace("\\", "\\\\").replace("\"", "\\\"")
+
+  /** Send `method path` to the @intercept-runtime sidecar engine's admin API (the one started with
+    * NO `--intercept-port`) and capture it as the scenario's last response, so the shared `the
+    * response status is N` / `the response body contains X` steps assert on it. POST carries an
+    * empty JSON object body — rift's `POST /intercept` takes optional options and defaults them.
+    */
+  private def runtimeInterceptSend(
+      method: String,
+      path: String
+  ): ZIO[RiftHarness, Throwable, LastResponse] =
+    for
+      admin <- ZIO.serviceWithZIO[RiftHarness](_.runtimeInterceptAdminUrl)
+      resp <- ZIO.attemptBlocking {
+        val builder = HttpRequest.newBuilder(URI.create(s"$admin$path"))
+        val req = method match
+          case "POST" =>
+            builder
+              .header("Content-Type", "application/json")
+              .POST(HttpRequest.BodyPublishers.ofString("{}"))
+              .build()
+          case "DELETE" => builder.DELETE().build()
+          case _ => builder.GET().build()
+        val r = http.send(req, HttpResponse.BodyHandlers.ofString())
+        val hs = r.headers.map.asScala.map((k, v) => k.toLowerCase -> v.asScala.toList).toMap
+        LastResponse(r.statusCode, r.body, hs)
+      }
+    yield resp
 
   /** Build an SSLContext that trusts the intercept CA from the exported PKCS#12 truststore bytes —
     * exactly what a real SUT would do to trust the MITM leaf certs. The bytes come from the harness
@@ -224,4 +259,24 @@ object Intercept12Suite
 
   When("the intercept rules are cleared") {
     ZIO.serviceWithZIO[RiftHarness](h => deleteRules(h.adminUrl))
+  }
+
+  // ── @intercept-runtime: start/stop the TLS-MITM listener at runtime (rift 0.13.0, rift#493) ──
+  //    Driven against a dedicated engine the external harness raw-spawns WITHOUT `--intercept-port`,
+  //    so its `/intercept` admin routes begin in the "not running" state.
+
+  Given("a rift server started without an intercept listener") {
+    ZIO.serviceWithZIO[RiftHarness](_.startRuntimeInterceptEngine).unit
+  }
+
+  When("the intercept listener is queried over the admin API") {
+    runtimeInterceptSend("GET", "/intercept").flatMap(Stage.put(_))
+  }
+
+  When("the intercept listener is started over the admin API") {
+    runtimeInterceptSend("POST", "/intercept").flatMap(Stage.put(_))
+  }
+
+  When("the intercept listener is stopped over the admin API") {
+    runtimeInterceptSend("DELETE", "/intercept").flatMap(Stage.put(_))
   }
