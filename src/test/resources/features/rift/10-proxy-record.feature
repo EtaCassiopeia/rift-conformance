@@ -69,3 +69,18 @@ Feature: Proxy record/replay — proxyOnce, proxyTransparent, proxyAlways chains
     And the imposter on port 4811 first recorded predicate includes "/h"
     And the imposter on port 4811 first recorded predicate includes "X-Trace"
     And the imposter on port 4811 first recorded predicate includes "abc123"
+
+  # rift 0.13.0 (rift#498): when a proxy's predicateGenerators.inject THROWS during recording, rift
+  # tags the proxied response with `x-rift-generator-error: script-error` and SKIPS recording the
+  # shadowing match-all stub (previously it recorded a match-all that would shadow the real upstream
+  # on replay). The proxy still forwards the upstream response — only the unsafe recording is
+  # suppressed — so the stub count stays at the single proxy stub.
+  Scenario: a failing predicateGenerators.inject tags the response and records no shadowing stub
+    Given a fresh verbatim imposter from fixture "proxy/generror-upstream"
+    And a fresh verbatim imposter from fixture "proxy/generror-proxy"
+    Then the imposter on port 4819 has 1 stubs
+    When the client sends "GET" "/svc" to port 4819
+    Then the response status is 200
+    And the response body is "UP"
+    And the response header "x-rift-generator-error" is "script-error"
+    And the imposter on port 4819 still has 1 stubs after recording settles
