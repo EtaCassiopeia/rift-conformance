@@ -69,17 +69,23 @@ object EmbeddedAdmin:
     * `configFile` (≥ the version this repo pins), so a rejection is a real error, not something to
     * paper over.
     *
-    * `allowInjection:true` mirrors the `--allowInjection` flag external/container mode spawn the
-    * binary with: rift 0.13.0 (rift#492/#511) added an `allowInjection` option to `serve_admin`,
-    * defaulting to `false`, so without it the in-process admin plane rejects every inject/scripting
-    * imposter (`_rift.script`, JS inject, behaviors) with `400 invalid injection` — the embedded
-    * oracle must serve the same corpus as external mode. Direct FFI ops stay ungated by design.
+    * `allowInjection` (default `true`) mirrors the `--allowInjection` flag external/container mode
+    * spawn the binary with: rift 0.13.0 (rift#492/#511) added an `allowInjection` option to
+    * `serve_admin`, defaulting to `false`, so without it the in-process admin plane rejects every
+    * inject/scripting imposter (`_rift.script`, JS inject, behaviors) with `400 invalid injection`
+    * — the embedded oracle must serve the same corpus as external mode, hence the `true` default.
+    * The gate itself is asserted by `AllowInjectionGate82Spec` (#82), which serves both `false` and
+    * `true`. Direct FFI ops stay ungated by design.
     */
-  def serve(port: Int, configFile: Path): ZIO[Scope, Throwable, Admin] =
+  def serve(
+      port: Int,
+      configFile: Path,
+      allowInjection: Boolean = true
+  ): ZIO[Scope, Throwable, Admin] =
     for
       engine <- EmbeddedRift.startEngine.mapError(mockErr("engine start"))
       opts =
-        s"""{"host":"127.0.0.1","port":$port,"allowInjection":true,"configFile":"${jsonEscape(
+        s"""{"host":"127.0.0.1","port":$port,"allowInjection":$allowInjection,"configFile":"${jsonEscape(
             configFile.toAbsolutePath.toString
           )}"}"""
       info <- engine.serveAdmin(opts).mapError(mockErr("serveAdmin"))
