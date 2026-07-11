@@ -719,6 +719,26 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
       )
     yield ()
 
+  /** `PUT .../scenarios/{name}/state` — set a named scenario's state directly (rift#514, #80). On a
+    * bare-`scenarioName` stub (no `requiredScenarioState`/`newScenarioState`) this now persists,
+    * proving a real flow store is provisioned rather than the pre-0.13.0 silent no-op.
+    */
+  protected def setScenarioState(name: String, state: String): ZIO[RiftHarness, Throwable, Unit] =
+    for
+      port <- currentPort
+      admin <- ZIO.serviceWith[RiftHarness](_.adminUrl)
+      resp <- httpSend(
+        s"$admin/imposters/$port/scenarios/$name/state",
+        "PUT",
+        Map("Content-Type" -> "application/json"),
+        Some(s"""{"state":"${jsonEscape(state)}"}""")
+      )
+      _ <- assertRepro(
+        resp.status == 200,
+        s"PUT scenarios/$name/state -> ${resp.status} (expected 200): ${resp.body}"
+      )
+    yield ()
+
   /** `GET .../scenarios[?flowId=...]` — the named scenario's `state`, or `None` if that scenario is
     * absent from the array (e.g. a flow that was never touched).
     */
@@ -1300,6 +1320,11 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
 
   When("the client resets scenarios") {
     resetScenarios
+  }
+
+  When("the client sets scenario " / string / " state to " / string) {
+    (name: String, state: String) =>
+      setScenarioState(name, state)
   }
 
   // ── admin surface steps (rift#9, feature 08) ────────────────────────────────────────────

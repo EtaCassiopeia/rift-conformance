@@ -99,3 +99,14 @@ Feature: Spaces (flow-id partitioning) and FSM declarative-scenario state
     When the client fires 20 concurrent requests to "/s"
     Then all concurrent responses have status 200
     And scenario "cas" is in state "two"
+
+  # rift 0.13.0 (rift#514): a stub whose scenarioName carries no requiredScenarioState/newScenarioState
+  # now provisions a REAL flow store (was a silent no-op). The bare "bare" scenario therefore exists at
+  # "Started", a direct PUT to its state persists (read back), and reset clears it back to "Started".
+  Scenario: a bare scenarioName provisions a real, writable flow store
+    Given a fresh imposter from fixture "spaces/bare-scenario"
+    Then scenario "bare" is in state "Started"
+    When the client sets scenario "bare" state to "custom"
+    Then scenario "bare" is in state "custom"
+    When the client resets scenarios
+    Then scenario "bare" is in state "Started"
