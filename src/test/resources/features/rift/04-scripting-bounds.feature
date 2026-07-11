@@ -89,3 +89,45 @@ Feature: Scripting engines and runaway bounds
     Then the response status is 504
     And the response header "x-rift-script-timeout" is "true"
     And the response header "x-rift-decorate-error" is "true"
+
+  # rift 0.13.0 (rift#500) made the non-timeout script *error* contracts stable and distinct from the
+  # timeout ones above: a throwing (not slow) script fails fast, tagged x-rift-inject-error /
+  # x-rift-decorate-error but WITHOUT x-rift-script-timeout. A response-inject that throws returns
+  # 400 with the mountebank "invalid injection" error body.
+  Scenario: a broken response-inject fails with 400 invalid injection
+    Given a fresh imposter from fixture "scripting/inject-response-error"
+    When the client sends "GET" "/inject-response"
+    Then the response status is 400
+    And the response header "x-rift-inject-error" is "true"
+    And the response has no header "x-rift-script-timeout"
+    And the response body contains "invalid injection"
+
+  # A predicate-inject that throws fails matching with 400 "invalid predicate injection" — same
+  # x-rift-inject-error marker, distinguishing an error from the 504 predicate-injection timeout.
+  Scenario: a broken predicate-inject fails with 400 invalid predicate injection
+    Given a fresh imposter from fixture "scripting/inject-predicate-error"
+    When the client sends "GET" "/anything"
+    Then the response status is 400
+    And the response header "x-rift-inject-error" is "true"
+    And the response has no header "x-rift-script-timeout"
+    And the response body contains "invalid predicate injection"
+
+  # A decorate that throws (non-strict) never fails the response: the UNDECORATED base response is
+  # still served — 200 with the original body — tagged x-rift-decorate-error but not x-rift-script-timeout.
+  Scenario: a broken decorate serves the undecorated 200 response
+    Given a fresh imposter from fixture "scripting/inject-decorate-error"
+    When the client sends "GET" "/inject-decorate"
+    Then the response status is 200
+    And the response body is "DEC"
+    And the response header "x-rift-decorate-error" is "true"
+    And the response has no header "x-rift-script-timeout"
+
+  # Under strictBehaviors a throwing decorate instead fails loud — 500 Internal Server Error, still
+  # marked x-rift-decorate-error (and still no x-rift-script-timeout: this is an error, not a timeout).
+  Scenario: a broken decorate under strictBehaviors fails with 500
+    Given a fresh imposter from fixture "scripting/inject-decorate-error-strict"
+    When the client sends "GET" "/inject-decorate"
+    Then the response status is 500
+    And the response header "x-rift-decorate-error" is "true"
+    And the response has no header "x-rift-script-timeout"
+    And the response body contains "strictBehaviors"
