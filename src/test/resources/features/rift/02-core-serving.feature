@@ -69,3 +69,23 @@ Feature: Core serving — predicates, cycling, copy, FSM, headers, templates, fo
     When the client sends "GET" "/deep/path" via the gateway
     Then the response status is 200
     And the response body is "gw"
+
+  # rift 0.13.0 (rift#480) narrowed case-insensitive contains/startsWith/endsWith from Unicode folding
+  # to ASCII-only (matching equals). Each predicate value carries an accented letter: the ASCII part
+  # still folds (CAF→caf), but É/é and Ï/ï no longer fold, so an accent-case-swapped body falls through
+  # to the match-all fallback ("no"). One fresh imposter per row (core/case-fold), so an Outline is safe.
+  Scenario Outline: case-insensitive <kind> folds ASCII but not accented letters
+    Given a fresh imposter from fixture "core/case-fold"
+    When the request body is <body>
+    And the client sends "POST" "/"
+    Then the response status is 200
+    And the response body is "<expect>"
+
+    Examples:
+      | kind                 | body          | expect |
+      | startsWith ASCII     | CAFéteria     | sw     |
+      | startsWith accent    | cafÉteria     | no     |
+      | contains ASCII       | the NAïVE cat | co     |
+      | contains accent      | the NAÏVE cat | no     |
+      | endsWith ASCII       | grand-élAN    | ew     |
+      | endsWith accent      | grand-Élan    | no     |
