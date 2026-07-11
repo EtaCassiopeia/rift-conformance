@@ -2,12 +2,13 @@ ThisBuild / scalaVersion := "3.3.4"
 ThisBuild / organization := "io.github.etacassiopeia"
 
 val zioVersion = "2.1.17"
-val zioBddVersion = "1.4.1"
+val zioBddVersion = "1.4.2"
 
-// zio-bdd 1.4.1 is a public Maven Central release (no local publishLocal / sibling checkout
-// needed). 1.4.1 widens the embedded C-ABI (rift#411/#410): the FFM engine exposes serveAdmin (the
-// real in-process admin API), flow-state/space ops, and intercept — enough for the Plane A embedded
-// oracle (RIFT_MODE=embedded, issue #18).
+// zio-bdd 1.4.2 is a public Maven Central release (no local publishLocal / sibling checkout
+// needed) and itself pins rift v0.13.1 (zio-bdd#316), matching the engine this harness fetches.
+// Since 1.4.1 the embedded C-ABI (rift#411/#410) exposes serveAdmin (the real in-process admin API),
+// flow-state/space ops, and intercept — enough for the Plane A embedded oracle (RIFT_MODE=embedded,
+// issue #18). 1.4.2 also ships self-contained embedded natives (no system-LuaJIT dlopen; zio-bdd#312).
 
 // The RiftHarness, the Plane A steps, and their specs live under src/test — this build hosts the
 // conformance harness, not a shipped library, so its dependencies are test-scoped.
@@ -51,7 +52,7 @@ Test / fork := true
 
 // Embedded FFI (MOCK_BACKEND=embedded Plane B, and RIFT_MODE=embedded Plane A #18): the in-process
 // Rift engine via Panama FFM.
-// Gated on a JDK **22+** JVM: 1.4.1 publishes the FFM binding only as `zio-bdd-rift-embedded-jdk21`,
+// Gated on a JDK **22+** JVM: 1.4.2 publishes the FFM binding only as `zio-bdd-rift-embedded-jdk21`,
 // but that jar is compiled to Java-22 bytecode (class 66), so it won't load on JDK 21 despite the
 // name (upstream: zio-bdd#247). FFM is a stable API on 22+, so no --enable-preview is needed (and it
 // would in fact conflict with the class-66 binding). On JDK 11/17/21 the embedded backend is
@@ -112,7 +113,7 @@ addCommandAlias(
 // rift-proxy images lacked the `lua` feature the corpus exercised. Rift 0.12.0 removed the Lua
 // engine entirely (#451) and 05-scripting is now rhai + JS (both built-in), so that blocker is gone
 // — re-enabling container full-corpus + rift-verify is pending a green RIFT_IT container run against
-// the v0.12.0 image (agent-filed follow-up, #45). The container harness spec runs FIRST as the
+// the v0.13.1 image (agent-filed follow-up, #71). The container harness spec runs FIRST as the
 // "does the container start + serve admin" smoke test — a `;`-chain aborts at the first failure, so
 // putting it first means a broken container fails there with the crispest signal rather than as an
 // opaque BDD "Container startup failed". The zio-test specs are a separate step because the zio-bdd

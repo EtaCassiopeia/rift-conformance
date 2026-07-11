@@ -395,4 +395,35 @@ the release added capabilities this harness does not yet exercise. Tracked here 
 
 Container-mode `@full-corpus` re-enablement is also unblocked by the Lua removal — tracked by
 [#71](https://github.com/EtaCassiopeia/rift-conformance/issues/71) (supersedes closed #45); see the
-container row in DESIGN §3.1; pending a green `RIFT_IT` run against the v0.12.0 image.
+container row in DESIGN §3.1; pending a green `RIFT_IT` run against the v0.13.1 image.
+
+## v0.13.0 new-capability coverage gaps (backlog) — tracked by [#72](https://github.com/EtaCassiopeia/rift-conformance/issues/72)
+
+The engine pin moved to **rift 0.13.1** with **zio-bdd 1.4.2**. 0.13.1 is a packaging-only patch (the
+`rift-core` → `rift-mock-core` crate rename, [rift#528](https://github.com/EtaCassiopeia/rift/pull/528);
+binary/FFI/Docker/npm are byte-identical) — **all runtime changes landed in 0.13.0**, a substantial
+release. One behavior change is **already conformed**: the script-timeout contract now returns
+`504 Gateway Timeout` + `x-rift-script-timeout: true` ([rift#499/#515](https://github.com/EtaCassiopeia/rift/pull/515)),
+asserted by `04-scripting-bounds` (the `_rift.script` path). The remaining new surface is untested:
+
+| Capability | rift | Gap | Sketch |
+|------------|------|-----|--------|
+| Server-side `verify` endpoint | #494/#512 | `POST /imposters/{port}/verify` (engine-evaluated predicate count + `includeClosest` `failedPredicates` diff + `flowId` scoping) and the `rift_verify` FFI symbol — no coverage | record N requests, POST a predicate set with `times`, assert the returned count; a near-miss asserts `includeClosest`/`failedPredicates`; `flowId` narrows the count; FFI `rift_verify` diffs the HTTP endpoint |
+| C-ABI admin long-tail (12 symbols) | #491/#513 | `rift_list_imposters`/`rift_get_imposter`/`rift_add_stub`/`rift_get_stub`/`rift_update_stub`/`rift_delete_stub`/`rift_clear_recorded`/`rift_clear_proxy_recordings`/`rift_set_imposter_enabled`/`rift_scenarios`/`rift_set_scenario_state`/`rift_reset_scenarios` — the embedded leg doesn't drive them | for each, call over FFI and diff the returned domain JSON against the equivalent admin HTTP route |
+| Runtime intercept lifecycle over admin API | #493/#521 | `POST /intercept` (201 + `{interceptPort,interceptUrl}`, 409 if running), `GET /intercept` (404 when off), `DELETE /intercept` (204 idempotent) on a server started **without** `--intercept-port`; new `rift_stop_intercept` FFI; `rift_serve_admin` now serves `/intercept*` (previously 404'd) | start with no `--intercept-port`; POST asserts 201 + body; GET running; POST again 409; DELETE 204 → GET 404; repeat DELETE idempotent 204 — extends feature 12 |
+| `allowInjection` in `rift_serve_admin` | #492/#511 | the embedded admin plane's `allowInjection` options flag (default false) mirroring the `--allowInjection` CLI gate — no coverage | start `rift_serve_admin` with `allowInjection:false`, POST an inject imposter → rejected; restart with `true` → accepted |
+| `x-rift-generator-error` proxy header | #498/#507 | a failing `predicateGenerators.inject` now tags the proxied response with `x-rift-generator-error` and skips the shadowing match-all stub — no coverage | proxy with an erroring inject generator; assert the header + that **no** match-all stub was recorded |
+| Script-timeout contract — remaining inject sites | #499/#515 | the `_rift.script` 504 path is covered; response-inject → 504 "injection timeout", predicate-inject → 504 "predicate injection timeout", and decorate → undecorated 200 (or 504 under `strictBehaviors`) are not | one scenario per inject site with a sleeping body under a tiny `timeoutMs`, asserting 504 + `x-rift-script-timeout` |
+| Script error-response contracts (non-timeout) | #500/#509 | response-inject failure → 400 "invalid injection"; decorate failure → 200 + `x-rift-decorate-error` (or 500 under `strictBehaviors`); predicate-inject failure → 400 "invalid predicate injection" — pin these | a broken script per inject site asserting the documented status + marker header |
+| Bare `scenarioName` provisions a real flow store | #514/#520 | a stub with `scenarioName` but no `requiredScenarioState`/`newScenarioState` now persists scenario state (was a silent no-op store) — no coverage | drive `PUT /scenarios/{name}/state` on a bare-`scenarioName` stub, read it back, assert the write persists |
+| ASCII-only case folding for `contains`/`startsWith`/`endsWith` | #480/#508 | case-insensitive string predicates fold ASCII only now (was Unicode) — no non-ASCII scenario pins the narrowed contract | a predicate where `É`/`é` no longer match case-insensitively but ASCII still does |
+| SDK conformance corpus release artifact | #460/#516/#524 | `sdk-conformance-<version>.tar.gz` (imposter fixtures + `_verify` transcripts + `manifest.json`; 12/15 fixtures carry `_verify`) — could be replayed with `rift-verify` as an upstream-authored oracle | download the pinned tarball, replay each fixture, assert `_verify.sequence` holds + `manifest.json` matches disk |
+
+Robustness/perf changes in 0.13.0 that don't need new gap rows but are worth noting: per-imposter
+`ctx.state` updates are now atomic under same-imposter concurrency ([rift#477/#486](https://github.com/EtaCassiopeia/rift/pull/486))
+— exercised by `04-scripting-bounds`' concurrent-runaway + per-flow-id isolation scenario; every FFI
+entry point is panic-guarded across the C ABI ([rift#484/#487](https://github.com/EtaCassiopeia/rift/pull/487))
+— hardens the embedded (Panama FFM) leg; proxy HTTP connection pooling was re-enabled
+([rift#482/#496](https://github.com/EtaCassiopeia/rift/pull/496)); and the function-form `wait`
+fallback now clamps/caps like the Boa path ([rift#490/#504](https://github.com/EtaCassiopeia/rift/pull/504),
+`--no-default-features` only).

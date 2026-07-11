@@ -53,7 +53,7 @@ Guiding principles:
 eval "$(scripts/build-rift.sh)"     # exports RIFT_BUILD_DIR; cache hit if already fetched
 ```
 
-`RIFT_VERSION` (default `0.12.0`) pins the release; `RIFT_BUILD_CACHE` controls the cache root.
+`RIFT_VERSION` (default `0.13.1`) pins the release; `RIFT_BUILD_CACHE` controls the cache root.
 Never trust a stale `RIFT_BUILD_DIR` from a previous session when validating a fix — re-run this
 if in doubt, or unset `RIFT_BUILD_DIR` first to force a fresh cache check.
 
