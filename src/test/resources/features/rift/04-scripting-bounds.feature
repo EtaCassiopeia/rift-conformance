@@ -49,3 +49,43 @@ Feature: Scripting engines and runaway bounds
     And the response body is "alive"
     And the engine remains responsive
     And all concurrent responses have status 504
+
+  # rift 0.13.x extends the 504 script-timeout contract (rift#499) beyond the `_rift.script` path
+  # (covered above) to the mountebank inject sites. A slow response-inject times out with 504
+  # "injection timeout"; the dedicated x-rift-script-timeout: true header marks it a timeout (vs any
+  # other inject error), alongside x-rift-inject-error: true.
+  Scenario: a slow response-inject times out with 504
+    Given a fresh imposter from fixture "scripting/inject-response-timeout"
+    When the client sends "GET" "/inject-response"
+    Then the response status is 504
+    And the response header "x-rift-script-timeout" is "true"
+    And the response header "x-rift-inject-error" is "true"
+
+  # A slow predicate-inject times out during matching with 504 "predicate injection timeout" —
+  # same x-rift-script-timeout marker, distinguishing a timeout from an invalid-predicate error.
+  Scenario: a slow predicate-inject times out with 504
+    Given a fresh imposter from fixture "scripting/inject-predicate-timeout"
+    When the client sends "GET" "/anything"
+    Then the response status is 504
+    And the response header "x-rift-script-timeout" is "true"
+    And the response header "x-rift-inject-error" is "true"
+
+  # A slow decorate behaviour times out AFTER the base response is chosen, so (non-strict) the
+  # UNDECORATED response is still served — 200 with the original body — tagged x-rift-decorate-error
+  # plus x-rift-script-timeout. Decorate never fails the response by default.
+  Scenario: a slow decorate times out but still serves the undecorated response
+    Given a fresh imposter from fixture "scripting/inject-decorate-timeout"
+    When the client sends "GET" "/inject-decorate"
+    Then the response status is 200
+    And the response body is "DEC"
+    And the response header "x-rift-script-timeout" is "true"
+    And the response header "x-rift-decorate-error" is "true"
+
+  # Under strictBehaviors, a decorate timeout instead fails loud — 504, still marked
+  # x-rift-decorate-error + x-rift-script-timeout.
+  Scenario: a slow decorate under strictBehaviors fails the response with 504
+    Given a fresh imposter from fixture "scripting/inject-decorate-timeout-strict"
+    When the client sends "GET" "/inject-decorate"
+    Then the response status is 504
+    And the response header "x-rift-script-timeout" is "true"
+    And the response header "x-rift-decorate-error" is "true"
