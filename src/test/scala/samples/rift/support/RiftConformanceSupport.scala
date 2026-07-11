@@ -1322,6 +1322,11 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
     resetScenarios
   }
 
+  // Real-time wait — for observing time-bounded state (e.g. a `flowState.ttlSeconds` key expiring, #85).
+  When("the client waits " / int / " ms") { (ms: Int) =>
+    Clock.sleep(ms.millis)
+  }
+
   When("the client sets scenario " / string / " state to " / string) {
     (name: String, state: String) =>
       setScenarioState(name, state)
