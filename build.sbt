@@ -108,21 +108,23 @@ addCommandAlias(
 // engine is scoped to — feature 01 (gate) + 03 (faults-transport) + 12 (intercept/TLS-MITM, #51 —
 // the container publishes an `--intercept-port` 1:1) — plus the container harness acceptance spec.
 // Docker/RIFT_IT-gated by scripts/conformance-engine.sh. Excludes 02/04–11: the image-run engine is
-// only asserted for the gate + transport + intercept surfaces (DESIGN §3.1). `--exclude-tags
-// full-corpus` drops feature 01's two full-corpus-serving scenarios: historically the published
-// rift-proxy images lacked the `lua` feature the corpus exercised. Rift 0.12.0 removed the Lua
-// engine entirely (#451) and 05-scripting is now rhai + JS (both built-in), so that blocker is gone
-// — re-enabling container full-corpus + rift-verify is pending a green RIFT_IT container run against
-// the v0.13.1 image (agent-filed follow-up, #71). The container harness spec runs FIRST as the
-// "does the container start + serve admin" smoke test — a `;`-chain aborts at the first failure, so
-// putting it first means a broken container fails there with the crispest signal rather than as an
-// opaque BDD "Container startup failed". The zio-test specs are a separate step because the zio-bdd
-// `--exclude-tags` arg is not theirs to parse.
+// only asserted for the gate + transport + intercept surfaces (DESIGN §3.1). The full-corpus SERVE
+// scenario (@full-corpus) now runs in container: its historical blocker — published images lacking
+// the `lua` feature the corpus exercised — is void (rift 0.12.0 removed Lua #451; 05-scripting is
+// rhai + JS, both built-in), and a green RIFT_IT run against the v0.13.1 image confirms it (#71).
+// `--exclude-tags full-corpus-verify` drops ONLY the rift-verify scenario: `rift-verify
+// --verify-dynamic` spins up ephemeral imposters on dynamic high ports that bind inside the
+// container's network namespace and are unreachable from the host-side tool over the 1:1
+// published-port topology — a standing container-mode constraint, not a lua/image gap (#71). The
+// container harness spec runs FIRST as the "does the container start + serve admin" smoke test — a
+// `;`-chain aborts at the first failure, so putting it first means a broken container fails there
+// with the crispest signal rather than as an opaque BDD "Container startup failed". The zio-test
+// specs are a separate step because the zio-bdd `--exclude-tags` arg is not theirs to parse.
 addCommandAlias(
   "engineContainer",
   "; testOnly samples.rift.RiftContainerHarnessSpec samples.rift.RiftToolsParseSpec" +
     " ; testOnly samples.rift.ConsistencyGateSuite samples.rift.FaultsTransport03Suite " +
-    "samples.rift.Intercept12Suite -- --exclude-tags full-corpus,intercept-caller-ca"
+    "samples.rift.Intercept12Suite -- --exclude-tags full-corpus-verify,intercept-caller-ca"
 )
 
 // Plane B (issue #13) harness entry points (mirror scripts/*.sh). `lintFeatures` is the dry-run
