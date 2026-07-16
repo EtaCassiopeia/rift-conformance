@@ -4,11 +4,26 @@ ThisBuild / organization := "io.github.etacassiopeia"
 val zioVersion = "2.1.17"
 val zioBddVersion = "1.4.2"
 
-// zio-bdd 1.4.2 is a public Maven Central release (no local publishLocal / sibling checkout
-// needed) and itself pins rift v0.13.1 (zio-bdd#316), matching the engine this harness fetches.
+// zio-bdd 1.4.2 is a public Maven Central release (no local publishLocal / sibling checkout needed).
 // Since 1.4.1 the embedded C-ABI (rift#411/#410) exposes serveAdmin (the real in-process admin API),
 // flow-state/space ops, and intercept — enough for the Plane A embedded oracle (RIFT_MODE=embedded,
 // issue #18). 1.4.2 also ships self-contained embedded natives (no system-LuaJIT dlopen; zio-bdd#312).
+//
+// ENGINE-VERSION SPLIT (2026-07-16, rift 0.14.0 bump): two independent knobs govern the engine
+// build, and after this bump they intentionally diverge.
+//   • The BINARY legs — external + container Plane A, and rift-external Plane B — run the `rift` /
+//     `rift-lint` / `rift-verify` binaries that scripts/build-rift.sh fetches at RIFT_VERSION
+//     (now 0.14.0). These are the engine-as-source-of-truth planes and track the latest release.
+//   • The EMBEDDED leg — embedded Plane A + Plane B — loads `librift_ffi` from the
+//     `zio-bdd-rift-embedded-natives` Maven artifact, whose rift version is pinned by zioBddVersion.
+//     zio-bdd 1.4.2 bundles rift v0.13.1 natives (zio-bdd#316); no zio-bdd release carries 0.14.0
+//     natives yet, so the embedded leg stays on 0.13.1 until one does.
+// This split is ABI-safe: rift 0.14.0 ships NO C-ABI/FFI/manifest bump (its only FFI touch is an
+// additive optional `rules` field on `rift_start_intercept`), so the 0.13.1 natives load and drive
+// unchanged. The embedded leg is therefore green but exercises 0.13.1 engine code, not 0.14.0 — a
+// coverage caveat recorded in COVERAGE.md, to be closed when zio-bdd bumps its rift pin (upstream
+// follow-up). The @preflight version-coherence gate is external-only (RiftHarness.layer) and
+// compares BUILD_INFO against the same-fetch binaries, so it stays coherent at 0.14.0.
 
 // The RiftHarness, the Plane A steps, and their specs live under src/test — this build hosts the
 // conformance harness, not a shipped library, so its dependencies are test-scoped.
@@ -111,7 +126,8 @@ addCommandAlias(
 // only asserted for the gate + transport + intercept surfaces (DESIGN §3.1). The full-corpus SERVE
 // scenario (@full-corpus) now runs in container: its historical blocker — published images lacking
 // the `lua` feature the corpus exercised — is void (rift 0.12.0 removed Lua #451; 05-scripting is
-// rhai + JS, both built-in), and a green RIFT_IT run against the v0.13.1 image confirms it (#71).
+// rhai + JS, both built-in), and a green RIFT_IT run against the v0.13.1 image confirmed it (#71);
+// the container leg tracks RIFT_VERSION (now the 0.14.0 image), re-verified in CI on the bump.
 // `--exclude-tags full-corpus-verify` drops ONLY the rift-verify scenario: `rift-verify
 // --verify-dynamic` spins up ephemeral imposters on dynamic high ports that bind inside the
 // container's network namespace and are unreachable from the host-side tool over the 1:1

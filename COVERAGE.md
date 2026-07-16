@@ -430,3 +430,68 @@ entry point is panic-guarded across the C ABI ([rift#484/#487](https://github.co
 ([rift#482/#496](https://github.com/EtaCassiopeia/rift/pull/496)); and the function-form `wait`
 fallback now clamps/caps like the Boa path ([rift#490/#504](https://github.com/EtaCassiopeia/rift/pull/504),
 `--no-default-features` only).
+
+## v0.13.2 → v0.14.0 new-capability coverage gaps (pin bump 0.13.1 → 0.14.0) — tracked by [#72](https://github.com/EtaCassiopeia/rift-conformance/issues/72)
+
+The engine pin moved **0.13.1 → 0.14.0** (2026-07-16). This jump folds in five intermediate releases
+(0.13.2–0.13.6) that were never on the pin, plus 0.14.0 itself. Existing scenarios stay green: the
+suite asserts status codes + `x-rift-*` marker headers + body **substrings**, none of which changed
+under any of the behavior changes below. The changes are therefore logged here as **coverage
+opportunities** (assert the *new* contract), not as conforming fixes.
+
+### Engine-version split (embedded leg lags)
+
+`RIFT_VERSION` governs the **binary** legs (external + container Plane A, rift-external Plane B) —
+now **0.14.0**. The **embedded** leg (embedded Plane A + Plane B) loads `librift_ffi` from
+`zio-bdd-rift-embedded-natives`, pinned by `zioBddVersion` — zio-bdd 1.4.2 bundles **0.13.1** natives
+([zio-bdd#316](https://github.com/EtaCassiopeia/zio-bdd/pull/316)), and no zio-bdd release carries
+0.14.0 natives yet. So the embedded leg is **green but exercising 0.13.1 engine code**. The split is
+ABI-safe — 0.14.0 ships **no** C-ABI/FFI/`ffi-manifest.json` bump (its only FFI touch is an additive
+optional `rules` field on `rift_start_intercept`) — so the 0.13.1 natives load and drive unchanged.
+**Upstream follow-up:** ask zio-bdd to bump its rift pin to 0.14.0 so the embedded leg can catch up.
+The `@preflight` gate is external-only and compares BUILD_INFO against the same-fetch binaries, so it
+stays coherent at 0.14.0.
+
+### Behavior changes now live (non-breaking to existing scenarios)
+
+| Change | rift | Release | Coverage status |
+|--------|------|---------|-----------------|
+| Error-body envelope unified: proxy/`defaultForward` 502 **and** every imposter error door → `{"errors":[{"code","message"}]}` (was `{"error":"…"}`), now valid JSON even when the message contains `"` | #611 sweep completion | 0.14.0 | **gap** — existing scenarios assert marker headers + `body contains "<substring>"` (still present in `message`), so green. Opportunity: assert the envelope shape + `code` == status |
+| `Content-Type: application/json` now on every imposter error door that serves the envelope | #611 | 0.14.0 | **gap** — assert the header on script-error / template-error / disabled-imposter / 413 doors |
+| `POST /intercept/rules` (+ `rules` on `POST /intercept`, + the `--configfile intercept` block) enforce `--allowInjection`; an `inject` predicate → `400`, atomic, sees through `not`/`or`/`and` | #657/#659 | 0.14.0 | **gap** — feature 12 exercises `serve`/`forward` rules (unaffected); add the gated-`inject` rejection + nesting case. Ties to the door-parity finding |
+| Query-param **names** percent-decoded everywhere (`?first%20name` → `first name`) | #619 | 0.13.6 | **gap** — matching-semantics change; add a predicate keyed on a decoded query-param name |
+| `DELETE /imposters[/{port}]` awaits full teardown before returning (port no longer serves after DELETE) | #597 | 0.13.5 | **gap** — assert connection-refused immediately after DELETE |
+| `PUT /imposters` is atomic (no lossy delete-then-recreate on partial failure) | #582 | 0.13.3 | **gap** |
+| Intercept rule store capped 10k → `429`; admin body capped 64 MiB → `413` | #579/#567 | 0.13.3 | **gap** — net-new status codes |
+| `flowState.ttlSeconds` ≤ 0 rejected `400` at create (was accepted) | — | 0.13.2 | **gap** — pin the reject |
+| Constant-time admin API-key comparison | #566 | 0.13.3 | not black-box assertable (timing) — no gap row |
+
+### Cache-key correctness — regression-pin opportunities (both fixed in 0.14.0)
+
+0.14.0 closed the decision-cache key-completeness family (cache on by default, 300 s TTL): the key now
+covers the **query string** ([rift#660](https://github.com/EtaCassiopeia/rift/issues/660)) and the
+**raw non-JSON body** ([rift#652](https://github.com/EtaCassiopeia/rift/issues/652)) — previously two
+requests differing only in query (or in a non-JSON body, all of which hashed to `null`) shared one
+cached fault decision. **Gap:** a script branching on `ctx.request.query` / `ctx.request.raw_body`,
+two requests differing only in that dimension → assert independent decisions (the fix holds). Same
+invariant, third instance (headers) landed earlier via #630.
+
+### New capabilities
+
+| Capability | rift | Release | Gap | Sketch |
+|------------|------|---------|-----|--------|
+| Declarative `intercept` block in `--configfile` (`{host?,port?,ca?,rules[]}`), rules seeded before the listener binds; block + `--intercept-*` flags is a startup error | #655/#658 | 0.14.0 | **[#113](https://github.com/EtaCassiopeia/rift-conformance/issues/113) now UNBLOCKED** — the release carrying #655 has shipped; land #113's 5 scenarios | feature 12, dedicated no-`--intercept-port` engine |
+| `rules` array on `POST /intercept` + FFI `rift_start_intercept` — start-and-seed in one call | #655 | 0.14.0 | gap | POST with `rules[]`, assert listener + rules up atomically |
+| `POST /admin/reload` emits a `warnings` entry (+ logs) when the reloaded file carries an `intercept` block (reload still applies imposters only) | #655 | 0.14.0 | gap | reload a config with a block → 200 + warnings, listener untouched |
+| `rift healthcheck` CLI subcommand (probes `/health`, exits 0/1, reads `--host`/`--port`/`MB_*`) | 0.14.0 | 0.14.0 | gap | offline tool spec, like `RiftScriptTooling88Spec` |
+| `-static` image flavor (`FROM scratch`, musl; no shell, no curl, cosign-signed + SBOM) | 0.14.0 | 0.14.0 | gap (container leg) | smoke that `:<ver>-static` serves the corpus; exec-form only |
+| `GET /events` admin SSE stream (request tails + imposter events) | #518 | 0.13.6 | gap | subscribe, drive a request, assert the event |
+| `savedRequests?since=<index>` cursor (per-port monotonic journal indices) | #603/#607 | 0.13.6 | gap | record N, tail from an index, assert the delta |
+| `rift_abi_version()` FFI symbol (SDKs gate on ABI, not marketing version) | #592 | 0.13.4 | gap (embedded leg) | drive over FFI, assert the ABI contract version |
+| Intercept CA: inline `caCertPem`/`caKeyPem` input + generate-and-return bootstrap mode | #594 | 0.13.4 | gap | POST /intercept with inline PEM; assert the returned CA |
+| Per-key flow-state TTL `ctx.state.ttl(key, seconds)`; probabilistic TCP faults `{probability,type}` | #535/#533 | 0.13.2 | gap | extend `04-scripting-bounds` / `03-faults-transport` |
+
+Each row is independently `/fix-issue`-able; split into a child of #72 when picked up. Priority order
+(recurrence × black-box cheapness): (1) `POST /intercept/rules` allowInjection gate + the door-parity
+matrix; (2) the error-envelope + content-type unification; (3) query-param-name decoding; (4) the
+declarative intercept block (#113); (5) cache-key regression pins.
