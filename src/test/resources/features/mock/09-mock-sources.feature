@@ -24,9 +24,9 @@ Feature: MockSource variants — Dsl (portable) and raw Resource/File/Dir (Rift)
 
   # received() was only ever exercised against a DSL-provisioned space; this proves it works
   # end-to-end on a space provisioned from a RAW imposter document via MockSource.Resource (the path
-  # a real consumer uses, authoring "recordRequests": true in the JSON). NB: the zio-bdd-rift adapter
-  # force-sets recordRequests on all raw sources (RiftProtocol.imposterFromRaw), so recording here is
-  # guaranteed by the adapter, not by the authored flag — see FINDINGS.md (#63).
+  # a real consumer uses, authoring "recordRequests": true in the JSON). The authored flag is now
+  # honored by the adapter (zio-bdd#294 fixed by #297 in zio-bdd 1.4.2); the false-variant below
+  # pins the other side of the contract — see FINDINGS.md F5 (#63).
   @rift
   Scenario: received() works on a raw imposter document provisioned via Resource
     Given a resource source "mocksources/rift/recorded.json"
@@ -35,6 +35,18 @@ Feature: MockSource variants — Dsl (portable) and raw Resource/File/Dir (Rift)
     And the response body is "recorded-body"
     And the mock recorded 1 requests
     And a "GET" to "/recorded" was recorded
+
+  # F5 regression pin (zio-bdd#294 / #297): an authored "recordRequests": false in a raw imposter
+  # document is now HONORED — the adapter no longer force-sets recording on. Before the fix,
+  # RiftProtocol.imposterFromRaw unconditionally upserted recordRequests:true, so this recorded 1;
+  # now received() is empty. The stub still serves; only recording is off.
+  @rift
+  Scenario: an authored recordRequests:false is honored on a raw Resource source
+    Given a resource source "mocksources/rift/recorded-off.json"
+    When the client sends "GET" "/recorded-off"
+    Then the response status is 200
+    And the response body is "not-recorded"
+    And the mock recorded 0 requests
 
   # A single raw imposter document declaring MULTIPLE stubs — a distinct parsing/plumbing path from
   # the well-covered DSL multi-rule case; every other raw fixture here has exactly one stub (#65).
