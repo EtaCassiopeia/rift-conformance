@@ -361,27 +361,34 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
 
   // ── error-response envelope (rift#611, 0.14.0 — feature 13) ──────────────────────────────
 
-  /** Parse the standard error envelope `{"errors":[{"code","message"}]}` out of a response body.
+  /** One entry of the error envelope. `slug` is 0.15.0's `type` (rift#797) — `Option` because
+    * pre-0.15.0 engines omit the field entirely, so a missing one fails the assertion that names it
+    * rather than silently comparing against `null`.
+    */
+  private final case class EnvelopeEntry(code: String, slug: Option[String], message: String)
+
+  /** Parse the standard error envelope `{"errors":[{"code","type","message"}]}` out of a body.
     *
     * `Left` names WHY the body is not a well-formed envelope (unparseable vs wrong shape) so a
     * failure reads as the actual defect rather than a bare "assertion was false" — the pre-0.14.0
     * bug this pins was exactly an unparseable body, and "body is not JSON" is the diagnosis.
     */
-  private def parseErrorEnvelope(body: String): Either[String, List[(String, String)]] =
+  private def parseErrorEnvelope(body: String): Either[String, List[EnvelopeEntry]] =
     body.fromJson[Json].left.map(m => s"body is not JSON: $m").flatMap {
       case Json.Obj(fields) =>
         fields.collectFirst { case ("errors", Json.Arr(entries)) => entries } match
           case None => Left("no top-level 'errors' array")
           case Some(entries) if entries.isEmpty => Left("'errors' array is empty")
           case Some(entries) =>
-            entries.foldLeft[Either[String, List[(String, String)]]](Right(Nil)) { (acc, entry) =>
+            entries.foldLeft[Either[String, List[EnvelopeEntry]]](Right(Nil)) { (acc, entry) =>
               acc.flatMap { done =>
                 entry match
                   case Json.Obj(f) =>
                     val code = f.collectFirst { case ("code", Json.Str(c)) => c }
+                    val slug = f.collectFirst { case ("type", Json.Str(t)) => t }
                     val message = f.collectFirst { case ("message", Json.Str(m)) => m }
                     (code, message) match
-                      case (Some(c), Some(m)) => Right(done :+ (c, m))
+                      case (Some(c), Some(m)) => Right(done :+ EnvelopeEntry(c, slug, m))
                       case _ => Left(s"entry lacks a string 'code'/'message': $entry")
                   case _ => Left(s"'errors' entry is not an object: $entry")
               }
@@ -393,7 +400,7 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
     * when the body isn't one.
     */
   private def withEnvelope(
-      f: List[(String, String)] => IO[Throwable, Unit]
+      f: List[EnvelopeEntry] => IO[Throwable, Unit]
   ): IO[Throwable, Unit] =
     lastResponse.flatMap { r =>
       parseErrorEnvelope(r.body) match
@@ -1419,7 +1426,7 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
       )
       _ <- withEnvelope { entries =>
         assertRepro(
-          entries.forall((_, message) => message.nonEmpty),
+          entries.forall(_.message.nonEmpty),
           s"envelope carries an empty message: '${r.body}'"
         )
       }
@@ -1431,10 +1438,24 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
   // a string, so a blanket code==status assert would be wrong.
   Then("the error envelope code is " / string) { (code: String) =>
     withEnvelope { entries =>
-      val got = entries.map(_._1)
+      val got = entries.map(_.code)
       assertRepro(
         got.contains(code),
         s"expected envelope code '$code', got ${got.mkString(", ")}"
+      )
+    }
+  }
+
+  // rift 0.15.0 (rift#797, filed from this harness while writing #118) added `type`: a stable
+  // symbolic slug, where `code` is the status on most doors but a Mountebank slug on the inject
+  // ones. `type` is what new consumers are told to branch on; asserting BOTH per door is what pins
+  // 0.15.0's "additive, not a rewrite" promise.
+  Then("the error envelope type is " / string) { (slug: String) =>
+    withEnvelope { entries =>
+      val got = entries.map(_.slug)
+      assertRepro(
+        got.contains(Some(slug)),
+        s"expected envelope type '$slug', got ${got.map(_.getOrElse("<absent>")).mkString(", ")}"
       )
     }
   }
@@ -1443,7 +1464,7 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
   // through a well-formed envelope — the rift#611 regression case.
   Then("the error envelope message contains " / string) { (sub: String) =>
     withEnvelope { entries =>
-      val messages = entries.map(_._2)
+      val messages = entries.map(_.message)
       assertRepro(
         messages.exists(_.contains(sub)),
         s"expected an envelope message containing '$sub', got ${messages.mkString(" | ")}"

@@ -35,6 +35,7 @@ Feature: Error-response envelope — the standard {"errors":[{code,message}]} co
     And the response header "x-rift-script-error" is "true"
     And the response is a rift error envelope
     And the error envelope code is "500"
+    And the error envelope type is "script error"
     And the error envelope message contains "expected \"ready\""
 
   # The `_rift.script` timeout door (04 asserts the 504 + marker headers; the envelope is pinned
@@ -46,6 +47,7 @@ Feature: Error-response envelope — the standard {"errors":[{code,message}]} co
     And the response header "x-rift-script-timeout" is "true"
     And the response is a rift error envelope
     And the error envelope code is "504"
+    And the error envelope type is "script timeout"
     And the error envelope message contains "timed out"
 
   # The four `inject` doors — the ones whose `code` is a Mountebank SLUG rather than the status.
@@ -58,6 +60,9 @@ Feature: Error-response envelope — the standard {"errors":[{code,message}]} co
     And the response header "x-rift-inject-error" is "true"
     And the response is a rift error envelope
     And the error envelope code is "<code>"
+    # On these four doors `type` and `code` carry the SAME slug — asserting both is what would catch
+    # a future release that moved one and not the other.
+    And the error envelope type is "<code>"
 
     Examples:
       | door               | fixture                   | path             | status | code                        |
@@ -75,6 +80,7 @@ Feature: Error-response envelope — the standard {"errors":[{code,message}]} co
     And the response header "x-rift-decorate-error" is "true"
     And the response is a rift error envelope
     And the error envelope code is "<status>"
+    And the error envelope type is "behavior error"
     And the error envelope message contains "strictBehaviors"
 
     Examples:
@@ -92,6 +98,7 @@ Feature: Error-response envelope — the standard {"errors":[{code,message}]} co
     And the response header "<marker>" is "true"
     And the response is a rift error envelope
     And the error envelope code is "500"
+    And the error envelope type is "behavior error"
     And the error envelope message contains "strictBehaviors"
 
     Examples:
@@ -107,6 +114,7 @@ Feature: Error-response envelope — the standard {"errors":[{code,message}]} co
     And the response header "x-rift-default-forward-error" is "true"
     And the response is a rift error envelope
     And the error envelope code is "502"
+    And the error envelope type is "upstream failure"
     And the error envelope message contains "defaultForward"
 
   # The over-size door is enforced before any stub matching, so it needs no special imposter — only
@@ -118,6 +126,7 @@ Feature: Error-response envelope — the standard {"errors":[{code,message}]} co
     Then the response status is 413
     And the response is a rift error envelope
     And the error envelope code is "413"
+    And the error envelope type is "request too large"
     And the error envelope message contains "exceeds maximum size"
 
   # The disabled-imposter door. Feature 08 already asserts the 503 status; this pins its body shape.
@@ -129,6 +138,7 @@ Feature: Error-response envelope — the standard {"errors":[{code,message}]} co
     And the response header "x-rift-imposter-disabled" is "true"
     And the response is a rift error envelope
     And the error envelope code is "503"
+    And the error envelope type is "imposter disabled"
     And the error envelope message contains "disabled"
 
   # The admin plane serves the same envelope on a rejected create — an unresolvable script reference
@@ -141,6 +151,7 @@ Feature: Error-response envelope — the standard {"errors":[{code,message}]} co
     Then the response status is 400
     And the response is a rift error envelope
     And the error envelope code is "400"
+    And the error envelope type is "bad data"
     And the error envelope message contains "Script resolution failed"
 
     Examples:
