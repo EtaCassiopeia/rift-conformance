@@ -186,6 +186,48 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
   protected def assertRepro(cond: Boolean, msg: String): IO[Throwable, Unit] =
     curlLog.flatMap(ls => Assertions.assertTrue(cond, s"$msg\n--- repro ---\n${ls.mkString("\n")}"))
 
+  // ── error-response envelope (rift#611, 0.14.0 — feature 13) ──────────────────────────────
+
+  /** Parse the standard error envelope `{"errors":[{"code","message"}]}` out of a response body.
+    *
+    * `Left` names WHY the body is not a well-formed envelope (unparseable vs wrong shape) so a
+    * failure reads as the actual defect rather than a bare "assertion was false" — the pre-0.14.0
+    * bug this pins was exactly an unparseable body, and "body is not JSON" is the diagnosis.
+    */
+  private def parseErrorEnvelope(body: String): Either[String, List[(String, String)]] =
+    body.fromJson[Json].left.map(m => s"body is not JSON: $m").flatMap {
+      case Json.Obj(fields) =>
+        fields.collectFirst { case ("errors", Json.Arr(entries)) => entries } match
+          case None => Left("no top-level 'errors' array")
+          case Some(entries) if entries.isEmpty => Left("'errors' array is empty")
+          case Some(entries) =>
+            entries.foldLeft[Either[String, List[(String, String)]]](Right(Nil)) { (acc, entry) =>
+              acc.flatMap { done =>
+                entry match
+                  case Json.Obj(f) =>
+                    val code = f.collectFirst { case ("code", Json.Str(c)) => c }
+                    val message = f.collectFirst { case ("message", Json.Str(m)) => m }
+                    (code, message) match
+                      case (Some(c), Some(m)) => Right(done :+ (c, m))
+                      case _ => Left(s"entry lacks a string 'code'/'message': $entry")
+                  case _ => Left(s"'errors' entry is not an object: $entry")
+              }
+            }
+      case _ => Left("body root is not a JSON object")
+    }
+
+  /** Run an assertion over the last response's parsed envelope, failing with the parse diagnosis
+    * when the body isn't one.
+    */
+  private def withEnvelope(
+      f: List[(String, String)] => IO[Throwable, Unit]
+  ): IO[Throwable, Unit] =
+    lastResponse.flatMap { r =>
+      parseErrorEnvelope(r.body) match
+        case Right(entries) => f(entries)
+        case Left(why) => assertRepro(false, s"not a rift error envelope ($why): '${r.body}'")
+    }
+
   // ── admin API + imposter I/O (direct, no MockControl) ────────────────────────────────────
 
   /** Load a fixture imposter, assign it a fresh 48xx port, POST it to the admin API, and track it.
@@ -1172,6 +1214,102 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
       val got = r.headers.get(h.toLowerCase).map(_.mkString(","))
       assertRepro(got.isEmpty, s"expected no header $h, got ${got.getOrElse("<absent>")}")
     }
+  }
+
+  // rift 0.14.0 completed the rift#611 sweep: every error door serves the Mountebank envelope with
+  // Content-Type: application/json. Both halves are asserted here because the pre-sweep defect was
+  // an UNDECODABLE body — a substring assert on the same body passes either way (feature 13, #118).
+  Then("the response is a rift error envelope") {
+    for
+      r <- lastResponse
+      ct = r.headers.get("content-type").map(_.mkString(",")).getOrElse("<absent>")
+      _ <- assertRepro(
+        ct.toLowerCase.startsWith("application/json"),
+        s"expected Content-Type: application/json, got $ct"
+      )
+      _ <- withEnvelope { entries =>
+        assertRepro(
+          entries.forall((_, message) => message.nonEmpty),
+          s"envelope carries an empty message: '${r.body}'"
+        )
+      }
+    yield ()
+  }
+
+  // Pinned per door rather than derived from the status: the four `inject` doors carry a Mountebank
+  // slug ("invalid injection", "injection timeout", …) while every other door carries the status as
+  // a string, so a blanket code==status assert would be wrong.
+  Then("the error envelope code is " / string) { (code: String) =>
+    withEnvelope { entries =>
+      val got = entries.map(_._1)
+      assertRepro(
+        got.contains(code),
+        s"expected envelope code '$code', got ${got.mkString(", ")}"
+      )
+    }
+  }
+
+  // Reads the DECODED JSON string, so this can only pass if a message containing a `"` round-tripped
+  // through a well-formed envelope — the rift#611 regression case.
+  Then("the error envelope message contains " / string) { (sub: String) =>
+    withEnvelope { entries =>
+      val messages = entries.map(_._2)
+      assertRepro(
+        messages.exists(_.contains(sub)),
+        s"expected an envelope message containing '$sub', got ${messages.mkString(" | ")}"
+      )
+    }
+  }
+
+  // The negative: doors that deliberately keep a non-JSON reply (the plain-text `Unknown fault`)
+  // must NOT be swept into the envelope by a later change.
+  Then("the response is not a JSON error envelope") {
+    lastResponse.flatMap { r =>
+      assertRepro(
+        parseErrorEnvelope(r.body).isLeft,
+        s"expected a non-envelope reply, but the body parsed as one: '${r.body}'"
+      )
+    }
+  }
+
+  // The over-size door trips before stub matching, so the body only has to exceed the engine's
+  // request cap — generated here rather than inlined, since a 10 MiB literal has no place in a
+  // feature file.
+  When("the request body is " / int / " MiB of " / string) { (mib: Int, ch: String) =>
+    pendingRequest.flatMap(pr => Stage.put(pr.copy(body = Some(ch * (mib * 1024 * 1024)))))
+  }
+
+  // An unresolvable script reference — a `ref:` naming no `_rift.scripts` entry, or a `file:` that
+  // resolves to nothing — is rejected at CREATE time, so this door lives on the admin plane and
+  // never reaches an imposter. It needs a raw POST rather than the fixture helper (which asserts
+  // 201). `kind` is the script field to poison: "ref" or "file".
+  When("the client posts an imposter whose script " / string / " is unresolvable") {
+    (kind: String) =>
+      for
+        admin <- ZIO.serviceWith[RiftHarness](_.adminUrl)
+        port <- freeProbePort
+        // Tracked even though the POST is expected to be REJECTED: if the engine ever accepts it —
+        // exactly the regression this scenario guards — an untracked imposter would squat a 48xx
+        // pool port for the rest of the run and a later scenario could match against it. Teardown
+        // tolerates a 404, so tracking a port that was never bound costs nothing.
+        _ <- track(port)
+        value = if kind == "file" then "no-such-script.rhai" else "no-such-script"
+        json =
+          s"""{"port":$port,"protocol":"http","stubs":[{"predicates":[{"equals":{"path":"/x"}}],""" +
+            s""""responses":[{"_rift":{"script":{"engine":"rhai","$kind":"$value"}}}]}]}"""
+        // Recorded BEFORE the send, like every other request step: a transport-level throw must
+        // still leave a paste-ready repro behind.
+        _ <- recordCurl(
+          s"curl -i -X POST $admin/imposters -H 'Content-Type: application/json' -d '$json'"
+        )
+        resp <- httpSend(
+          s"$admin/imposters",
+          "POST",
+          Map("Content-Type" -> "application/json"),
+          Some(json)
+        )
+        _ <- Stage.put(resp)
+      yield ()
   }
 
   Given("a fresh verbatim imposter from fixture " / string) { (name: String) =>
