@@ -14,7 +14,12 @@
           "body": { "endpoint": "/faults/latency", "note": "random latency 500-2000ms" }
         },
         "_rift": { "fault": { "latency": { "probability": 1.0, "minMs": 500, "maxMs": 2000 } } }
-      }]
+      }],
+      "_verify": {
+        "sequence": [
+          { "request": { "path": "/faults/latency" }, "expect": { "status": 200, "bodyContains": "/faults/latency" } }
+        ]
+      }
     },
     {
       "name": "Latency — 50% chance of a fixed 1s delay",

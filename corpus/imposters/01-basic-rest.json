@@ -72,7 +72,15 @@
         { "is": { "statusCode": 200, "body": { "served": "first" } } },
         { "is": { "statusCode": 200, "body": { "served": "second" } } },
         { "is": { "statusCode": 200, "body": { "served": "third" } } }
-      ]
+      ],
+      "_verify": {
+        "sequence": [
+          { "request": { "path": "/api/rotating" }, "expect": { "status": 200, "bodyContains": "first" } },
+          { "request": { "path": "/api/rotating" }, "expect": { "status": 200, "bodyContains": "second" } },
+          { "request": { "path": "/api/rotating" }, "expect": { "status": 200, "bodyContains": "third" } },
+          { "request": { "path": "/api/rotating" }, "expect": { "status": 200, "bodyContains": "first" } }
+        ]
+      }
     }
   ]
 }

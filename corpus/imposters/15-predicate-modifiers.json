@@ -12,7 +12,12 @@
     {
       "name": "contains — body contains 'needle'",
       "predicates": [{ "contains": { "body": "needle" } }],
-      "responses": [{ "is": { "statusCode": 200, "body": "contains" } }]
+      "responses": [{ "is": { "statusCode": 200, "body": "contains" } }],
+      "_verify": {
+        "sequence": [
+          { "request": { "method": "POST", "path": "/any", "body": "a needle here" }, "expect": { "status": 200, "bodyContains": "contains" } }
+        ]
+      }
     },
     {
       "name": "endsWith — path ends with /end",
@@ -22,12 +27,22 @@
     {
       "name": "except — strip digits before comparing path to /v",
       "predicates": [{ "equals": { "path": "/v" }, "except": "[0-9]+" }],
-      "responses": [{ "is": { "statusCode": 200, "body": "except" } }]
+      "responses": [{ "is": { "statusCode": 200, "body": "except" } }],
+      "_verify": {
+        "sequence": [
+          { "request": { "path": "/v123" }, "expect": { "status": 200, "bodyContains": "except" } }
+        ]
+      }
     },
     {
       "name": "deepEquals — query must be EXACTLY {a:1} (extra keys rejected)",
       "predicates": [{ "deepEquals": { "query": { "a": "1" } } }],
-      "responses": [{ "is": { "statusCode": 200, "body": "deep" } }]
+      "responses": [{ "is": { "statusCode": 200, "body": "deep" } }],
+      "_verify": {
+        "sequence": [
+          { "request": { "path": "/anything?a=1" }, "expect": { "status": 200, "bodyContains": "deep" } }
+        ]
+      }
     },
     {
       "name": "exists:false — header X-Skip must be ABSENT",

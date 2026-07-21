@@ -204,6 +204,42 @@ vendored here by #38 so the repo is self-contained), readable by anyone with cur
 - Corpus conventions are unchanged: static, numbered, add-never-renumber, one
   feature-area per file, `_verify` annotations for verify-driveable dynamics.
 
+**`_verify` coverage (#117).** A fixture without a `_verify` transcript proves only that its config
+**loads**, not that it **behaves** — `@full-corpus` asserts every imposter *answers* on its declared
+port, which a config whose behaviors were silently dropped still does (the rift#608 shape: loads,
+answers 200, `_behaviors` gone). rift-verify says so itself, skipping such stubs with *"no `_verify`
+annotation; cannot assert"*. All 15 corpus files now carry transcripts covering each file's
+distinguishing behavior — the cycled sequence for `repeat`, the rewritten body for `decorate`, the
+extracted value for `copy`, the CSV row for `lookup`, the rendered date for a template, the
+per-flow counter for the stateful scripts. That moved rift-verify from **50 passed / 55 skipped**
+to **89 passed / 35 skipped** with zero failures, and it is the existing `01-consistency-gate`
+scenario — no new suite — that now proves behavior rather than load.
+
+Two deliberate exclusions, because a transcript over a coin flip is a flaky gate rather than
+coverage: `04-fault-injection`'s probabilistic faults (`probability` 0.5/0.3/0.7/0.2) and its TCP
+reset are left bare; only the `probability: 1.0` latency stub is asserted.
+
+Green is not self-evidence here — a `_verify` block rift-verify silently ignores looks exactly like
+one that passes. `scripts/verify-mutation-check.py` supplies the evidence: it corrupts one
+expectation per transcript in a throwaway corpus copy and requires exactly one NEW failure (a bare
+"something went red" would accept an unrelated flake as proof). Run it with `--all` after editing
+`_verify` blocks and on an engine-pin bump; all 40 transcripts are currently killed. It is not wired
+into CI (it needs a live engine per mutation).
+
+Scope of that signal: the mutation is always `status → 599`, so a kill proves rift-verify
+**evaluates** the transcript — not that the transcript is strong. A step asserting only `status: 200`
+on a door that still answers 200 when its behavior is dropped reports KILLED while being unable to
+catch its own regression, which is why expectations are chosen to name the *behavior*: the rewritten
+body for `decorate`, the rewritten 202 for the arrow-decorate, the upstream bytes for `proxy`, the
+rendered date for a template. Expectation strength stays a review question; the script only rules
+out silent no-ops.
+
+Two coupling notes: `07-proxy-record`'s transcript asserts the bytes imposter **01** serves, so it
+only passes when the whole corpus is loaded (true under `@full-corpus-verify`, not under a
+single-file verify run); and its replay drives real traffic at 01, which has `recordRequests: true`,
+so any future assertion on 01's recorded-request count must account for whether the verify scenario
+ran first.
+
 **Release-artifact replay (#83, rift#460/#524).** Beyond the vendored copy, each Rift release
 publishes the upstream-authored `sdk-conformance-<version>.tar.gz` (imposter fixtures + `_verify`
 transcripts + `manifest.json`) — the engine-canonical DSL↔engine parity oracle. `SdkCorpusReplay83Spec`

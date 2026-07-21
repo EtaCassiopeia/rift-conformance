@@ -29,7 +29,14 @@
           "_behaviors": { "repeat": 2 }
         },
         { "is": { "statusCode": 200, "body": { "ok": true } } }
-      ]
+      ],
+      "_verify": {
+        "sequence": [
+          { "request": { "path": "/retry-me" }, "expect": { "status": 503, "bodyContains": "try again" } },
+          { "request": { "path": "/retry-me" }, "expect": { "status": 503 } },
+          { "request": { "path": "/retry-me" }, "expect": { "status": 200, "bodyContains": "ok" } }
+        ]
+      }
     },
     {
       "name": "decorate — JS post-processes the response (adds a header) [needs --allow-injection]",
@@ -43,7 +50,12 @@
         "_behaviors": {
           "decorate": "function (request, response) { response.headers['X-Decorated-By'] = 'rift'; response.body = response.body.replace('false', 'true'); }"
         }
-      }]
+      }],
+      "_verify": {
+        "sequence": [
+          { "request": { "path": "/decorated" }, "expect": { "status": 200, "bodyContains": "\"decorated\":true" } }
+        ]
+      }
     },
     {
       "name": "copy — pull the numeric id out of the path into the body",
@@ -61,7 +73,12 @@
             "using": { "method": "regex", "selector": "/orders/(\\d+)" }
           }
         }
-      }]
+      }],
+      "_verify": {
+        "sequence": [
+          { "request": { "path": "/orders/77" }, "expect": { "status": 200, "bodyContains": "\"orderId\":\"77\"" } }
+        ]
+      }
     },
     {
       "name": "copy — pull a query parameter (?user=) into the response",
@@ -79,7 +96,12 @@
             "using": { "method": "regex", "selector": "(.*)" }
           }
         }
-      }]
+      }],
+      "_verify": {
+        "sequence": [
+          { "request": { "path": "/greet?user=ada" }, "expect": { "status": 200, "bodyContains": "hello ada" } }
+        ]
+      }
     },
     {
       "name": "lookup — enrich the response from data/products.csv by id in the path",
@@ -102,7 +124,12 @@
             "into": "${row}"
           }
         }
-      }]
+      }],
+      "_verify": {
+        "sequence": [
+          { "request": { "path": "/catalog/123" }, "expect": { "status": 200, "bodyContains": "Widget" } }
+        ]
+      }
     }
   ]
 }
