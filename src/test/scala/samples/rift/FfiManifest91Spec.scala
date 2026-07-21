@@ -22,7 +22,7 @@ object FfiManifest91Spec extends ZIOSpecDefault:
 
   private val Version = sys.env.getOrElse("RIFT_VERSION", "0.13.1")
   private val ManifestUrl =
-    s"https://github.com/EtaCassiopeia/rift/releases/download/v$Version/ffi-manifest.json"
+    s"https://github.com/achird-labs/rift/releases/download/v$Version/ffi-manifest.json"
 
   private val client = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NORMAL).build()
 

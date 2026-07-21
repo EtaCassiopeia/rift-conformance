@@ -41,7 +41,7 @@ Guiding principles:
   turning red means the pinned divergent behavior *changed* — that's the trigger for `verify #NNN`.
 - **Corpus stays static & numbered.** Add new `corpus/imposters/NN-*.json` files, never renumber;
   `20-mimeo-solo-compat.json` stays (engine-served shapes, still gated).
-- **One finding → one issue**, filed on `EtaCassiopeia/rift` (engine/tool findings) or `zio-bdd`
+- **One finding → one issue**, filed on `achird-labs/rift` (engine/tool findings) or `zio-bdd`
   (library findings), referencing **this repo** (`EtaCassiopeia/rift-conformance`; see
   `CONFORMANCE.md`). Confirm against real behavior with `curl` before filing — no speculative issues.
 
@@ -117,7 +117,7 @@ For each real finding:
 1. Reproduce minimally — the smallest imposter/config + `curl` that trips it.
 2. Classify per the tree above.
 3. File one issue per finding with the tripping config/sample, the `curl` repro, observed vs
-   expected, and which leg/tool caught it. `gh issue create --repo EtaCassiopeia/rift` (engine/tool)
+   expected, and which leg/tool caught it. `gh issue create --repo achird-labs/rift` (engine/tool)
    or the `zio-bdd` repo (library), referencing this repo (`EtaCassiopeia/rift-conformance`).
 4. If the fix is yours to make upstream, hand off to that repo's own `/fix-issue <N>`, then
    re-fetch (Step 1, bump `RIFT_VERSION` once a new release ships) and re-run the affected leg.

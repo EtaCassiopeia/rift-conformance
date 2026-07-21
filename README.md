@@ -1,6 +1,6 @@
 # rift-conformance
 
-The dedicated conformance suite for [Rift](https://github.com/EtaCassiopeia/rift) — one
+The dedicated conformance suite for [Rift](https://github.com/achird-labs/rift) — one
 [zio-bdd](https://github.com/EtaCassiopeia/zio-bdd) harness hosting **two attribution planes**,
 fully self-contained: no sibling checkout of `rift`, `rift-imposter-samples`, or `zio-bdd-samples`
 is required. This README alone is enough to fetch the engine and run everything.

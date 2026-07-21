@@ -38,7 +38,7 @@ Feature: Response behaviors — copy, lookup, wait, shellTransform, decorate
 
   # rift#272: a multi-value Set-Cookie must survive a copy behavior as two distinct headers (not
   # comma-folded). This build serves both, so the historical @gap is resolved — we assert the
-  # correct behavior, which now guards against a regression. https://github.com/EtaCassiopeia/rift/issues/272
+  # correct behavior, which now guards against a regression. https://github.com/achird-labs/rift/issues/272
   Scenario: multi-value Set-Cookie survives a copy behavior (rift#272)
     Given a fresh imposter from fixture "behaviors/behaviors"
     When the client sends "GET" "/cc?q=hi"

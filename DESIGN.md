@@ -5,7 +5,7 @@
 **Source repos (migrated in, then retired/trimmed):** `rift-imposter-samples` (canonical JSON corpus + shell suite → corpus migrates here, then the repo is **retired**), `zio-bdd-samples` (the `MockControl` mock corpus / Plane B → migrated here; its framework-general samples stay).
 **No changes required:** `zio-bdd` library (MVP uses the existing `Rift.connect`; optional items in §12), `rift` engine (source of truth).
 **Supersedes:** the shell conformance legs of `rift-imposter-samples` (`conformance.sh`, `conformance-ext.sh`, `conformance-reload.sh`, `consistency-gate.sh`, `run-all.sh` orchestration).
-**Context:** [CONFORMANCE.md](CONFORMANCE.md) — the standing-conformance charter, runbook, and pass log. (This repo supersedes the former tracking issue EtaCassiopeia/rift#254, now closed.)
+**Context:** [CONFORMANCE.md](CONFORMANCE.md) — the standing-conformance charter, runbook, and pass log. (This repo supersedes the former tracking issue achird-labs/rift#254, now closed.)
 
 ---
 
@@ -169,7 +169,7 @@ carry unfinished branch work.
 ```
 scripts/build-rift.sh   (self-contained since #38 — no clone, no cargo, no sibling repos)
   1. detect the platform triple (aarch64/x86_64 × apple-darwin/unknown-linux-gnu).
-  2. download rift-v$RIFT_VERSION-<triple>.tar.gz (+ .sha256) from the EtaCassiopeia/rift
+  2. download rift-v$RIFT_VERSION-<triple>.tar.gz (+ .sha256) from the achird-labs/rift
      GitHub *release* into $RIFT_BUILD_CACHE (default ~/.cache/rift-conformance/rift-v<ver>-<triple>/);
      reuse if already extracted (idempotent). RIFT_VERSION defaults to the pinned release.
   3. sha256-verify, extract → bin/{rift, rift-lint, rift-verify, rift-tui}.
