@@ -18,12 +18,14 @@ Feature: Error-response envelope — the standard {"errors":[{code,message}]} co
   # 04-scripting-bounds). Only their strictBehaviors forms are error doors, and those are covered.
   #
   # The script/inject doors live HERE rather than as extra asserts inside 04-scripting-bounds, even
-  # though 04 already drives the same fixtures. 04 runs on the embedded leg too, and the embedded
-  # natives are pinned to rift 0.13.1 (zio-bdd 1.4.2) — which predates the rift#611 envelope, so an
-  # envelope assert in 04 is red on embedded through no fault of the contract. This feature is
-  # external-only (absent from the `engineEmbedded` allowlist), so the doors are pinned here and 04
-  # keeps asserting only what BOTH engine versions agree on: status + marker headers.
-  # Revisit when zio-bdd's embedded natives catch up to 0.14.0 (COVERAGE.md tracks that bump).
+  # though 04 already drives the same fixtures. 04 runs on the embedded leg too, and when this feature
+  # was written the embedded natives were pinned to rift 0.13.1 (zio-bdd 1.4.2) — which predates the
+  # rift#611 envelope, so an envelope assert in 04 would have been red on embedded through no fault of
+  # the contract. This feature is external-only (absent from the `engineEmbedded` allowlist), so the
+  # doors are pinned here and 04 keeps asserting only status + marker headers.
+  # That constraint is now LIFTED: zio-bdd 1.4.4's natives carry rift 0.14.0 (zio-bdd#325), which does
+  # have the envelope. Folding these asserts back into 04 — and enrolling this feature in
+  # `engineEmbedded` — is a live follow-up, tracked in COVERAGE.md.
 
   # The rift#611 regression case, pinned directly: the thrown message contains a double quote, so a
   # body that is not serde-escaped fails to parse at all. The message assert reads the decoded JSON

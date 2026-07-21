@@ -2,28 +2,36 @@ ThisBuild / scalaVersion := "3.3.4"
 ThisBuild / organization := "io.github.etacassiopeia"
 
 val zioVersion = "2.1.17"
-val zioBddVersion = "1.4.2"
+val zioBddVersion = "1.4.4"
 
-// zio-bdd 1.4.2 is a public Maven Central release (no local publishLocal / sibling checkout needed).
+// zio-bdd 1.4.4 is a public Maven Central release (no local publishLocal / sibling checkout needed).
 // Since 1.4.1 the embedded C-ABI (rift#411/#410) exposes serveAdmin (the real in-process admin API),
 // flow-state/space ops, and intercept — enough for the Plane A embedded oracle (RIFT_MODE=embedded,
 // issue #18). 1.4.2 also ships self-contained embedded natives (no system-LuaJIT dlopen; zio-bdd#312).
 //
-// ENGINE-VERSION SPLIT (2026-07-16, rift 0.14.0 bump): two independent knobs govern the engine
-// build, and after this bump they intentionally diverge.
+// ENGINE-VERSION SPLIT: two independent knobs govern the engine build, and they intentionally
+// diverge.
 //   • The BINARY legs — external + container Plane A, and rift-external Plane B — run the `rift` /
 //     `rift-lint` / `rift-verify` binaries that scripts/build-rift.sh fetches at RIFT_VERSION
-//     (now 0.14.0). These are the engine-as-source-of-truth planes and track the latest release.
+//     (now 0.15.0). These are the engine-as-source-of-truth planes and track the latest release.
 //   • The EMBEDDED leg — embedded Plane A + Plane B — loads `librift_ffi` from the
 //     `zio-bdd-rift-embedded-natives` Maven artifact, whose rift version is pinned by zioBddVersion.
-//     zio-bdd 1.4.2 bundles rift v0.13.1 natives (zio-bdd#316); no zio-bdd release carries 0.14.0
-//     natives yet, so the embedded leg stays on 0.13.1 until one does.
-// This split is ABI-safe: rift 0.14.0 ships NO C-ABI/FFI/manifest bump (its only FFI touch is an
-// additive optional `rules` field on `rift_start_intercept`), so the 0.13.1 natives load and drive
-// unchanged. The embedded leg is therefore green but exercises 0.13.1 engine code, not 0.14.0 — a
-// coverage caveat recorded in COVERAGE.md, to be closed when zio-bdd bumps its rift pin (upstream
-// follow-up). The @preflight version-coherence gate is external-only (RiftHarness.layer) and
-// compares BUILD_INFO against the same-fetch binaries, so it stays coherent at 0.14.0.
+//     zio-bdd 1.4.3 bumped its rift pin 0.13.1 → 0.14.0 for BOTH the container image and the
+//     natives (zio-bdd#325 — `riftNativesVersion = riftVersion`), so on 1.4.4 the embedded leg runs
+//     0.14.0 engine code. No zio-bdd release carries 0.15.0 natives yet; the leg stays one release
+//     behind until one does.
+// This split is ABI-safe: neither rift 0.14.0 nor 0.15.0 ships a C-ABI/FFI/manifest bump (0.14.0's
+// only FFI touch is an additive optional `rules` field on `rift_start_intercept`), so the 0.14.0
+// natives load and drive unchanged. The embedded leg is therefore green but exercises 0.14.0 engine
+// code, not 0.15.0 — a coverage caveat recorded in COVERAGE.md, narrowed by this bump but not yet
+// closed. The @preflight version-coherence gate is external-only (RiftHarness.layer) and compares
+// BUILD_INFO against the same-fetch binaries, so it stays coherent at 0.15.0.
+//
+// NOT changed by 1.4.4: the embedded Scala binding still wraps only 15 FFI symbols. `librift_ffi`
+// exports all 12 v2 admin symbols plus `rift_verify` and `rift_stub_warnings` (verified with `nm`
+// on the 1.4.4 natives), but `EmbeddedEngine` has no wrappers for them and `RiftFfi` has no generic
+// `call(symbol, json)` dispatch — so the FFI legs of #75/#92/#94 stay blocked on #96, which is a
+// binding gap, not a natives gap.
 
 // The RiftHarness, the Plane A steps, and their specs live under src/test — this build hosts the
 // conformance harness, not a shipped library, so its dependencies are test-scoped.
@@ -67,7 +75,7 @@ Test / fork := true
 
 // Embedded FFI (MOCK_BACKEND=embedded Plane B, and RIFT_MODE=embedded Plane A #18): the in-process
 // Rift engine via Panama FFM.
-// Gated on a JDK **22+** JVM: 1.4.2 publishes the FFM binding only as `zio-bdd-rift-embedded-jdk21`,
+// Gated on a JDK **22+** JVM: 1.4.4 publishes the FFM binding only as `zio-bdd-rift-embedded-jdk21`,
 // but that jar is compiled to Java-22 bytecode (class 66), so it won't load on JDK 21 despite the
 // name (upstream: zio-bdd#247). FFM is a stable API on 22+, so no --enable-preview is needed (and it
 // would in fact conflict with the class-66 binding). On JDK 11/17/21 the embedded backend is

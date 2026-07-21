@@ -495,21 +495,33 @@ opportunities** (assert the *new* contract), not as conforming fixes.
 ### Engine-version split (embedded leg lags)
 
 `RIFT_VERSION` governs the **binary** legs (external + container Plane A, rift-external Plane B) —
-now **0.14.0**. The **embedded** leg (embedded Plane A + Plane B) loads `librift_ffi` from
-`zio-bdd-rift-embedded-natives`, pinned by `zioBddVersion` — zio-bdd 1.4.2 bundles **0.13.1** natives
-([zio-bdd#316](https://github.com/EtaCassiopeia/zio-bdd/pull/316)), and no zio-bdd release carries
-0.14.0 natives yet. So the embedded leg is **green but exercising 0.13.1 engine code**. The split is
-ABI-safe — 0.14.0 ships **no** C-ABI/FFI/`ffi-manifest.json` bump (its only FFI touch is an additive
-optional `rules` field on `rift_start_intercept`) — so the 0.13.1 natives load and drive unchanged.
-**Upstream follow-up:** ask zio-bdd to bump its rift pin to 0.14.0 so the embedded leg can catch up.
+now **0.15.0**. The **embedded** leg (embedded Plane A + Plane B) loads `librift_ffi` from
+`zio-bdd-rift-embedded-natives`, pinned by `zioBddVersion`. This gap **narrowed** on the zio-bdd
+1.4.2 → 1.4.4 bump (2026-07-21): zio-bdd 1.4.3 moved its rift pin 0.13.1 → **0.14.0** for both the
+container image and the natives ([zio-bdd#325](https://github.com/EtaCassiopeia/zio-bdd/pull/325) —
+`riftNativesVersion = riftVersion`), so the embedded leg now exercises **0.14.0** engine code, not
+0.13.1. It still lags the binary legs by one release: no zio-bdd release carries 0.15.0 natives yet.
+The split is ABI-safe — neither 0.14.0 nor 0.15.0 ships a C-ABI/FFI/`ffi-manifest.json` bump (0.14.0's
+only FFI touch is an additive optional `rules` field on `rift_start_intercept`) — so the 0.14.0
+natives load and drive unchanged; the full `engineEmbedded` + `mockEmbedded` legs verified green on
+them. **Upstream follow-up:** ask zio-bdd to bump its rift pin to 0.15.0 to close the remaining lag.
 The `@preflight` gate is external-only and compares BUILD_INFO against the same-fetch binaries, so it
-stays coherent at 0.14.0.
+stays coherent at 0.15.0.
+
+**Not narrowed by 1.4.4 — the FFI binding gap ([#96](https://github.com/EtaCassiopeia/rift-conformance/issues/96)).**
+`librift_ffi` in the 1.4.4 natives exports all 12 v2 admin symbols plus `rift_verify` and
+`rift_stub_warnings` (verified with `nm` on the published jar), but the Scala binding still wraps only
+the same 15 as 1.4.2 — `EmbeddedEngine` has no methods for them and `RiftFfi` has no generic
+`call(symbol, json)` dispatch. So this is a **binding** gap, not a natives gap, and the FFI legs of
+[#75](https://github.com/EtaCassiopeia/rift-conformance/issues/75),
+[#92](https://github.com/EtaCassiopeia/rift-conformance/issues/92) and
+[#94](https://github.com/EtaCassiopeia/rift-conformance/issues/94) stay blocked on it.
 
 ### Behavior changes now live (non-breaking to existing scenarios)
 
 | Change | rift | Release | Coverage status |
 |--------|------|---------|-----------------|
-| Error-body envelope unified: proxy/`defaultForward` 502 **and** every imposter error door → `{"errors":[{"code","message"}]}` (was `{"error":"…"}`), now valid JSON even when the message contains `"` | #611 sweep completion | 0.14.0 | **covered** (#118) — `13-error-envelope.feature` pins the shape on the strictBehaviors shellTransform/binary doors, `defaultForward` 502, the 413, the disabled 503 and the admin-plane 400, plus the quote round-trip regression **and** the script-timeout / four-`inject` / two strict-decorate doors. `Unknown fault`'s plain-text 500 is pinned as a **negative** so a later sweep can't absorb it. **External-only by necessity:** the envelope postdates the embedded leg's pinned 0.13.1 natives (zio-bdd 1.4.2), so `04-scripting-bounds` — which also runs embedded — keeps asserting only what both engine versions agree on (status + marker headers), and every envelope assert lives in the external-only feature 13. Fold the script/inject asserts back into 04 once the embedded natives reach 0.14.0 |
+| Error-body envelope unified: proxy/`defaultForward` 502 **and** every imposter error door → `{"errors":[{"code","message"}]}` (was `{"error":"…"}`), now valid JSON even when the message contains `"` | #611 sweep completion | 0.14.0 | **covered** (#118) — `13-error-envelope.feature` pins the shape on the strictBehaviors shellTransform/binary doors, `defaultForward` 502, the 413, the disabled 503 and the admin-plane 400, plus the quote round-trip regression **and** the script-timeout / four-`inject` / two strict-decorate doors. `Unknown fault`'s plain-text 500 is pinned as a **negative** so a later sweep can't absorb it. **Still external-only, but no longer by necessity:** the envelope postdated the embedded leg's then-pinned 0.13.1 natives, so `04-scripting-bounds` — which also runs embedded — asserts only what both engine versions agreed on (status + marker headers), and every envelope assert lives in the external-only feature 13. The zio-bdd 1.4.4 bump moved the embedded natives to **0.14.0**, so that constraint is **lifted** — folding the script/inject envelope asserts back into 04 (and enrolling feature 13 in `engineEmbedded`) is now a live follow-up, not a blocked one |
 | `Content-Type: application/json` now on every imposter error door that serves the envelope | #611 | 0.14.0 | **covered** (#118) — asserted inside the `the response is a rift error envelope` step, so every door that claims the envelope also proves the content-type |
 | **Declarative `intercept` block in `--configfile`** (`{host?,port?,ca?,rules[]}` beside `imposters`) | #655 | 0.14.0 | **covered (#113)** — `ConfigInterceptBlock113Spec` spawns engines from a config file with **no** `--intercept-*` flag (the shared harness always passes one, and block + flag is a hard startup error) and pins the declarative wiring: the listener is **bound** (asserted by connecting to it, not just by reading the admin JSON back) and both its rules — including a `forward` at an imposter declared in the **same** document — exist at boot with only READ calls made; a runtime `POST /intercept/rules` layers on top; `POST /admin/reload` returns `200` with a `warnings` entry stating the block was **NOT re-applied** and leaves the rules untouched (silence there would let an edited block look applied); and both startup-error doors fire — block + `--intercept-port` names both plus the `RIFT_INTERCEPT_*` env spelling, and a block outside the `{"imposters":[…]}` wrapper form names the fix rather than being silently ignored. The TLS-MITM **data** path stays covered imperatively by feature 12 |
 | `POST /intercept/rules` (+ `rules` on `POST /intercept`, + the `--configfile intercept` block) enforce `--allowInjection`; an `inject` predicate → `400`, atomic, sees through `not`/`or`/`and` | #657/#659 | 0.14.0 | **partial** — the `POST /intercept/rules` door is covered by `AllowInjectionMatrix116Spec` (#116: gated-`inject` rejection with a gate-on twin; a rule's injectable surface is its `predicates`, `inject` is not an action variant), and the `--configfile intercept` block door by `ConfigInterceptBlock113Spec` (#113: a block rule with an `inject` predicate aborts startup gate-off, boots gate-on). The nested `not`/`or` case is covered at the imposter door. **Still open:** the `rules` array on `POST /intercept` (start-and-seed in one call), and **atomicity** — a multi-rule body with one poisoned rule must install none |
