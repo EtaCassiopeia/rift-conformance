@@ -42,7 +42,7 @@ Feature: Faults and transport errors
   # rift#309: a top-level `fault` response should abort the connection (Mountebank parity), not
   # return HTTP 502. This build (0.11.3) resets at the transport level, so the historical @gap is
   # resolved — we assert the correct behavior, which now guards against a regression.
-  # https://github.com/EtaCassiopeia/rift/issues/309
+  # https://github.com/achird-labs/rift/issues/309
   Scenario: top-level fault resets the connection at the transport level (rift#309)
     Given a fresh imposter from fixture "faults/faults"
     When the client sends "GET" "/topfault" expecting a transport error

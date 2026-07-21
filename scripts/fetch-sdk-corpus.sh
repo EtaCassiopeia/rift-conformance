@@ -18,7 +18,7 @@
 #                        manifest.json is reused without re-downloading (idempotent).
 set -euo pipefail
 
-REPO="EtaCassiopeia/rift"
+REPO="achird-labs/rift"
 RIFT_VERSION="${RIFT_VERSION:-0.13.1}"
 CACHE_ROOT="${RIFT_BUILD_CACHE:-$HOME/.cache/rift-conformance}"
 

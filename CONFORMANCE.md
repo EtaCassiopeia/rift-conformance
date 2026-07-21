@@ -1,7 +1,7 @@
 # Rift Conformance — Standing Charter & Pass Log
 
 This repository **is** the standing conformance suite for Rift. It supersedes the former tracking
-issue [`EtaCassiopeia/rift#254`](https://github.com/EtaCassiopeia/rift/issues/254) (a
+issue [`achird-labs/rift#254`](https://github.com/achird-labs/rift/issues/254) (a
 GitHub-issue-based runbook that pointed at the retired `rift-imposter-samples` + `conformance.sh`
 shell flow) — the runbook, the coverage/finding ledgers, and the pass history now all live in-repo,
 so there is no open issue to "keep doing."
@@ -34,7 +34,7 @@ checkout is needed.
 
 One finding → one issue, confirmed against real behavior with `curl` before filing:
 
-- **Engine / tool** findings → file on **`EtaCassiopeia/rift`**.
+- **Engine / tool** findings → file on **`achird-labs/rift`**.
 - **Library** findings → file on **`zio-bdd`**.
 
 Reference **this repository** (`EtaCassiopeia/rift-conformance`) — ideally the specific

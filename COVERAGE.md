@@ -423,10 +423,10 @@ asserted on status+body only. Plane A's own feature files cover latency floors d
 ## v0.13.0 new-capability coverage gaps (backlog) — tracked by [#72](https://github.com/EtaCassiopeia/rift-conformance/issues/72)
 
 The engine pin moved to **rift 0.13.1** with **zio-bdd 1.4.2**. 0.13.1 is a packaging-only patch (the
-`rift-core` → `rift-mock-core` crate rename, [rift#528](https://github.com/EtaCassiopeia/rift/pull/528);
+`rift-core` → `rift-mock-core` crate rename, [rift#528](https://github.com/achird-labs/rift/pull/528);
 binary/FFI/Docker/npm are byte-identical) — **all runtime changes landed in 0.13.0**, a substantial
 release. One behavior change is **already conformed**: the script-timeout contract now returns
-`504 Gateway Timeout` + `x-rift-script-timeout: true` ([rift#499/#515](https://github.com/EtaCassiopeia/rift/pull/515)),
+`504 Gateway Timeout` + `x-rift-script-timeout: true` ([rift#499/#515](https://github.com/achird-labs/rift/pull/515)),
 asserted by `04-scripting-bounds` (the `_rift.script` path). The remaining new surface is untested:
 
 | Capability | rift | Gap | Sketch |
@@ -443,12 +443,12 @@ asserted by `04-scripting-bounds` (the `_rift.script` path). The remaining new s
 | SDK conformance corpus release artifact | #460/#516/#524 | **covered (#83)** — `SdkCorpusReplay83Spec` downloads the pinned `sdk-conformance-v<version>.tar.gz` (`scripts/fetch-sdk-corpus.sh`, sha256-verified + cached), asserts `manifest.json` matches the fixtures on disk (schemaVersion, `engineVersion == v<pin>`, every `fixtures[].file` present, `hasVerify` flag == on-disk `_verify`, count), then loads the corpus into a dedicated `--allow-injection` engine (cwd = `corpus/`) and drives `rift-verify --skip-dynamic --verify-dynamic` → 0 failures. Self-gating (offline / no `RIFT_BUILD_DIR` → no-op). External-leg only (`engineConformance`; spawns a real engine + `rift-verify`, so excluded from the enumerated embedded/container aliases) | covered by `SdkCorpusReplay83Spec` — manifest-vs-disk + rift-verify replay |
 
 Robustness/perf changes in 0.13.0 that don't need new gap rows but are worth noting: per-imposter
-`ctx.state` updates are now atomic under same-imposter concurrency ([rift#477/#486](https://github.com/EtaCassiopeia/rift/pull/486))
+`ctx.state` updates are now atomic under same-imposter concurrency ([rift#477/#486](https://github.com/achird-labs/rift/pull/486))
 — exercised by `04-scripting-bounds`' concurrent-runaway + per-flow-id isolation scenario; every FFI
-entry point is panic-guarded across the C ABI ([rift#484/#487](https://github.com/EtaCassiopeia/rift/pull/487))
+entry point is panic-guarded across the C ABI ([rift#484/#487](https://github.com/achird-labs/rift/pull/487))
 — hardens the embedded (Panama FFM) leg; proxy HTTP connection pooling was re-enabled
-([rift#482/#496](https://github.com/EtaCassiopeia/rift/pull/496)); and the function-form `wait`
-fallback now clamps/caps like the Boa path ([rift#490/#504](https://github.com/EtaCassiopeia/rift/pull/504),
+([rift#482/#496](https://github.com/achird-labs/rift/pull/496)); and the function-form `wait`
+fallback now clamps/caps like the Boa path ([rift#490/#504](https://github.com/achird-labs/rift/pull/504),
 `--no-default-features` only).
 
 ## v0.13.2 → v0.14.0 new-capability coverage gaps (pin bump 0.13.1 → 0.14.0) — tracked by [#72](https://github.com/EtaCassiopeia/rift-conformance/issues/72)
@@ -489,8 +489,8 @@ stays coherent at 0.14.0.
 ### Cache-key correctness — regression-pin opportunities (both fixed in 0.14.0)
 
 0.14.0 closed the decision-cache key-completeness family (cache on by default, 300 s TTL): the key now
-covers the **query string** ([rift#660](https://github.com/EtaCassiopeia/rift/issues/660)) and the
-**raw non-JSON body** ([rift#652](https://github.com/EtaCassiopeia/rift/issues/652)) — previously two
+covers the **query string** ([rift#660](https://github.com/achird-labs/rift/issues/660)) and the
+**raw non-JSON body** ([rift#652](https://github.com/achird-labs/rift/issues/652)) — previously two
 requests differing only in query (or in a non-JSON body, all of which hashed to `null`) shared one
 cached fault decision. **Gap:** a script branching on `ctx.request.query` / `ctx.request.raw_body`,
 two requests differing only in that dimension → assert independent decisions (the fix holds). Same

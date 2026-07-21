@@ -20,7 +20,7 @@
 #                     bin/rift + bin/BUILD_INFO is reused without re-downloading (idempotent).
 set -euo pipefail
 
-REPO="EtaCassiopeia/rift"
+REPO="achird-labs/rift"
 RIFT_VERSION="${RIFT_VERSION:-0.14.0}"
 CACHE_ROOT="${RIFT_BUILD_CACHE:-$HOME/.cache/rift-conformance}"
 BINARIES="rift rift-verify rift-lint"
