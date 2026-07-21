@@ -36,6 +36,56 @@ object RiftToolsParseSpec extends ZIOSpecDefault:
       assertTrue(r.toOption.exists(_.failed == 0)) &&
       assertTrue(r.toOption.exists(_.skipped == 2))
     },
+    // #126: a red gate must name the stub and the reason, not just a count. rift-verify's
+    // human-readable detail goes to STDERR in `-o json` mode (rift#347), so the parse must lift the
+    // per-test FAIL lines out of stderr into the report.
+    test("parseVerify lifts the per-test FAIL detail out of stderr") {
+      val out = """{"failed":2,"imposters":15,"passed":89,"skipped":35,"stubs":70,"tests":70}"""
+      val err =
+        """|Imposter: 03 · Behaviors (wait, repeat, decorate, copy, lookup) (port 4503)
+           |   PASS Stub #2 - GET /retry-me -> 503 (4ms)
+           |   FAIL Stub #1 - GET /slow-range
+           |      expected status 200, got 000 (timeout after 10s)
+           |   FAIL Stub #0 - GET /slow
+           |  Failed:  2
+           |""".stripMargin
+      val r = RiftTools.parseVerify(RiftTools.RawRun(out, err, 1))
+      assertTrue(r.isRight) &&
+      assertTrue(r.toOption.exists(_.failed == 2)) &&
+      // Both failing stubs are named...
+      assertTrue(r.toOption.exists(_.failDetail.exists(_.contains("Stub #1 - GET /slow-range")))) &&
+      assertTrue(r.toOption.exists(_.failDetail.exists(_.contains("Stub #0 - GET /slow")))) &&
+      // ...and the PASS noise is not carried along.
+      assertTrue(r.toOption.exists(!_.failDetail.exists(_.contains("PASS")))) &&
+      assertTrue(r.toOption.exists(_.failDetail.size == 2)) &&
+      // The indented reason attaches to the stub it belongs to...
+      assertTrue(
+        r.toOption.exists(_.failDetail.head.contains("expected status 200, got 000"))
+      ) &&
+      // ...and the next stub's entry neither inherits it nor absorbs the `Failed:` summary row —
+      // the first cut of this instrumentation appended the following verdict row as the reason.
+      assertTrue(r.toOption.exists(!_.failDetail.last.contains("expected status"))) &&
+      assertTrue(r.toOption.exists(!_.failDetail.exists(_.contains("Failed:"))))
+    },
+    // rift-verify puts the reason on the FAIL line itself for a `_verify` mismatch, and on the
+    // following indented line for an auto-derived test. Both shapes must survive, and neither may
+    // absorb the next verdict row.
+    test("parseVerify keeps a same-line reason and does not absorb the next verdict") {
+      val out = """{"failed":1,"imposters":1,"passed":1,"skipped":0,"stubs":2,"tests":2}"""
+      val err =
+        """|   FAIL stub #0 _verify[0] GET /slow — body "x" does not contain "nope"
+           |   PASS stub #1 _verify[0] GET /slow-range
+           |""".stripMargin
+      val r = RiftTools.parseVerify(RiftTools.RawRun(out, err, 1))
+      assertTrue(r.toOption.exists(_.failDetail.size == 1)) &&
+      assertTrue(r.toOption.exists(_.failDetail.head.contains("does not contain"))) &&
+      assertTrue(r.toOption.exists(!_.failDetail.head.contains("PASS")))
+    },
+    test("parseVerify reports no fail detail on a green run") {
+      val out = """{"failed":0,"imposters":1,"passed":3,"skipped":0,"stubs":3,"tests":3}"""
+      val r = RiftTools.parseVerify(RiftTools.RawRun(out, "   PASS Stub #0 - GET /hi -> 200\n", 0))
+      assertTrue(r.toOption.exists(_.failDetail.isEmpty))
+    },
     test("parseVerify fails when the output is not the JSON summary") {
       val r = RiftTools.parseVerify(RiftTools.RawRun("some unrelated output", "boom", 1))
       assertTrue(r.isLeft) && assertTrue(r.swap.exists(_.contains("could not parse")))

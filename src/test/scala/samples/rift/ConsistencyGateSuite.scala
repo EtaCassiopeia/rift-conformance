@@ -133,9 +133,21 @@ object ConsistencyGateSuite
     for
       admin <- ZIO.serviceWith[RiftHarness](_.adminUrl)
       report <- ZIO.serviceWithZIO[RiftHarness](_.tools.riftVerify(admin))
+      // Lead with WHICH test failed and why: a bare count sends the reader to the CI log, which is
+      // exactly the dead end #126 spent five occurrences in.
+      // If the FAIL vocabulary ever stops matching, fall back to raw stderr rather than reporting a
+      // bare count — losing the reason is the whole defect this instrumentation exists to end.
+      detail =
+        if report.failDetail.nonEmpty then report.failDetail.mkString("\n  ", "\n  ", "")
+        else if report.rawErr.trim.nonEmpty then
+          report.rawErr.linesIterator.toList
+            .takeRight(40)
+            .mkString("\n  (no FAIL lines matched; stderr tail)\n  ", "\n  ", "")
+        else "\n  (rift-verify wrote nothing to stderr)"
       _ <- Assertions.assertTrue(
         report.failed == 0,
-        s"rift-verify: ${report.failed} failed, ${report.passed} passed, ${report.skipped} skipped\n${report.raw}"
+        s"rift-verify: ${report.failed} failed, ${report.passed} passed, " +
+          s"${report.skipped} skipped$detail\n${report.raw}"
       )
     yield ()
   }

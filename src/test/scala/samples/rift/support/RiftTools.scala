@@ -30,13 +30,20 @@ final case class LintReport(
     raw: String
 )
 
-/** Parsed `rift-verify -o json` summary. `raw`/`exitCode` preserved for failure messages. */
+/** Parsed `rift-verify -o json` summary. `raw`/`exitCode` preserved for failure messages.
+  *
+  * `failDetail` carries the per-test `FAIL` lines rift-verify writes to **stderr** (in `-o json`
+  * mode stdout is the summary alone — rift#347). Without it a red gate reports only a count, which
+  * is how #126 went five occurrences without anyone learning why it failed.
+  */
 final case class VerifyReport(
     passed: Int,
     failed: Int,
     skipped: Int,
     exitCode: Int,
-    raw: String
+    raw: String,
+    failDetail: List[String],
+    rawErr: String
 )
 
 /** Typed shell-outs to rift-lint and rift-verify — the SAME binaries built alongside the engine, so
@@ -78,6 +85,9 @@ final case class RiftTools(lint: Path, verify: Path, engine: Path):
         adminUrl,
         "--skip-dynamic",
         "--verify-dynamic",
+        // Per-test detail on stderr; the JSON summary on stdout is unaffected (rift#347). Without
+        // it a red gate can only report a count (#126).
+        "--verbose",
         "-o",
         "json"
       )
@@ -126,7 +136,39 @@ object RiftTools:
       .fromJson[VerifyJson]
       .left
       .map(msg => s"could not parse rift-verify JSON: $msg${diagnostics(r)}")
-      .map(j => VerifyReport(j.passed, j.failed, j.skipped, r.exitCode, r.stdout))
+      .map(j =>
+        VerifyReport(
+          j.passed,
+          j.failed,
+          j.skipped,
+          r.exitCode,
+          r.stdout,
+          failLines(r.stderr),
+          r.stderr
+        )
+      )
+
+  /** The per-test `FAIL` lines plus the indented reason that follows each one.
+    *
+    * Matched on the tool's own ` FAIL ` prefix rather than the word anywhere, so `PASS` rows and
+    * the `Failed: N` summary line never masquerade as detail.
+    */
+  private def failLines(stderr: String): List[String] =
+    val lines = stderr.linesIterator.toList
+    // A continuation is an indented line that is not itself a verdict or summary row. Checking only
+    // "not FAIL" would swallow the NEXT stub's PASS row into this stub's reason, which is precisely
+    // what the first run of this instrumentation did.
+    def isVerdictRow(l: String): Boolean =
+      val t = l.trim
+      Verdicts.exists(t.startsWith) || t.startsWith("Imposter:")
+    lines.zipWithIndex.collect {
+      case (l, i) if l.trim.startsWith("FAIL ") =>
+        val reason =
+          lines.drop(i + 1).takeWhile(n => n.startsWith(" ") && !isVerdictRow(n)).map(_.trim)
+        (l.trim :: reason).mkString(" — ")
+    }
+
+  private val Verdicts = List("FAIL ", "PASS ", "SKIP ", "Failed:", "Passed:", "Skipped:")
 
   /** The error-severity findings, one per line as `<file> <code>[@location]` — this is the "names
     * the offending file" contract the consistency gate relies on. Pure, so it is unit-tested.
