@@ -126,16 +126,51 @@ both resolve correctly without extra configuration.
 
 ## CI
 
-`.github/workflows/conformance.yml` runs on every `push`/`pull_request` (plus manual
-`workflow_dispatch`):
+`.github/workflows/conformance.yml` runs on every `push`/`pull_request`, on a **daily schedule**,
+and on manual `workflow_dispatch`:
 
 - **compile-and-format** — `Test/compile`, `scalafmtCheckAll`, `scalafmtSbtCheck`.
 - **plane-a-engine** — fetches the released rift via `scripts/build-rift.sh`, then
   `sbt engineConformance` with `RIFT_MODE=external` and `RIFT_CORPUS_ROOT` pointed at the
   in-repo `./corpus`.
+- **plane-a-embedded** — the same Plane A oracle in-process over Panama FFM, on JDK 25
+  (`RIFT_MODE=embedded`), plus the Plane B corpus on `MOCK_BACKEND=embedded`.
+- **plane-a-container** — the container subset against the published image (`RIFT_IT=1`).
 
-The Docker-gated Plane B container leg (#12) and the embedded FFI leg (needs JDK 22+) are not
-wired into CI yet — both stay local/manual for now.
+The daily schedule exists because the subject of this suite is an **external** engine: triggering
+only on harness commits meant a quiet repo showed green while rift moved six releases ahead. The
+schedule also catches environment rot — a withdrawn release asset, a runner image change — that no
+commit would have surfaced.
+
+### Engine-drift watch
+
+`.github/workflows/rift-release-watch.yml` runs daily and compares the `RIFT_VERSION` pin in
+`scripts/build-rift.sh` against the newest published `achird-labs/rift` release:
+
+- No newer release → nothing to do (and any open drift issue is closed automatically).
+- Newer release → the **same** conformance pipeline is re-run against the candidate version via
+  `workflow_call`, and a single `engine-drift`-labelled tracking issue is created or **updated in
+  place** with the verdict. One issue, edited each run — not one per release — so it stays legible
+  and closes itself when the pin catches up.
+
+A red candidate turns the *release-watch* run red and nothing gates on that workflow, so it never
+blocks the repo. (It is not a `continue-on-error` flag — GitHub does not allow one on a job that
+calls a reusable workflow.)
+
+The candidate verdict covers the **external** Plane A leg plus compile/format. The **container** leg
+(pins a published image tag) and the **embedded** leg (runs zio-bdd's bundled `librift_ffi` native)
+are both skipped for candidate runs, because `RIFT_VERSION` moves neither engine — including them
+would report a green that says nothing about the candidate, or a red caused by pairing candidate
+tools with an old native.
+
+One caveat worth knowing: GitHub disables `schedule:` triggers after 60 days of repository
+inactivity — the very quiet-repo case these exist for. GitHub emails before it does; re-enable from
+the Actions tab, or push anything.
+
+`scripts/rift-release-watch.py` holds the comparison logic and self-tests it
+(`scripts/rift-release-watch.py --self-test`) — versions are compared numerically per component,
+because lexicographically `"0.9.1" > "0.14.0"`, which would hide every 0.14.x release. Run it
+locally any time to see where the pin stands.
 
 ## The `/rift-conformance` command
 

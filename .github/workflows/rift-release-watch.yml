@@ -1,0 +1,185 @@
+name: rift-release-watch
+
+# Turns "a new rift release" into an actionable conformance signal instead of silent drift (#121).
+#
+# Daily: compare the engine pin in scripts/build-rift.sh against the newest published rift release.
+# When the engine is ahead, run this repo's own conformance pipeline against the CANDIDATE version
+# and keep ONE tracking issue current with the result. A red candidate turns THIS workflow red and
+# nothing gates on it, so it never blocks the repo. One issue edited in place, not one per release: the signal stays legible whether it is
+# read the next morning or a month later, and it closes itself when the pin catches up.
+
+on:
+  schedule:
+    - cron: "40 5 * * *"
+  workflow_dispatch:
+    inputs:
+      force_version:
+        description: "Test this version instead of querying the latest release (manual runs)"
+        type: string
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  issues: write
+
+# Two overlapping runs (the cron and a manual dispatch) could each find no existing issue and create
+# one. Queue instead of cancelling: a run that already produced a verdict should finish reporting it.
+concurrency:
+  group: rift-release-watch
+  cancel-in-progress: false
+
+env:
+  TRACKING_TITLE_PREFIX: "Engine drift: rift"
+  TRACKING_LABEL: engine-drift
+
+jobs:
+  watch:
+    name: detect engine-pin drift
+    runs-on: ubuntu-latest
+    outputs:
+      drift: ${{ steps.check.outputs.drift }}
+      pinned: ${{ steps.check.outputs.pinned }}
+      latest: ${{ steps.check.outputs.latest }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # The comparison logic lives in the script (and self-tests there); this job only wires it up.
+      - name: Self-test the comparison logic
+        run: scripts/rift-release-watch.py --self-test
+
+      - name: Compare pin against the latest release
+        id: check
+        # FORCE_VERSION arrives via env, never interpolated into the command line: a
+        # workflow_dispatch input is attacker-influenced text and `${{ }}` inside `run:` is
+        # substituted before the shell ever sees it, which is a command-injection vector.
+        #
+        # Exit 3 means drift — a finding, not a failure — so it must not fail the step. Any OTHER
+        # non-zero code is a real error and is re-raised: a watcher that goes green when it could
+        # not determine the answer is worse than no watcher.
+        run: |
+          set +e
+          if [ -n "$FORCE_VERSION" ]; then
+            scripts/rift-release-watch.py --latest "$FORCE_VERSION"
+          else
+            scripts/rift-release-watch.py
+          fi
+          code=$?
+          set -e
+          if [ "$code" -ne 0 ] && [ "$code" -ne 3 ]; then
+            echo "release-watch failed with exit $code"
+            exit "$code"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FORCE_VERSION: ${{ inputs.force_version }}
+
+  # The candidate run reuses conformance.yml rather than a copy of it, so the drift report always
+  # reflects the same pipeline the repo actually gates on.
+  #
+  # "Report-only" is a property of what this workflow is WIRED to, not a flag: a red candidate turns
+  # THIS workflow's run red, and nothing gates on it — no branch protection, no required check, no
+  # other workflow depends on it. (`continue-on-error` is not an option: GitHub does not allow it on
+  # a job that calls a reusable workflow.) The verdict a human reads is the tracking issue below.
+  conformance-vs-candidate:
+    name: conformance against the candidate
+    needs: watch
+    if: needs.watch.outputs.drift == 'true'
+    uses: ./.github/workflows/conformance.yml
+    with:
+      rift_version: ${{ needs.watch.outputs.latest }}
+
+  report:
+    name: update the drift tracking issue
+    needs: [watch, conformance-vs-candidate]
+    # Must run when the candidate went RED — exactly when a default `needs` gate would skip this
+    # job. `!cancelled()` rather than `always()`: a cancelled run has no verdict, and overwriting a
+    # previously useful issue body with "cancelled" loses information.
+    if: ${{ !cancelled() && needs.watch.outputs.drift == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create or update the tracking issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PINNED: ${{ needs.watch.outputs.pinned }}
+          LATEST: ${{ needs.watch.outputs.latest }}
+          CANDIDATE_RESULT: ${{ needs.conformance-vs-candidate.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          title="$TRACKING_TITLE_PREFIX v$LATEST is out; harness pins v$PINNED"
+
+          case "$CANDIDATE_RESULT" in
+            success) verdict="**green** — the suite passes against v$LATEST, so the bump looks safe to take." ;;
+            failure) verdict="**RED** — the suite fails against v$LATEST. Something in the contract moved; triage before bumping." ;;
+            cancelled) verdict="cancelled — no verdict this run." ;;
+            *) verdict="\`$CANDIDATE_RESULT\` — no clean verdict; check the run." ;;
+          esac
+
+          body=$(cat <<EOF
+          The engine has shipped a release newer than the version this harness pins.
+
+          | | |
+          |---|---|
+          | pinned (\`scripts/build-rift.sh\`) | \`v$PINNED\` |
+          | latest released | \`v$LATEST\` |
+          | conformance vs \`v$LATEST\` | $verdict |
+
+          [Full run]($RUN_URL)
+
+          Scope of this verdict: it covers the **external** Plane A leg (plus compile/format). The
+          **container** leg (pins a published image tag) and the **embedded** leg (runs the
+          bundled \`librift_ffi\` native shipped by zio-bdd) are both skipped for candidate runs — \`RIFT_VERSION\`
+          does not move either engine, so including them would report a green that says nothing
+          about the candidate.
+
+          To take the bump: set the \`RIFT_VERSION\` default in \`scripts/build-rift.sh\` to
+          \`$LATEST\` and let the normal pipeline gate it. This issue is updated in place on every
+          run and closes automatically once the pin catches up.
+
+          <sub>Maintained by \`.github/workflows/rift-release-watch.yml\` (#121) — edits are overwritten.</sub>
+          EOF
+          )
+
+          # One tracking issue, reused: find any open one by label rather than by exact title, since
+          # the title carries the version and therefore changes as the engine moves on.
+          existing=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
+            --label "$TRACKING_LABEL" --limit 1 --json number --jq '.[0].number // empty')
+
+          if [ -n "$existing" ]; then
+            gh issue edit "$existing" --repo "$GITHUB_REPOSITORY" --title "$title" --body "$body"
+            echo "updated issue #$existing"
+          else
+            gh label create "$TRACKING_LABEL" --repo "$GITHUB_REPOSITORY" \
+              --description "Engine pin is behind the latest rift release" --color FBCA04 || true
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body "$body" \
+              --label "$TRACKING_LABEL"
+          fi
+
+  # Closing the loop matters as much as opening it: a tracking issue that outlives the drift it
+  # describes trains everyone to ignore it.
+  close-stale:
+    name: close the tracking issue once the pin catches up
+    needs: watch
+    # Scheduled runs only: a manual `force_version` older than the pin also yields drift=false, and
+    # must not close a tracking issue that describes real drift.
+    if: ${{ needs.watch.outputs.drift == 'false' && !inputs.force_version }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Close any open drift issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PINNED: ${{ needs.watch.outputs.pinned }}
+        run: |
+          set -euo pipefail
+          existing=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
+            --label "$TRACKING_LABEL" --limit 1 --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue close "$existing" --repo "$GITHUB_REPOSITORY" \
+              --comment "Pin is current at \`v$PINNED\` — no drift. Closed automatically."
+            echo "closed issue #$existing"
+          else
+            echo "no open drift issue; nothing to close"
+          fi

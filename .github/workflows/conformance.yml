@@ -4,6 +4,21 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+  # Daily heartbeat (#121). The subject of this suite is an EXTERNAL engine, so triggering only on
+  # harness commits is backwards: a quiet repo meant a green badge while the engine moved six
+  # releases ahead. This runs the pinned version on a schedule, independent of any commit, so
+  # environment rot (a withdrawn release asset, a runner image change) also surfaces within a day.
+  schedule:
+    - cron: "17 5 * * *"
+  # Callable by rift-release-watch.yml with a candidate version, so the drift report reuses this
+  # exact pipeline instead of a divergent copy of it.
+  workflow_call:
+    inputs:
+      rift_version:
+        description: "Engine version to test against (empty = the scripts/build-rift.sh pin)"
+        type: string
+        required: false
+        default: ""
 
 jobs:
   compile-and-format:
@@ -55,6 +70,8 @@ jobs:
           echo "RIFT_BUILD_DIR=$RIFT_BUILD_DIR" >> "$GITHUB_ENV"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Empty on push/PR/schedule -> build-rift.sh's `${RIFT_VERSION:-<pin>}` default applies.
+          RIFT_VERSION: ${{ inputs.rift_version }}
 
       - name: Run Plane A conformance
         run: sbt -batch engineConformance
@@ -70,6 +87,12 @@ jobs:
   plane-a-embedded:
     name: Plane A — engine conformance (embedded, FFM)
     runs-on: ubuntu-latest
+    # Skipped for a candidate-version run, for the same reason as the container leg: the engine here
+    # is zio-bdd's BUNDLED librift_ffi native, which RIFT_VERSION does not move (it only swaps the
+    # lint/verify tools + BUILD_INFO underneath). Running it against a candidate would either report
+    # a false green (the old native passing) or a false red (candidate tools paired with an old
+    # native) — and both corrupt the drift verdict.
+    if: ${{ !inputs.rift_version }}
     steps:
       - uses: actions/checkout@v4
 
@@ -117,6 +140,10 @@ jobs:
   plane-a-container:
     name: Plane A — engine conformance (container)
     runs-on: ubuntu-latest
+    # Skipped for a candidate-version run: this leg runs a published image tag (RIFT_IMAGE), which
+    # RIFT_VERSION does not move. Running it anyway would exercise the OLD image and report a green
+    # that says nothing about the candidate — worse than not running it.
+    if: ${{ !inputs.rift_version }}
     steps:
       - uses: actions/checkout@v4
 
