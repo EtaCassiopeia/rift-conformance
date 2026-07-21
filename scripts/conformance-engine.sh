@@ -21,7 +21,7 @@
 #   RIFT_CORPUS_ROOT  imposter corpus root (default: corpus, matches RiftHarness)
 #   RIFT_FFI_LIB      (embedded) explicit librift_ffi path; else the bundled natives jar is used
 #   RIFT_IT           (container) set to 1 to opt into the Docker-gated container leg
-#   RIFT_IMAGE        (container) image tag to run (default: zainalpour/rift-proxy:v0.13.1)
+#   RIFT_IMAGE        (container) image tag to run (default: zainalpour/rift-proxy:v0.15.0)
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/lib.sh

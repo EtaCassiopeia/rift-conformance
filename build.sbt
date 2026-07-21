@@ -131,7 +131,7 @@ addCommandAlias(
 // scenario (@full-corpus) now runs in container: its historical blocker — published images lacking
 // the `lua` feature the corpus exercised — is void (rift 0.12.0 removed Lua #451; 05-scripting is
 // rhai + JS, both built-in), and a green RIFT_IT run against the v0.13.1 image confirmed it (#71);
-// the container leg tracks RIFT_VERSION (now the 0.14.0 image), re-verified in CI on the bump.
+// the container leg tracks RIFT_VERSION (now the 0.15.0 image), re-verified in CI on the bump.
 // `--exclude-tags full-corpus-verify` drops ONLY the rift-verify scenario: `rift-verify
 // --verify-dynamic` spins up ephemeral imposters on dynamic high ports that bind inside the
 // container's network namespace and are unreachable from the host-side tool over the 1:1

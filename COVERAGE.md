@@ -451,6 +451,18 @@ entry point is panic-guarded across the C ABI ([rift#484/#487](https://github.co
 fallback now clamps/caps like the Boa path ([rift#490/#504](https://github.com/achird-labs/rift/pull/504),
 `--no-default-features` only).
 
+## v0.15.0 new-capability coverage gaps (pin bump 0.14.0 → 0.15.0) — tracked by [#72](https://github.com/EtaCassiopeia/rift-conformance/issues/72)
+
+Verified green on the bump: all 14 Plane A features pass against 0.15.0 with no conforming change.
+
+| Capability / change | rift | Coverage status |
+|---|---|---|
+| **`type` slug on every error-envelope entry** — `{"code","type","message"}`; six slugs copied verbatim from Mountebank's `errors.js`, the rest naming doors Mountebank has no equivalent for | #797 | **gap — highest value here.** This shipped *because of* this harness: #797 was filed from the #118 work, reporting that `code` was a status string on most doors and a Mountebank slug on the inject doors, so it could not be branched on. `type` is the fix. `13-error-envelope` already pins `code` per door (and 0.15.0 keeps it byte-identical — verified), so the natural follow-up is to assert `type` alongside it on each door, which is the field new consumers are told to read |
+| Field-level `equals`-on-body predicates indexed by a quamina automaton (default-on `quamina-matching` feature) | #767/#777/#779 | **behaviour-neutral** — a prefilter; anything it cannot express falls through to full evaluation, and matching results are unchanged. Worth an eventual differential check that a body-`equals` stub set matches identically with and without the feature, but nothing is unpinned today |
+| Per-core runtime topology serving imposter traffic (`--runtime per-core[=N]`, `--runtime-affinity`) | #744/#745 | **gap — opt-in, experimental.** Default work-stealing topology is unchanged, and macOS falls back to work-stealing with a warning, so this is Linux-only to exercise. Delete/drain semantics and the `RIFT_MAX_CONNECTIONS` cap are claimed identical across topologies — that equivalence is the assertable property |
+| `rift_accepted_connections_total{worker=…}` per-worker accept counters | #746 | **gap** — `09-gateway-https-metrics` already scrapes the metrics endpoint; add the counter's presence/labels under `--runtime per-core` |
+| Opt-in `jemalloc` allocator feature for the server binary | #717 | **n/a** — a build-time allocator choice in the engine's own release process; no wire-visible surface for this harness to assert |
+
 ## v0.13.2 → v0.14.0 new-capability coverage gaps (pin bump 0.13.1 → 0.14.0) — tracked by [#72](https://github.com/EtaCassiopeia/rift-conformance/issues/72)
 
 The engine pin moved **0.13.1 → 0.14.0** (2026-07-16). This jump folds in five intermediate releases
