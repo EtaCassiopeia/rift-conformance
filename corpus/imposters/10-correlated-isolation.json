@@ -15,13 +15,23 @@
       "name": "space=alice — only matches requests with X-Mock-Space: alice",
       "space": "alice",
       "predicates": [{ "equals": { "path": "/data" } }],
-      "responses": [{ "is": { "statusCode": 200, "body": { "owner": "alice", "items": [1, 2] } } }]
+      "responses": [{ "is": { "statusCode": 200, "body": { "owner": "alice", "items": [1, 2] } } }],
+      "_verify": {
+        "sequence": [
+          { "request": { "path": "/data", "headers": { "X-Mock-Space": "alice" } }, "expect": { "status": 200, "bodyContains": "alice" } }
+        ]
+      }
     },
     {
       "name": "space=bob — isolated from alice",
       "space": "bob",
       "predicates": [{ "equals": { "path": "/data" } }],
-      "responses": [{ "is": { "statusCode": 200, "body": { "owner": "bob", "items": [9] } } }]
+      "responses": [{ "is": { "statusCode": 200, "body": { "owner": "bob", "items": [9] } } }],
+      "_verify": {
+        "sequence": [
+          { "request": { "path": "/data", "headers": { "X-Mock-Space": "bob" } }, "expect": { "status": 200, "bodyContains": "bob" } }
+        ]
+      }
     },
     {
       "name": "global (no space) — matches any caller",

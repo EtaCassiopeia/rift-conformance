@@ -400,6 +400,26 @@ allocates ephemeral imposters on dynamic high ports that bind inside the contain
 namespace, unreachable from the host tool over the 1:1 published-port topology — a standing
 container constraint, not a lua/image gap. See the container row in DESIGN §3.1.
 
+**Corpus `_verify` backfill ([#117](https://github.com/EtaCassiopeia/rift-conformance/issues/117)).**
+`@full-corpus` proves every imposter *answers*; only a `_verify` transcript proves it answers
+*correctly*. 12 of 15 corpus files carried none, so rift-verify skipped their dynamic stubs outright
+(*"no `_verify` annotation; cannot assert"*) — the same blind spot rift#608 hid in. All 12 are now
+backfilled (33 new transcripts, 38 total), taking the `01-consistency-gate` rift-verify scenario from
+**50 passed / 55 skipped** to **89 passed / 35 skipped**, still 0 failures, with no new suite.
+Deliberately still bare: `04-fault-injection`'s probabilistic faults + TCP reset (only the
+`probability: 1.0` latency stub is asserted) — a transcript over a coin flip is flakiness, not
+coverage. `scripts/verify-mutation-check.py --all` rules out decorative blocks: it corrupts one
+expectation per transcript and requires exactly one new rift-verify failure; all 40 are currently
+killed. That proves rift-verify **evaluates** each transcript, not that each is strong — see DESIGN
+§ for the distinction. Re-run it after editing a `_verify` block or bumping the engine pin.
+
+**Still-open sub-gaps** (behavior named by a stub that the `_verify` vocabulary cannot assert —
+`expect` supports only `status`/`bodyContains`/`bodyEquals`): the two-`Set-Cookie`-lines-on-the-wire
+behavior of `11-headers-and-templates` (the transcript can only assert the body), and response
+latency generally (`03`'s `wait`, `16`'s JS-function `wait`, `04`'s `probability: 1.0` latency) —
+asserted on status+body only. Plane A's own feature files cover latency floors directly
+(`03-faults-transport`, `06-behaviors`), so this is a corpus-oracle limitation, not a coverage hole.
+
 ## v0.13.0 new-capability coverage gaps (backlog) — tracked by [#72](https://github.com/EtaCassiopeia/rift-conformance/issues/72)
 
 The engine pin moved to **rift 0.13.1** with **zio-bdd 1.4.2**. 0.13.1 is a packaging-only patch (the

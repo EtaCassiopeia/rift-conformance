@@ -27,7 +27,12 @@
     {
       "name": "contains — body contains 'needle'",
       "predicates": [{ "contains": { "body": "needle" } }],
-      "responses": [{ "is": { "statusCode": 200, "body": { "matched": "contains" } } }]
+      "responses": [{ "is": { "statusCode": 200, "body": { "matched": "contains" } } }],
+      "_verify": {
+        "sequence": [
+          { "request": { "method": "POST", "path": "/any", "body": "a needle in a haystack" }, "expect": { "status": 200, "bodyContains": "contains" } }
+        ]
+      }
     },
     {
       "name": "startsWith — path starts with /start",
@@ -47,7 +52,12 @@
     {
       "name": "exists — Authorization header present",
       "predicates": [{ "exists": { "headers": { "Authorization": true } } }],
-      "responses": [{ "is": { "statusCode": 200, "body": { "matched": "exists-header" } } }]
+      "responses": [{ "is": { "statusCode": 200, "body": { "matched": "exists-header" } } }],
+      "_verify": {
+        "sequence": [
+          { "request": { "path": "/whatever", "headers": { "Authorization": "Bearer t" } }, "expect": { "status": 200, "bodyContains": "exists-header" } }
+        ]
+      }
     },
     {
       "name": "or — path is /red OR /blue",
@@ -75,7 +85,12 @@
         "equals": { "body": "order" },
         "jsonpath": { "selector": "$.type" }
       }],
-      "responses": [{ "is": { "statusCode": 200, "body": { "matched": "jsonpath" } } }]
+      "responses": [{ "is": { "statusCode": 200, "body": { "matched": "jsonpath" } } }],
+      "_verify": {
+        "sequence": [
+          { "request": { "method": "POST", "path": "/orders", "body": "{\"type\":\"order\" }" }, "expect": { "status": 200, "bodyContains": "jsonpath" } }
+        ]
+      }
     },
     {
       "name": "xpath — XML body where //user/@role == 'admin'",
@@ -83,7 +98,12 @@
         "equals": { "body": "admin" },
         "xpath": { "selector": "string(//user/@role)" }
       }],
-      "responses": [{ "is": { "statusCode": 200, "body": { "matched": "xpath" } } }]
+      "responses": [{ "is": { "statusCode": 200, "body": { "matched": "xpath" } } }],
+      "_verify": {
+        "sequence": [
+          { "request": { "method": "POST", "path": "/users", "body": "<user role=\"admin\"/>" }, "expect": { "status": 200, "bodyContains": "xpath" } }
+        ]
+      }
     }
   ]
 }
