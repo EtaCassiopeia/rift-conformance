@@ -32,7 +32,7 @@ from pathlib import Path
 
 ENGINE_REPO = "achird-labs/rift"
 PIN_FILE = Path("scripts/build-rift.sh")
-# Matches: RIFT_VERSION="${RIFT_VERSION:-0.14.0}"
+# Matches: RIFT_VERSION="${RIFT_VERSION:-0.15.0}"
 PIN_RE = re.compile(r'RIFT_VERSION="\$\{RIFT_VERSION:-([0-9]+(?:\.[0-9]+)*)\}"')
 TAG_RE = re.compile(r"^v([0-9]+(?:\.[0-9]+)*)$")
 

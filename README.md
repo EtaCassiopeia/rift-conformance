@@ -99,7 +99,7 @@ targets (`make engine`, `make gate`, `make run-all`, `make fmt`, `make test`).
 | Var | Default | Meaning |
 |---|---|---|
 | `RIFT_BUILD_DIR` | (fetched by `build-rift.sh`) | dir holding `rift`/`rift-lint`/`rift-verify` from a released rift build |
-| `RIFT_VERSION` | `0.14.0` | released rift version `build-rift.sh` fetches |
+| `RIFT_VERSION` | `0.15.0` | released rift version `build-rift.sh` fetches |
 | `RIFT_BUILD_CACHE` | `~/.cache/rift-conformance` | cache root for `build-rift.sh` downloads (SHA-keyed, idempotent) |
 | `RIFT_MODE` | `external` | `external` (spawn the binary, no Docker) or `container` (image) — Plane A |
 | `RIFT_CORPUS_ROOT` | `./corpus` | where the vendored JSON corpus / CSV data / fixtures live (imposters, data, fixtures subdirs) |

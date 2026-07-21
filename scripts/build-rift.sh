@@ -14,14 +14,14 @@
 # Environment overrides:
 #   RIFT_BUILD_DIR    if set (and it already contains the binaries), skips the fetch entirely
 #                     (deliberate branch/local-build testing) and is echoed back as-is.
-#   RIFT_VERSION      the released rift version to fetch (default: 0.14.0).
+#   RIFT_VERSION      the released rift version to fetch (default: 0.15.0).
 #   RIFT_BUILD_CACHE  cache ROOT for downloads (default: ~/.cache/rift-conformance). Each release
 #                     lands in <root>/rift-v<version>-<triple>; a dir that already has
 #                     bin/rift + bin/BUILD_INFO is reused without re-downloading (idempotent).
 set -euo pipefail
 
 REPO="achird-labs/rift"
-RIFT_VERSION="${RIFT_VERSION:-0.14.0}"
+RIFT_VERSION="${RIFT_VERSION:-0.15.0}"
 CACHE_ROOT="${RIFT_BUILD_CACHE:-$HOME/.cache/rift-conformance}"
 BINARIES="rift rift-verify rift-lint"
 
