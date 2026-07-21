@@ -1,0 +1,56 @@
+{
+  "imposters": [
+    {
+      "port": 4545,
+      "protocol": "http",
+      "name": "Latency Testing",
+      "stubs": [
+        {
+          "predicates": [{ "equals": { "path": "/fast" } }],
+          "responses": [{
+            "is": { "statusCode": 200, "body": "Fast response" }
+          }]
+        },
+        {
+          "predicates": [{ "equals": { "path": "/slow-100ms" } }],
+          "responses": [{
+            "is": { "statusCode": 200, "body": "100ms delay" },
+            "_behaviors": { "wait": 100 }
+          }]
+        },
+        {
+          "predicates": [{ "equals": { "path": "/slow-500ms" } }],
+          "responses": [{
+            "is": { "statusCode": 200, "body": "500ms delay" },
+            "_behaviors": { "wait": 500 }
+          }]
+        },
+        {
+          "predicates": [{ "equals": { "path": "/slow-2s" } }],
+          "responses": [{
+            "is": { "statusCode": 200, "body": "2 second delay" },
+            "_behaviors": { "wait": 2000 }
+          }]
+        },
+        {
+          "predicates": [{ "equals": { "path": "/timeout" } }],
+          "responses": [{
+            "is": { "statusCode": 200, "body": "Timeout test (35s)" },
+            "_behaviors": { "wait": 35000 }
+          }]
+        },
+        {
+          "predicates": [{ "equals": { "path": "/random-latency" } }],
+          "responses": [{
+            "is": { "statusCode": 200, "body": "Random latency 100-1000ms" },
+            "_behaviors": {
+              "wait": {
+                "inject": "function() { return Math.floor(Math.random() * 900) + 100; }"
+              }
+            }
+          }]
+        }
+      ]
+    }
+  ]
+}

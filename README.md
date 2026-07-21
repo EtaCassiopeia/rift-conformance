@@ -46,6 +46,7 @@ DESIGN.md                              the implementation contract
 COVERAGE.md · FINDINGS.md              coverage matrix + defect ledger
 scripts/build-rift.sh                  fetches the released engine binaries (single source of artifacts)
 scripts/run-all.sh                     one-command layered summary, both planes
+scripts/sync-rift-examples.sh          refreshes corpus/rift-examples/ from rift's examples/ at the pin (`--check` verifies)
 src/test/scala/samples/rift/           Plane A — engine conformance suites + RiftHarness
 src/test/scala/samples/mock/           Plane B — MockControl corpus (migrated from zio-bdd-samples)
 src/test/resources/features/rift/      Plane A features
@@ -53,6 +54,7 @@ src/test/resources/features/mock/      Plane B features (migrated)
 corpus/imposters/*.json                canonical JSON corpus (vendored in-repo, #16) — static, numbered, add-never-renumber
 corpus/data/products.csv               CSV lookup data for feature 06 (`lookup` behavior)
 corpus/fixtures/injection/*.cjs,*.js   JS injection modules for the scripting/decorate scenarios
+corpus/rift-examples/*.json            rift's own shipped examples, vendored at the pin (#120) — see its PROVENANCE.md
 ```
 
 ## Quickstart (cold start, nothing else checked out)
@@ -152,6 +154,10 @@ commit would have surfaced.
   `workflow_call`, and a single `engine-drift`-labelled tracking issue is created or **updated in
   place** with the verdict. One issue, edited each run — not one per release — so it stays legible
   and closes itself when the pin catches up.
+
+When the pin does move, run `scripts/sync-rift-examples.sh` as part of the bump: the shipped-examples
+oracle (#120) replays a vendored copy of rift's `examples/`, and a stale copy would let it keep
+passing against documents the engine no longer ships. `--check` reports drift without writing.
 
 A red candidate turns the *release-watch* run red and nothing gates on that workflow, so it never
 blocks the repo. (It is not a `continue-on-error` flag — GitHub does not allow one on a job that
