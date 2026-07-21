@@ -20,7 +20,9 @@ import java.net.http.{HttpClient, HttpRequest, HttpResponse}
   */
 object FfiManifest91Spec extends ZIOSpecDefault:
 
-  private val Version = sys.env.getOrElse("RIFT_VERSION", "0.13.1")
+  // Default must track scripts/build-rift.sh's RIFT_VERSION default — this asserts the manifest of
+  // the same release the binary legs fetch, so a drifting default would verify the wrong release.
+  private val Version = sys.env.getOrElse("RIFT_VERSION", "0.15.0")
   private val ManifestUrl =
     s"https://github.com/achird-labs/rift/releases/download/v$Version/ffi-manifest.json"
 
