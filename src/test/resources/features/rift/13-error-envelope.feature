@@ -16,6 +16,14 @@ Feature: Error-response envelope — the standard {"errors":[{code,message}]} co
   # doors at all: a failed TEMPLATE render serves 200 with the template left literal, and a
   # non-strict DECORATE failure serves the undecorated 200 (both already pinned as 200s — see
   # 04-scripting-bounds). Only their strictBehaviors forms are error doors, and those are covered.
+  #
+  # The script/inject doors live HERE rather than as extra asserts inside 04-scripting-bounds, even
+  # though 04 already drives the same fixtures. 04 runs on the embedded leg too, and the embedded
+  # natives are pinned to rift 0.13.1 (zio-bdd 1.4.2) — which predates the rift#611 envelope, so an
+  # envelope assert in 04 is red on embedded through no fault of the contract. This feature is
+  # external-only (absent from the `engineEmbedded` allowlist), so the doors are pinned here and 04
+  # keeps asserting only what BOTH engine versions agree on: status + marker headers.
+  # Revisit when zio-bdd's embedded natives catch up to 0.14.0 (COVERAGE.md tracks that bump).
 
   # The rift#611 regression case, pinned directly: the thrown message contains a double quote, so a
   # body that is not serde-escaped fails to parse at all. The message assert reads the decoded JSON
@@ -28,6 +36,51 @@ Feature: Error-response envelope — the standard {"errors":[{code,message}]} co
     And the response is a rift error envelope
     And the error envelope code is "500"
     And the error envelope message contains "expected \"ready\""
+
+  # The `_rift.script` timeout door (04 asserts the 504 + marker headers; the envelope is pinned
+  # here). Its `code` is the status as a string, unlike the inject doors below.
+  Scenario: a runaway script timeout serves a 504 envelope
+    Given a fresh imposter from fixture "scripting/runaway"
+    When the client sends "GET" "/hang"
+    Then the response status is 504
+    And the response header "x-rift-script-timeout" is "true"
+    And the response is a rift error envelope
+    And the error envelope code is "504"
+    And the error envelope message contains "timed out"
+
+  # The four `inject` doors — the ones whose `code` is a Mountebank SLUG rather than the status.
+  # Pinning the exact slug per door is the whole point: it is the part of the contract a status-only
+  # assert cannot see, and the part an SDK's error mapping keys off.
+  Scenario Outline: the <door> inject door serves its envelope with the "<code>" slug
+    Given a fresh imposter from fixture "scripting/<fixture>"
+    When the client sends "GET" "<path>"
+    Then the response status is <status>
+    And the response header "x-rift-inject-error" is "true"
+    And the response is a rift error envelope
+    And the error envelope code is "<code>"
+
+    Examples:
+      | door               | fixture                   | path             | status | code                        |
+      | response-timeout   | inject-response-timeout   | /inject-response | 504    | injection timeout           |
+      | predicate-timeout  | inject-predicate-timeout  | /anything        | 504    | predicate injection timeout |
+      | response-error     | inject-response-error     | /inject-response | 400    | invalid injection           |
+      | predicate-error    | inject-predicate-error    | /anything        | 400    | invalid predicate injection |
+
+  # The two strictBehaviors DECORATE doors (the non-strict forms serve an undecorated 200 and are
+  # not error doors — see the header comment). Both carry the status as their code.
+  Scenario Outline: a strictBehaviors decorate <kind> serves a <status> envelope
+    Given a fresh imposter from fixture "scripting/inject-decorate-<kind>-strict"
+    When the client sends "GET" "/inject-decorate"
+    Then the response status is <status>
+    And the response header "x-rift-decorate-error" is "true"
+    And the response is a rift error envelope
+    And the error envelope code is "<status>"
+    And the error envelope message contains "strictBehaviors"
+
+    Examples:
+      | kind    | status |
+      | timeout | 504    |
+      | error   | 500    |
 
   # strictBehaviors turns a shellTransform failure and a binary-mode base64 decode failure into real
   # 500 doors (non-strict, both serve the untransformed 200 — see feature 06). Both keep their marker
