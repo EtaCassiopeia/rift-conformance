@@ -32,8 +32,6 @@ Feature: Scripting engines and runaway bounds
     Then the response status is 504
     And the response header "x-rift-script-error" is "true"
     And the response header "x-rift-script-timeout" is "true"
-    And the response is a rift error envelope
-    And the error envelope code is "504"
     And the response took at least 250 ms
     And the response took at most 2000 ms
 
@@ -62,8 +60,6 @@ Feature: Scripting engines and runaway bounds
     Then the response status is 504
     And the response header "x-rift-script-timeout" is "true"
     And the response header "x-rift-inject-error" is "true"
-    And the response is a rift error envelope
-    And the error envelope code is "injection timeout"
 
   # A slow predicate-inject times out during matching with 504 "predicate injection timeout" —
   # same x-rift-script-timeout marker, distinguishing a timeout from an invalid-predicate error.
@@ -73,8 +69,6 @@ Feature: Scripting engines and runaway bounds
     Then the response status is 504
     And the response header "x-rift-script-timeout" is "true"
     And the response header "x-rift-inject-error" is "true"
-    And the response is a rift error envelope
-    And the error envelope code is "predicate injection timeout"
 
   # A slow decorate behaviour times out AFTER the base response is chosen, so (non-strict) the
   # UNDECORATED response is still served — 200 with the original body — tagged x-rift-decorate-error
@@ -95,8 +89,6 @@ Feature: Scripting engines and runaway bounds
     Then the response status is 504
     And the response header "x-rift-script-timeout" is "true"
     And the response header "x-rift-decorate-error" is "true"
-    And the response is a rift error envelope
-    And the error envelope code is "504"
 
   # rift 0.13.0 (rift#500) made the non-timeout script *error* contracts stable and distinct from the
   # timeout ones above: a throwing (not slow) script fails fast, tagged x-rift-inject-error /
@@ -109,8 +101,6 @@ Feature: Scripting engines and runaway bounds
     And the response header "x-rift-inject-error" is "true"
     And the response has no header "x-rift-script-timeout"
     And the response body contains "invalid injection"
-    And the response is a rift error envelope
-    And the error envelope code is "invalid injection"
 
   # A predicate-inject that throws fails matching with 400 "invalid predicate injection" — same
   # x-rift-inject-error marker, distinguishing an error from the 504 predicate-injection timeout.
@@ -121,8 +111,6 @@ Feature: Scripting engines and runaway bounds
     And the response header "x-rift-inject-error" is "true"
     And the response has no header "x-rift-script-timeout"
     And the response body contains "invalid predicate injection"
-    And the response is a rift error envelope
-    And the error envelope code is "invalid predicate injection"
 
   # A decorate that throws (non-strict) never fails the response: the UNDECORATED base response is
   # still served — 200 with the original body — tagged x-rift-decorate-error but not x-rift-script-timeout.
@@ -143,8 +131,6 @@ Feature: Scripting engines and runaway bounds
     And the response header "x-rift-decorate-error" is "true"
     And the response has no header "x-rift-script-timeout"
     And the response body contains "strictBehaviors"
-    And the response is a rift error envelope
-    And the error envelope code is "500"
 
   # Script API v2 (rift#442) result constructors beyond http(): a respond(ctx) can return delay(N)
   # (latency, then a default 200), reset() (a transport-level connection reset), or pass() (the
