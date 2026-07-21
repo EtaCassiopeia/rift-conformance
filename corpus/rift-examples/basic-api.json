@@ -1,0 +1,53 @@
+{
+  "imposters": [
+    {
+      "port": 4545,
+      "protocol": "http",
+      "name": "Basic REST API",
+      "stubs": [
+        {
+          "predicates": [{ "equals": { "method": "GET", "path": "/health" } }],
+          "responses": [{ "is": { "statusCode": 200, "body": "OK" } }]
+        },
+        {
+          "predicates": [{ "equals": { "method": "GET", "path": "/api/users" } }],
+          "responses": [{
+            "is": {
+              "statusCode": 200,
+              "headers": { "Content-Type": "application/json" },
+              "body": [
+                { "id": 1, "name": "Alice" },
+                { "id": 2, "name": "Bob" }
+              ]
+            }
+          }]
+        },
+        {
+          "predicates": [{
+            "and": [
+              { "equals": { "method": "GET" } },
+              { "matches": { "path": "/api/users/\\d+" } }
+            ]
+          }],
+          "responses": [{
+            "is": {
+              "statusCode": 200,
+              "headers": { "Content-Type": "application/json" },
+              "body": { "id": 1, "name": "Alice", "email": "alice@example.com" }
+            }
+          }]
+        },
+        {
+          "predicates": [{ "equals": { "method": "POST", "path": "/api/users" } }],
+          "responses": [{
+            "is": {
+              "statusCode": 201,
+              "headers": { "Content-Type": "application/json" },
+              "body": { "id": 999, "message": "Created" }
+            }
+          }]
+        }
+      ]
+    }
+  ]
+}

@@ -250,6 +250,26 @@ each file's `_verify` presence, count), then loads the corpus into a dedicated e
 `corpus/`, `--allow-injection`) and drives `rift-verify --skip-dynamic --verify-dynamic` over it → 0
 failures. Self-gating: no-op when offline or `RIFT_BUILD_DIR` unset.
 
+**Shipped-examples replay (#120, rift#608).** rift's own `examples/` are the documents users copy
+first, and rift#608 shipped an engine that silently dropped `_behaviors` — `latency-testing` still
+*loaded*, so nothing that only checked "was the document accepted?" went red while `/random-latency`
+answered instantly. `ShippedExamples120Spec` therefore asserts the stronger property: each example
+loads **verbatim** → 201 and is registered, then its headline behavior is **driven** and asserted to
+take effect, and `rift-lint` over the same directory reports 0 errors. Response **bodies** are
+asserted, not just statuses — several stubs in a document share a status, so a wrong-stub match would
+otherwise pass — and `x-rift-no-match` is treated as a failure. The rift#608 shape is pinned directly:
+`{"wait": {"inject": …}}` plus two numeric `wait`s, asserted against elapsed-time floors. Stripping
+every `_behaviors` block from the vendored example reproduces rift#608 exactly — load and lint stay
+green, the three latency floors go red — which is the check that the gate is discriminating rather
+than merely present. Inputs are vendored under `corpus/rift-examples/` because the **release tarball
+ships no `examples/`** (only `bin/`, `CHANGELOG.md`, `LICENSE`, `README.md`); `scripts/sync-rift-examples.sh
+--check` compares git blob SHAs against the tag and is part of the pin bump, since a stale copy is
+the one way this oracle could pass vacuously. Four of the six examples declare port 4545, so a single
+engine loads → drives → `DELETE`s each in turn rather than rewriting ports. Two drives pin a defect in
+the *example* rather than the engine — `?status=OPEN` and `/tasks/task-999` are unreachable behind
+more general stubs under first-match-wins (achird-labs/rift#805) — asserted as they actually behave so
+an upstream reorder surfaces here. Self-gating on `RIFT_BUILD_DIR`; external-leg only.
+
 **`ffi-manifest.json` release asset (#91, rift#459).** `FfiManifest91Spec` fetches the release
 `ffi-manifest.json` (`{version, abi, artifacts[{platform,file,sha256,url}]}`) and asserts it resolves
 the running platform's `librift_ffi` cdylib — the native the embedded Panama-FFM leg loads: the
@@ -451,6 +471,7 @@ rift repo issue tracker as today (one finding → one issue, referencing this re
 
 ```
 scripts/build-rift.sh            # §3.2 — fetch rift release binaries + BUILD_INFO (RIFT_VERSION)
+scripts/sync-rift-examples.sh    # refresh corpus/rift-examples/ from rift's examples/ at the pin (#120); --check verifies blob SHAs
 scripts/conformance-engine.sh    # Plane A: RIFT_MODE=external → engineConformance; RIFT_MODE=embedded → engineEmbedded (#18, JDK22+ or SKIP) + zero-spawn ps assert
 scripts/conformance.sh           # (exists) Plane B wiremock
 scripts/conformance-embedded.sh  # (exists) Plane B embedded — RIFT_FFI_LIB from build-rift --ffi

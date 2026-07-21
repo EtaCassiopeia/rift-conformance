@@ -1,0 +1,120 @@
+{
+  "imposters": [
+    {
+      "port": 4545,
+      "protocol": "http",
+      "name": "Error Testing",
+      "stubs": [
+        {
+          "predicates": [{ "equals": { "path": "/success" } }],
+          "responses": [{
+            "is": {
+              "statusCode": 200,
+              "headers": { "Content-Type": "application/json" },
+              "body": { "status": "ok" }
+            }
+          }]
+        },
+        {
+          "predicates": [{ "equals": { "path": "/error/400" } }],
+          "responses": [{
+            "is": {
+              "statusCode": 400,
+              "headers": { "Content-Type": "application/json" },
+              "body": { "error": "Bad Request", "code": "INVALID_INPUT" }
+            }
+          }]
+        },
+        {
+          "predicates": [{ "equals": { "path": "/error/401" } }],
+          "responses": [{
+            "is": {
+              "statusCode": 401,
+              "headers": {
+                "Content-Type": "application/json",
+                "WWW-Authenticate": "Bearer realm=\"api\""
+              },
+              "body": { "error": "Unauthorized" }
+            }
+          }]
+        },
+        {
+          "predicates": [{ "equals": { "path": "/error/403" } }],
+          "responses": [{
+            "is": {
+              "statusCode": 403,
+              "headers": { "Content-Type": "application/json" },
+              "body": { "error": "Forbidden" }
+            }
+          }]
+        },
+        {
+          "predicates": [{ "equals": { "path": "/error/404" } }],
+          "responses": [{
+            "is": {
+              "statusCode": 404,
+              "headers": { "Content-Type": "application/json" },
+              "body": { "error": "Not Found" }
+            }
+          }]
+        },
+        {
+          "predicates": [{ "equals": { "path": "/error/429" } }],
+          "responses": [{
+            "is": {
+              "statusCode": 429,
+              "headers": {
+                "Content-Type": "application/json",
+                "Retry-After": "60"
+              },
+              "body": { "error": "Too Many Requests", "retry_after": 60 }
+            }
+          }]
+        },
+        {
+          "predicates": [{ "equals": { "path": "/error/500" } }],
+          "responses": [{
+            "is": {
+              "statusCode": 500,
+              "headers": { "Content-Type": "application/json" },
+              "body": { "error": "Internal Server Error" }
+            }
+          }]
+        },
+        {
+          "predicates": [{ "equals": { "path": "/error/502" } }],
+          "responses": [{
+            "is": {
+              "statusCode": 502,
+              "headers": { "Content-Type": "application/json" },
+              "body": { "error": "Bad Gateway" }
+            }
+          }]
+        },
+        {
+          "predicates": [{ "equals": { "path": "/error/503" } }],
+          "responses": [{
+            "is": {
+              "statusCode": 503,
+              "headers": {
+                "Content-Type": "application/json",
+                "Retry-After": "30"
+              },
+              "body": { "error": "Service Unavailable" }
+            }
+          }]
+        },
+        {
+          "predicates": [{ "equals": { "path": "/error/504" } }],
+          "responses": [{
+            "is": {
+              "statusCode": 504,
+              "headers": { "Content-Type": "application/json" },
+              "body": { "error": "Gateway Timeout" }
+            }
+          }]
+        }
+      ]
+    }
+  ]
+}
