@@ -7,12 +7,185 @@ import zio.json.*
 import zio.json.ast.Json
 import zio.schema.{DeriveSchema, Schema}
 
+import java.io.ByteArrayOutputStream
 import java.net.{InetSocketAddress, ServerSocket, Socket, URI}
 import java.net.http.{HttpClient, HttpRequest, HttpResponse}
 import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Path, Paths}
 import javax.net.ssl.{SSLContext, TrustManager, X509TrustManager}
 import scala.jdk.CollectionConverters.*
+
+/** Sending a body the server may reject mid-upload (issue #131).
+  *
+  * The JDK `HttpClient` writes the whole request body before it looks at the response, so a server
+  * that answers early and closes — exactly what the engine's over-size door does once it has read
+  * past its cap — surfaces as an `IOException` out of `send()` rather than as the response it
+  * actually sent. Two things that do NOT fix it, both measured against a live 0.15.0 engine:
+  * `Expect: 100-continue` (the engine answers `100 Continue` unconditionally instead of
+  * pre-rejecting on `Content-Length`, so the body still streams), and polling `available()` between
+  * writes (an RST discards bytes already sitting in the receive buffer, so checking afterwards is
+  * too late).
+  *
+  * What works is consuming the response the moment it lands — start the reader before writing the
+  * body. That is what curl's select loop does, and why the door looked solid when probed by hand.
+  */
+object RiftConformanceSupport:
+
+  /** Bodies at or above this size route through [[sendOversize]]. Comfortably above every ordinary
+    * staged body in the suite, so normal sends keep the plain `HttpClient` path.
+    */
+  val OversizeBodyBytes: Int = 1024 * 1024
+
+  /** Whole-send budget. Mirrors the 10s request timeout on the `HttpClient` path: a wedged engine
+    * must fail this scenario crisply rather than hang the CI run, and a thread blocked in a socket
+    * write does not answer `Thread.interrupt`, so nothing else would bound it.
+    */
+  private val SendDeadlineMillis: Long = 30000
+
+  /** POST a large body over a raw socket, reading the response as soon as the server sends one. */
+  def sendOversize(
+      url: String,
+      method: String,
+      headers: Map[String, String],
+      body: String
+  ): LastResponse =
+    val uri = URI.create(url)
+    // Plaintext only: this path speaks raw HTTP/1.1 on a bare socket, so an https URL would
+    // silently send cleartext rather than fail.
+    if Option(uri.getScheme).exists(_.equalsIgnoreCase("https")) then
+      throw new IllegalArgumentException(s"sendOversize is plaintext-only, got $url")
+    val port = if uri.getPort > 0 then uri.getPort else 80
+    val sock = new Socket()
+    val startedAt = java.lang.System.currentTimeMillis()
+    try
+      sock.connect(new InetSocketAddress(uri.getHost, port), 10000)
+      sock.setSoTimeout(10000)
+      val path = if uri.getRawPath.isEmpty then "/" else uri.getRawPath
+      val query = Option(uri.getRawQuery).fold("")("?" + _)
+      val bytes = body.getBytes(StandardCharsets.UTF_8)
+      val reserved = Set("host", "content-length", "connection")
+      val head = new StringBuilder()
+        .append(s"${method.toUpperCase} $path$query HTTP/1.1\r\n")
+        .append(s"Host: ${uri.getHost}:$port\r\n")
+        .append(s"Content-Length: ${bytes.length}\r\n")
+        .append("Connection: close\r\n")
+      // Framing headers are ours; a caller restating one would emit a duplicate line.
+      headers.filterNot((k, _) => reserved.contains(k.toLowerCase)).foreach { (k, v) =>
+        head.append(s"$k: $v\r\n")
+      }
+      head.append("\r\n")
+
+      val collected = new ByteArrayOutputStream()
+      val writeError = new java.util.concurrent.atomic.AtomicReference[Option[Throwable]](None)
+
+      // Started BEFORE the body write: see the object comment. Closing the socket the moment a
+      // complete response has arrived also releases a writer otherwise blocked on a peer that has
+      // stopped draining.
+      val reader = new Thread(() =>
+        try
+          val in = sock.getInputStream
+          val buf = new Array[Byte](8 * 1024)
+          var n = in.read(buf)
+          var complete = false
+          while n > 0 && !complete do
+            complete = collected.synchronized {
+              collected.write(buf, 0, n)
+              isComplete(collected.toByteArray)
+            }
+            if complete then sock.close() else n = in.read(buf)
+        catch
+          case _: java.io.IOException => () // reset/close once the response is in: expected here
+      )
+      reader.setDaemon(true)
+      reader.start()
+
+      val out = sock.getOutputStream
+      out.write(head.toString.getBytes(StandardCharsets.UTF_8))
+      out.flush()
+
+      val chunk = 64 * 1024
+      var offset = 0
+      var writeDone = false
+      while offset < bytes.length && !writeDone do
+        if java.lang.System.currentTimeMillis() - startedAt > SendDeadlineMillis then
+          throw new RuntimeException(
+            s"over-size send to $url exceeded ${SendDeadlineMillis}ms with no response " +
+              s"(wrote $offset/${bytes.length} bytes) — the peer stopped reading without answering"
+          )
+        try
+          out.write(bytes, offset, math.min(chunk, bytes.length - offset))
+          out.flush()
+          offset += chunk
+        catch
+          // The peer rejected and closed mid-upload. Keep the cause: if no response turns up, this
+          // is the only evidence of what actually went wrong.
+          case e: java.io.IOException =>
+            writeError.set(Some(e))
+            writeDone = true
+
+      val budget =
+        math.max(1000L, SendDeadlineMillis - (java.lang.System.currentTimeMillis() - startedAt))
+      reader.join(budget)
+      if reader.isAlive then
+        throw new RuntimeException(
+          s"over-size send to $url: response never completed within ${SendDeadlineMillis}ms"
+        )
+      val text = collected.synchronized(new String(collected.toByteArray, StandardCharsets.UTF_8))
+      parseResponse(text, writeError.get)
+    finally sock.close()
+
+  /** Whether `raw` holds a complete response: headers plus a body matching `Content-Length`. */
+  private def isComplete(raw: Array[Byte]): Boolean =
+    val text = new String(raw, StandardCharsets.UTF_8)
+    val sep = text.indexOf("\r\n\r\n")
+    sep >= 0 && contentLength(text.substring(0, sep)).exists(text.length - (sep + 4) >= _)
+
+  private def contentLength(headPart: String): Option[Int] =
+    headPart
+      .split("\r\n")
+      .collectFirst {
+        case l if l.toLowerCase.startsWith("content-length:") => l.split(":", 2).lift(1)
+      }
+      .flatten
+      .flatMap(_.trim.toIntOption)
+
+  /** Parse a raw HTTP/1.1 response into the same shape the `HttpClient` path returns.
+    *
+    * Fails loudly on anything partial: a truncated body parsed into a plausible `LastResponse`
+    * would let a status-only assertion pass on a response that never fully arrived.
+    */
+  private def parseResponse(text: String, writeError: Option[Throwable]): LastResponse =
+    val sep = text.indexOf("\r\n\r\n")
+    if sep < 0 then
+      throw new RuntimeException(
+        s"no complete HTTP response read before the peer closed (got ${text.length} bytes)",
+        writeError.orNull
+      )
+    val (headPart, bodyPart) = (text.substring(0, sep), text.substring(sep + 4))
+    val lines = headPart.split("\r\n").toList
+    val status = lines.headOption
+      .flatMap(_.split(" ").lift(1))
+      .flatMap(_.toIntOption)
+      .getOrElse(throw new RuntimeException(s"unparseable status line: ${lines.headOption}"))
+    val hs = lines.tail
+      .flatMap { l =>
+        l.split(":", 2) match
+          case Array(k, v) => Some(k.trim.toLowerCase -> v.trim)
+          case _ => None
+      }
+      .groupMap(_._1)(_._2)
+    // Chunk framing would otherwise land in the body verbatim and still satisfy a `contains` assert.
+    if hs.contains("transfer-encoding") then
+      throw new RuntimeException(
+        s"sendOversize cannot decode Transfer-Encoding: ${hs("transfer-encoding").mkString(",")}"
+      )
+    contentLength(headPart).foreach { declared =>
+      if bodyPart.length < declared then
+        throw new RuntimeException(
+          s"truncated response body: declared $declared bytes, read ${bodyPart.length}"
+        )
+    }
+    LastResponse(status, bodyPart, hs)
 
 /** Scenario state for Plane A suites. The interesting per-scenario values (tracked ports, the
   * pending request, the last response, the curl log) live in [[Stage]] — this only exists to
@@ -260,11 +433,28 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
       pend <- pendingRequest
       url = s"http://$host:$port$path"
       _ <- recordCurl(curlOf(method, url, pend))
-      probe <- timedProbe(url, method, pend.headers, pend.body)
-      _ <- probe.response match
-        case Some(r) => Stage.put(r) *> Stage.put(ElapsedMillis(probe.elapsedMs))
-        case None =>
-          ZIO.fail(new RuntimeException(s"transport failure on $url (unexpected for a plain send)"))
+      // A body big enough that the server may answer and close before the write finishes needs the
+      // read-while-writing sender, or that early response is lost as an IOException (#131).
+      oversize = pend.body.exists(_.length >= RiftConformanceSupport.OversizeBodyBytes)
+      _ <-
+        if oversize then
+          ZIO
+            .attemptBlocking {
+              val t0 = java.lang.System.nanoTime()
+              val r = RiftConformanceSupport
+                .sendOversize(url, method, pend.headers, pend.body.getOrElse(""))
+              (r, (java.lang.System.nanoTime() - t0) / 1000000L)
+            }
+            .flatMap((r, ms) => Stage.put(r) *> Stage.put(ElapsedMillis(ms)))
+        else
+          timedProbe(url, method, pend.headers, pend.body).flatMap { probe =>
+            probe.response match
+              case Some(r) => Stage.put(r) *> Stage.put(ElapsedMillis(probe.elapsedMs))
+              case None =>
+                ZIO.fail(
+                  new RuntimeException(s"transport failure on $url (unexpected for a plain send)")
+                )
+          }
     yield ()
 
   /** Send expecting a transport-level failure (fault scenarios): capture whether it failed, the
