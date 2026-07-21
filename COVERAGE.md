@@ -400,6 +400,25 @@ allocates ephemeral imposters on dynamic high ports that bind inside the contain
 namespace, unreachable from the host tool over the 1:1 published-port topology — a standing
 container constraint, not a lua/image gap. See the container row in DESIGN §3.1.
 
+**Corpus wait magnitudes + a self-diagnosing gate ([#126](https://github.com/EtaCassiopeia/rift-conformance/issues/126)).**
+`03-behaviors`' two `wait` stubs were the only ones ever seen to flake the `@full-corpus-verify`
+gate (~1 run in 6–12, always the corpus's two longest-in-flight requests, and never reproducible in
+isolation). The failure reason was never captured, so the mechanism stayed unknown — every
+occurrence was on the superseded 0.14.0, and 30 runs on 0.15.0 (including a load-saturated box)
+produced none. Rather than file an unactionable upstream report, the waits were tightened
+(`1500` → `400` ms; `{200,1200}` → `{100,300}` ms) to shrink the in-flight window ~4× for *any*
+candidate mechanism. Nothing consumes those magnitudes — every `took at least …` assertion in the
+suite targets Plane A/B **fixtures**, never corpus port 4503; the stubs exist to demonstrate the two
+`wait` spellings, which 400 ms does as well as 1500 ms. Both stubs also gained the `_verify`
+transcripts they were missing (status+body; latency is still not expressible in that vocabulary), so
+the corpus is now 40 transcripts across 15/15 files.
+
+The durable half is instrumentation: `rift-verify` now runs `--verbose` and `VerifyReport.failDetail`
+lifts the per-test `FAIL` lines off stderr into the gate's assertion message, so a red gate names the
+stub and the mismatch instead of reporting a count. **Upstream filing criterion**: one recurrence on
+≥ 0.15.0 *with that captured detail* → file at `achird-labs/rift`. Until then there is nothing
+actionable to send.
+
 **Corpus `_verify` backfill ([#117](https://github.com/EtaCassiopeia/rift-conformance/issues/117)).**
 `@full-corpus` proves every imposter *answers*; only a `_verify` transcript proves it answers
 *correctly*. 12 of 15 corpus files carried none, so rift-verify skipped their dynamic stubs outright

@@ -5,20 +5,30 @@
   "recordRequests": true,
   "stubs": [
     {
-      "name": "wait — fixed 1500ms delay",
+      "name": "wait — fixed 400ms delay",
       "predicates": [{ "equals": { "path": "/slow" } }],
       "responses": [{
-        "is": { "statusCode": 200, "body": { "note": "delayed 1.5s" } },
-        "_behaviors": { "wait": 1500 }
-      }]
+        "is": { "statusCode": 200, "body": { "note": "delayed 400ms" } },
+        "_behaviors": { "wait": 400 }
+      }],
+      "_verify": {
+        "sequence": [
+          { "request": { "path": "/slow" }, "expect": { "status": 200, "bodyContains": "delayed 400ms" } }
+        ]
+      }
     },
     {
-      "name": "wait — random delay between 200ms and 1200ms",
+      "name": "wait — random delay between 100ms and 300ms",
       "predicates": [{ "equals": { "path": "/slow-range" } }],
       "responses": [{
-        "is": { "statusCode": 200, "body": { "note": "delayed 200-1200ms" } },
-        "_behaviors": { "wait": { "min": 200, "max": 1200 } }
-      }]
+        "is": { "statusCode": 200, "body": { "note": "delayed 100-300ms" } },
+        "_behaviors": { "wait": { "min": 100, "max": 300 } }
+      }],
+      "_verify": {
+        "sequence": [
+          { "request": { "path": "/slow-range" }, "expect": { "status": 200, "bodyContains": "delayed 100-300ms" } }
+        ]
+      }
     },
     {
       "name": "repeat — fail 503 twice, then 200 (sequence cycles)",
