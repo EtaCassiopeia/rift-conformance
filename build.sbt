@@ -109,6 +109,10 @@ addCommandAlias("engineConformance", "testOnly samples.rift.*")
 // embedded FFI binds start-intercept/add-rules/export-truststore but not the HTTP-only ca.pem +
 // rules-list/clear routes, so those two scenarios (tagged @intercept-http) are skipped here. The
 // zio-test specs run in a second step (the zio-bdd `--exclude-tags` arg is not theirs to parse).
+// 13-error-envelope (#118) is likewise absent: its doors (strictBehaviors shellTransform, the
+// `defaultForward` 502, the over-size-body cap) were only verified against the spawned engine, and
+// this list is an allowlist — enrolling an unverified suite would make the embedded job red for a
+// reason that has nothing to do with the envelope contract it exists to pin.
 addCommandAlias(
   "engineEmbedded",
   "; testOnly samples.rift.ConsistencyGateSuite samples.rift.CoreServing02Suite " +
