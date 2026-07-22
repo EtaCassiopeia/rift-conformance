@@ -155,10 +155,27 @@ addCommandAlias(
     "samples.rift.Intercept12Suite -- --exclude-tags full-corpus-verify,intercept-caller-ca,intercept-runtime"
 )
 
-// Plane B (issue #13) harness entry points (mirror scripts/*.sh). `lintFeatures` is the dry-run
-// step-matching validation across both planes; the mock aliases drive the corpus on the backend
-// chosen by the MOCK_BACKEND env var (see samples.mock.support.Backends).
-addCommandAlias("lintFeatures", "testOnly samples.* -- --dry-run")
+// `lintFeatures` — the dry-run step-matching gate (#142): loads the feature suites and checks every
+// Gherkin step resolves to a step definition, spawning no engine. Two things make the scope narrower
+// than a bare `samples.* -- --dry-run`:
+//   • `-Drift.dryRun=true` makes RiftHarness.layer yield RiftHarnessDryRun instead of fetching an
+//     engine — zio-bdd builds a suite's `environment` layer even under --dry-run (it provides the
+//     layer, then skips step bodies), so without this the Plane A suites demand RIFT_BUILD_DIR. Set
+//     on Test/javaOptions (the forked test JVM) so bare `sbt lintFeatures` works with no wrapper.
+//   • Scoped to `samples.rift.*Suite` (the BDD suites) — the `*Spec` classes are zio-test, ignore
+//     --dry-run, and would really run (needing an engine). PLANE B IS DEFERRED: `samples.mock.*`
+//     can't be dry-run cleanly yet because a scenario carrying both `@rift` and `@mock(orders)` has
+//     its Rift-only fixture provisioned on the wiremock backend even under `--exclude-tags rift`
+//     (upstream zio-bdd tag-exclusion bug). Re-add `samples.mock.*Suite` here once that lands.
+// The `set` persists for the sbt SESSION: after `lintFeatures` an interactive session keeps
+// -Drift.dryRun=true, so a subsequent real run in the SAME session would get RiftHarnessDryRun. That
+// surfaces as a LOUD "reached under --dry-run" defect (never a false green), and CI/scripts run it in
+// a fresh `sbt -batch` so it can't leak there; interactive users chaining a real run should
+// `reload` (or start a new sbt) first.
+addCommandAlias(
+  "lintFeatures",
+  """;set Test / javaOptions += "-Drift.dryRun=true";testOnly samples.rift.*Suite -- --dry-run"""
+)
 addCommandAlias("mockSmoke", "testOnly samples.mock.* -- --include-tags smoke")
 // `rift` is excluded alongside scripting/templating/proxyrecord/intercept — matching zio-bdd-samples'
 // scripts/conformance.sh (`--exclude-tags scripting,templating,proxyrecord,rift`) plus `intercept`
