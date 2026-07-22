@@ -39,6 +39,12 @@ jobs:
       - name: Compile + format check
         run: sbt -batch "Test/compile; scalafmtCheckAll; scalafmtSbtCheck"
 
+      # Feature step-matching gate (#142): every Gherkin step resolves to a step definition. Spawns
+      # no engine (dry-run), so it belongs in this cheap job rather than the engine legs. Plane A
+      # only for now — see the `lintFeatures` comment in build.sbt for why Plane B is deferred.
+      - name: Lint features (dry-run step matching)
+        run: scripts/lint-features.sh
+
   # Plane A against the real rift engine, fetched as a published release (#38 — no Rust build
   # needed). The corpus is vendored in-repo under ./corpus (#16), so this runs on every push/PR,
   # same as compile-and-format.

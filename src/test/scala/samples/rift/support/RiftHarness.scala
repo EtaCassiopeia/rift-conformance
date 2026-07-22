@@ -139,6 +139,14 @@ object RiftHarnessConfig:
   val DefaultAdminPort = 2525
   val DefaultCorpusRoot = "corpus"
 
+  /** The `lintFeatures` step-matching gate runs suites under `--dry-run` and sets this system
+    * property so [[RiftHarness.layer]] skips the engine entirely (see [[RiftHarnessDryRun]]). Read
+    * as a property, not an env var, so bare `sbt lintFeatures` works without a wrapper script.
+    */
+  val DryRunProp = "rift.dryRun"
+  def isDryRun(prop: Option[String]): Boolean = prop.contains("true")
+  def dryRun: Boolean = isDryRun(sys.props.get(DryRunProp))
+
   /** Read config from the environment. `RIFT_BUILD_DIR` is required — it names the released build
     * produced by scripts/build-rift.sh; there is no safe default for it.
     */
@@ -327,15 +335,24 @@ object RiftHarness:
     * CURRENT when the scope closes is the one reaped, even if it was swapped/reverted long after
     * this layer was built.
     */
-  val layer: ZLayer[Any, Throwable, RiftHarness] =
-    ZLayer.scoped {
-      RiftHarnessConfig.fromEnv.flatMap { cfg =>
-        cfg.mode match
-          case RiftMode.Embedded => RiftHarnessEmbedded.acquire(cfg)
-          case RiftMode.Container => RiftHarnessContainer.acquire(cfg)
-          case RiftMode.External => acquireExternal(cfg)
+  val layer: ZLayer[Any, Throwable, RiftHarness] = layerFor(RiftHarnessConfig.dryRun)
+
+  /** The environment layer, split out from [[layer]] so the dry-run wiring is unit-testable without
+    * fighting the memoization of the `object`-level `val layer` (see `DryRunLayer142Spec`). Under a
+    * dry run it yields the engine-free [[RiftHarnessDryRun]]; otherwise it reads the env and
+    * spawns.
+    */
+  def layerFor(dryRun: Boolean): ZLayer[Any, Throwable, RiftHarness] =
+    if dryRun then RiftHarnessDryRun.layer
+    else
+      ZLayer.scoped {
+        RiftHarnessConfig.fromEnv.flatMap { cfg =>
+          cfg.mode match
+            case RiftMode.Embedded => RiftHarnessEmbedded.acquire(cfg)
+            case RiftMode.Container => RiftHarnessContainer.acquire(cfg)
+            case RiftMode.External => acquireExternal(cfg)
+        }
       }
-    }
 
   /** External mode: spawn a real `rift` child, await readiness, adopt it into a restartable ref. */
   private def acquireExternal(cfg: RiftHarnessConfig): ZIO[Scope, Throwable, RiftHarness] =
