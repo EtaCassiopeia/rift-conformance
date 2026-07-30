@@ -526,7 +526,7 @@ run green **on the same build** in the same session, with the port audit row fil
   `run-all.sh` in the corpus repo to a pointer at this repo.
 - **Phase 3 — decommission & docs.** In `rift-imposter-samples`: move
   `conformance-migration.sh` to `attic/` (Mountebank-parity de-scoped; #304/#305 remain
-  tracked as rift issues; **corpus file `20-mimeo-solo-compat.json` stays** — it is
+  tracked as rift issues; **corpus file `20-migration-compat.json` stays** — it is
   engine-served shapes and the gate still exercises it). Keep: `imposters/` (canonical
   corpus), `smoke.sh`, `start.sh`/`load.sh`/`tui.sh` (dev utilities), SETUP/README
   (rewritten to point conformance here). Rewrite `/rift-conformance`. Add Plane B
@@ -596,5 +596,5 @@ Each item names its acceptance criterion. Do them in order; stop at any red.
     ✔ everything runs from this repo's README alone; nothing depends on `rift-imposter-samples`.
 
 > Issue mapping: checklist item N = `rift-conformance` issue #N (1–16). Tracking umbrella: #17.
-> The corpus stays static/numbered and add-never-renumber throughout; `20-mimeo-solo-compat.json`
+> The corpus stays static/numbered and add-never-renumber throughout; `20-migration-compat.json`
 > ships with it (the Mountebank *shell leg* is not ported — parity de-scoped).
