@@ -40,7 +40,7 @@ Guiding principles:
 - **`@gap` scenarios assert current (possibly wrong) behavior on purpose.** A `@gap` scenario
   turning red means the pinned divergent behavior *changed* — that's the trigger for `verify #NNN`.
 - **Corpus stays static & numbered.** Add new `corpus/imposters/NN-*.json` files, never renumber;
-  `20-mimeo-solo-compat.json` stays (engine-served shapes, still gated).
+  `20-migration-compat.json` stays (engine-served shapes, still gated).
 - **One finding → one issue**, filed on `achird-labs/rift` (engine/tool findings) or `zio-bdd`
   (library findings), referencing **this repo** (`EtaCassiopeia/rift-conformance`; see
   `CONFORMANCE.md`). Confirm against real behavior with `curl` before filing — no speculative issues.
