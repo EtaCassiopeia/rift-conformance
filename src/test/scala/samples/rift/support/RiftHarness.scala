@@ -118,9 +118,12 @@ trait RiftHarness:
     * (`rift-fixtures/intercept/ca-cert.pem`) and return its admin URL — feature 09
     * `@upstream-trust` (rift#974): its proxy stubs trust an HTTPS upstream serving a leaf that CA
     * signed, where the shared engine (no flag) refuses it. External mode only; the other modes
-    * cannot spawn a second engine, so they fail and the scenario is excluded there by tag.
+    * cannot spawn a second engine, so they fail and the scenario is excluded there by tag. With
+    * `interceptPort`, the engine also runs an intercept listener there (seeded with the same test
+    * CA) — feature 12 `@intercept-ws` (#191), whose WebSocket passthrough dials a TLS origin with
+    * that process-wide outbound trust.
     */
-  def startUpstreamTrustEngine: Task[String] =
+  def startUpstreamTrustEngine(interceptPort: Option[Int] = None): Task[String] =
     ZIO.fail(new UnsupportedOperationException("the upstream-trust engine is external-mode only"))
 
   /** Reap the [[startUpstreamTrustEngine]] engine if one is running; a no-op otherwise, so it is
@@ -307,7 +310,7 @@ private final class RiftHarnessLive(
     }
 
   /** Same spawn-adopt-await discipline as [[startRuntimeInterceptEngine]]. */
-  override def startUpstreamTrustEngine: Task[String] =
+  override def startUpstreamTrustEngine(interceptPort: Option[Int]): Task[String] =
     for
       _ <- stopUpstreamTrustEngine
       ca <- ZIO
@@ -315,11 +318,18 @@ private final class RiftHarnessLive(
         .orElseFail(new IllegalStateException("test CA fixture rift-fixtures/intercept missing"))
       port <- RiftHarness.freePort
       metricsPort <- RiftHarness.freePort
-      proc <- RiftHarness.rawSpawn(cfg, port, metricsPort, None, None, upstreamCaFile = Some(ca._1))
+      proc <- RiftHarness.rawSpawn(
+        cfg,
+        port,
+        metricsPort,
+        None,
+        interceptPort,
+        upstreamCaFile = Some(ca._1)
+      )
       url = s"http://localhost:$port"
       _ <- upstreamTrustRef.set(Some(proc))
-      _ <- RiftHarness
-        .awaitReady(s"$url/imposters", proc)
+      _ <- (RiftHarness.awaitReady(s"$url/imposters", proc) *>
+        ZIO.foreachDiscard(interceptPort)(RiftHarness.awaitTcpReady("localhost", _, proc)))
         .onError(_ => RiftHarness.killProcess(proc).ignore)
     yield url
 

@@ -7,7 +7,9 @@ import samples.rift.support.{
   RawResponse,
   RiftConformanceSupport,
   RiftHarness,
-  RiftState
+  RiftState,
+  TestPorts,
+  WsEchoOrigin
 }
 import zio.*
 import zio.json.*
@@ -48,6 +50,10 @@ object Intercept12Suite
   private val openTunnels: Ref[List[RawHttpConnection]] =
     Unsafe.unsafe(u => Ref.unsafe.make(List.empty[RawHttpConnection])(using u))
 
+  /** WebSocket echo origins started by @intercept-ws steps, closed after every scenario. */
+  private val wsOrigins: Ref[List[WsEchoOrigin]] =
+    Unsafe.unsafe(u => Ref.unsafe.make(List.empty[WsEchoOrigin])(using u))
+
   // Rules are host-scoped and accumulate on the shared listener. For external/container this HTTP
   // DELETE actually clears them after each scenario (keeping the list/clear count assertions honest).
   // Embedded has NO clear capability — the FFI binds start/add-rules/export-truststore but not
@@ -56,8 +62,10 @@ object Intercept12Suite
   // scenario here uses a UNIQUE host, so accumulated rules never shadow each other — a required
   // convention for any embedded-capable scenario added later (there is no per-scenario reset there).
   afterScenario {
-    // Close any raw tunnel an @intercept-raw scenario left open (a no-op otherwise).
+    // Close any raw tunnel an @intercept-raw scenario left open (a no-op otherwise), and any
+    // @intercept-ws echo origin.
     openTunnels.getAndSet(Nil).flatMap(cs => ZIO.foreachDiscard(cs)(c => ZIO.succeed(c.close()))) *>
+      wsOrigins.getAndSet(Nil).flatMap(os => ZIO.foreachDiscard(os)(o => ZIO.succeed(o.close()))) *>
       ZIO
         .serviceWithZIO[RiftHarness](h =>
           // Clear accumulated rules on the shared listener AND reap the @intercept-runtime sidecar
@@ -66,7 +74,9 @@ object Intercept12Suite
           // block the sidecar reap that follows.
           deleteRules(h.adminUrl)
             .tapError(e => ZIO.logWarning(s"intercept rules cleanup failed: ${e.getMessage}"))
-            .ignore *> h.stopRuntimeInterceptEngine.ensuring(h.stopInterceptAuthEngine.ignoreLogged)
+            .ignore *> h.stopRuntimeInterceptEngine
+            .ensuring(h.stopInterceptAuthEngine.ignoreLogged)
+            .ensuring(h.stopUpstreamTrustEngine.ignoreLogged)
         )
         .tapError(e => ZIO.logWarning(s"intercept sidecar cleanup failed: ${e.getMessage}"))
         .ignore
@@ -343,6 +353,10 @@ object Intercept12Suite
 
   /** The `serve.body` of the listed intercept rule for `host`, from `GET /intercept/rules`. */
   private def listedServeBody(adminUrl: String, host: String): IO[Throwable, Option[Json]] =
+    listedServe(adminUrl, host).map(_.flatMap(_.get(JsonCursor.field("body")).toOption))
+
+  /** The `action.serve` object of the listed intercept rule for `host`. */
+  private def listedServe(adminUrl: String, host: String): IO[Throwable, Option[Json]] =
     ZIO.attemptBlocking {
       val req = HttpRequest.newBuilder(URI.create(s"$adminUrl/intercept/rules")).GET().build()
       val resp = http.send(req, HttpResponse.BodyHandlers.ofString())
@@ -354,9 +368,7 @@ object Intercept12Suite
           json.asArray.toList.flatten
             .find(_.get(JsonCursor.field("host")).toOption.contains(Json.Str(host)))
             .flatMap(
-              _.get(
-                JsonCursor.field("action").isObject.field("serve").isObject.field("body")
-              ).toOption
+              _.get(JsonCursor.field("action").isObject.field("serve")).toOption
             )
     }
 
@@ -918,4 +930,318 @@ object Intercept12Suite
       _ <- openTunnels.update(conn :: _)
       _ <- rawRead(conn, RawHttpConnection.request("GET", host, path), host)
     yield ()
+  }
+
+  // ── #191: remaining tunnel behaviour on the shared listener ──
+
+  private def widenedRule(
+      host: String,
+      status: String,
+      multi: String,
+      a: String,
+      b: String,
+      scalar: String,
+      n: Int
+  ) =
+    Json
+      .Obj(
+        "host" -> Json.Str(host),
+        "action" -> Json.Obj(
+          "serve" -> Json.Obj(
+            "statusCode" -> Json.Str(status),
+            "headers" -> Json.Obj(
+              multi -> Json.Arr(Json.Str(a), Json.Str(b)),
+              scalar -> Json.Num(n)
+            ),
+            "body" -> Json.Str("widened")
+          )
+        )
+      )
+      .toJson
+
+  Given(
+    "an intercept rule for host " / string / " serves status " / string / " with " / string / " as " / string / " and " / string / " and " / string / " as the number " / int
+  ) { (host: String, status: String, multi: String, a: String, b: String, scalar: String, n: Int) =>
+    ZIO.serviceWithZIO[RiftHarness](
+      _.interceptAddRule(widenedRule(host, status, multi, a, b, scalar, n))
+    )
+  }
+
+  Then("the raw response carries " / string / " lines " / string / " then " / string) {
+    (name: String, first: String, second: String) =>
+      lastRawResponse.flatMap { r =>
+        val lines = r.headers.collect { case (`name`, v) => v }
+        assertRepro(
+          lines == List(first, second),
+          s"expected two $name lines [$first, $second] in order, got $lines"
+        )
+      }
+  }
+
+  Then(
+    "the intercept rule for host " / string / " lists statusCode " / int / " as a number and header " / string / " as the string " / string
+  ) { (host: String, status: Int, header: String, value: String) =>
+    ZIO.serviceWithZIO[RiftHarness](h =>
+      listedServe(h.adminUrl, host).flatMap { serve =>
+        val listedStatus = serve.flatMap(_.get(JsonCursor.field("statusCode")).toOption)
+        val listedHeader = serve.flatMap(
+          _.get(JsonCursor.field("headers").isObject.field(header)).toOption
+        )
+        assertRepro(
+          listedStatus.contains(Json.Num(status)) && listedHeader.contains(Json.Str(value)),
+          s"expected $host listed with statusCode $status (number) and $header \"$value\" " +
+            s"(string), got statusCode=$listedStatus $header=$listedHeader"
+        )
+      }
+    )
+  }
+
+  Given("an intercept rule for host " / string / " serves 200 with no body") { (host: String) =>
+    ZIO.serviceWithZIO[RiftHarness](
+      _.interceptAddRule(
+        Json
+          .Obj(
+            "host" -> Json.Str(host),
+            "action" -> Json.Obj("serve" -> Json.Obj("statusCode" -> Json.Num(200)))
+          )
+          .toJson
+      )
+    )
+  }
+
+  Then("the raw response has content-length 0 and an empty body") {
+    lastRawResponse.flatMap { r =>
+      val declared = r.headers.collect { case ("content-length", v) => v }
+      assertRepro(
+        declared == List("0") && r.body.isEmpty,
+        s"expected content-length [0] and an empty body, got $declared and ${r.body.length} bytes"
+      )
+    }
+  }
+
+  When(
+    "a raw HTTPS GET to " / string / " " / string / " with SNI and Host " / string / " through the intercept tunnel"
+  ) { (connectHost: String, path: String, name: String) =>
+    for
+      listener <- interceptListener
+      bytes <- ZIO.serviceWithZIO[RiftHarness](_.interceptTruststore(TrustPassword))
+      ssl <- sslFromTruststore(bytes)
+      conn <- ZIO.attemptBlocking(
+        RawHttpConnection.tunnel(listener._1, listener._2, connectHost, ssl, sni = Some(name))
+      )
+      _ <- openTunnels.update(conn :: _)
+      _ <- rawRead(conn, RawHttpConnection.request("GET", name, path), connectHost)
+    yield ()
+  }
+
+  When(
+    "a raw HTTPS POST with the chunk-size line " / string / " to " / string / " " / string / " through the intercept tunnel"
+  ) { (sizeLine: String, host: String, path: String) =>
+    val request =
+      s"POST $path HTTP/1.1\r\nHost: $host\r\nTransfer-Encoding: chunked\r\n\r\n" +
+        s"$sizeLine\r\nhello\r\n0\r\n\r\n"
+    rawExchange(host, request.getBytes(java.nio.charset.StandardCharsets.ISO_8859_1))
+  }
+
+  Given("an intercept rule forwards host " / string / " to a closed port") { (host: String) =>
+    // A port nothing listens on: TestPorts hands out ports it found free.
+    TestPorts.next.flatMap(port =>
+      ZIO.serviceWithZIO[RiftHarness](
+        _.interceptAddRule(s"""{"host":"${jsonEscape(
+            host
+          )}","action":{"forward":{"port":$port}}}""")
+      )
+    )
+  }
+
+  Then(
+    "the intercept JKS truststore with password " / string / " echoes the password and holds the intercept CA"
+  ) { (password: String) =>
+    ZIO.serviceWithZIO[RiftHarness] { h =>
+      for
+        jks <- ZIO.attemptBlocking {
+          val req = HttpRequest
+            .newBuilder(URI.create(s"${h.adminUrl}/intercept/truststore.jks?password=$password"))
+            .GET()
+            .build()
+          http.send(req, HttpResponse.BodyHandlers.ofByteArray())
+        }
+        caPem <- adminSend(h.adminUrl, "GET", "/intercept/ca.pem")
+        holdsCa <- ZIO.attemptBlocking {
+          val ca = java.security.cert.CertificateFactory
+            .getInstance("X.509")
+            .generateCertificate(new java.io.ByteArrayInputStream(caPem.body.getBytes("UTF-8")))
+          val ks = java.security.KeyStore.getInstance("JKS")
+          ks.load(new java.io.ByteArrayInputStream(jks.body), password.toCharArray)
+          ks.getCertificateAlias(ca) != null
+        }
+        echoed = jks.headers.firstValue("x-truststore-password").orElse("")
+        // The JDK's "JKS" loader also accepts PKCS#12, so check the JKS magic number too.
+        magic = jks.body.take(4).map(b => f"${b & 0xff}%02X").mkString
+        _ <- assertRepro(
+          jks.statusCode == 200 && echoed == password && holdsCa && magic == "FEEDFEED",
+          s"truststore.jks -> ${jks.statusCode}, x-truststore-password='$echoed', holds CA=$holdsCa, " +
+            s"magic=$magic (JKS is FEEDFEED)"
+        )
+      yield ()
+    }
+  }
+
+  Then("the intercept CA PEM is served as " / string) { (contentType: String) =>
+    ZIO.serviceWithZIO[RiftHarness](h =>
+      adminSend(h.adminUrl, "GET", "/intercept/ca.pem").flatMap { r =>
+        val got = r.headers.getOrElse("content-type", Nil)
+        assertRepro(
+          r.status == 200 && got == List(contentType),
+          s"GET /intercept/ca.pem -> ${r.status}, content-type $got"
+        )
+      }
+    )
+  }
+
+  // ── @intercept-ws: WebSocket passthrough (rift#997) ──
+
+  /** The scenario's TLS echo origin, and the engine whose intercept listener relays to it. */
+  private final case class WsOrigin(origin: WsEchoOrigin)
+  private final case class WsEngine(adminUrl: String, interceptPort: Int)
+
+  Given("a TLS WebSocket echo origin on localhost") {
+    for
+      origin <- ZIO.attemptBlocking(
+        WsEchoOrigin.start(
+          fixture("/rift-fixtures/tls/server-cert.pem"),
+          fixture("/rift-fixtures/tls/server-key.pem")
+        )
+      )
+      _ <- wsOrigins.update(origin :: _)
+      _ <- Stage.put(WsOrigin(origin))
+    yield ()
+  }
+
+  Given("an intercept engine that trusts the test CA upstream") {
+    for
+      interceptPort <- TestPorts.next
+      admin <- ZIO.serviceWithZIO[RiftHarness](_.startUpstreamTrustEngine(Some(interceptPort)))
+      _ <- Stage.put(WsEngine(admin, interceptPort))
+    yield ()
+  }
+
+  private def wsEngine: IO[Throwable, WsEngine] =
+    Stage
+      .get[WsEngine]
+      .mapError(e => new IllegalStateException(s"no intercept engine for the origin ($e)"))
+
+  private def wsOrigin: IO[Throwable, WsEchoOrigin] =
+    Stage
+      .get[WsOrigin]
+      .map(_.origin)
+      .mapError(e => new IllegalStateException(s"no WebSocket echo origin ($e)"))
+
+  Given("an intercept rule on that engine serves " / string / " for host " / string) {
+    (body: String, host: String) =>
+      for
+        engine <- wsEngine
+        r <- adminSend(
+          engine.adminUrl,
+          "POST",
+          "/intercept/rules",
+          Some(serveRule(host, body).toJson)
+        )
+        _ <- assertRepro(r.status == 201, s"POST /intercept/rules -> ${r.status}: ${r.body}")
+      yield ()
+  }
+
+  When("a WebSocket upgrade to the echo origin is sent through that engine's intercept listener") {
+    for
+      engine <- wsEngine
+      origin <- wsOrigin
+      ssl <- ZIO.attemptBlocking(RawHttpConnection.sslTrustingPem(TestCaCert))
+      conn <- ZIO.attemptBlocking(
+        RawHttpConnection.tunnel(
+          "localhost",
+          engine.interceptPort,
+          "localhost",
+          ssl,
+          targetPort = origin.port
+        )
+      )
+      _ <- openTunnels.update(conn :: _)
+      _ <- Stage.put(RawTunnel("localhost", conn))
+      request = RawHttpConnection.request(
+        "GET",
+        s"localhost:${origin.port}",
+        "/echo",
+        headers = List(
+          "Upgrade" -> "websocket",
+          "Connection" -> "Upgrade",
+          "Sec-WebSocket-Key" -> "dGhlIHNhbXBsZSBub25jZQ==",
+          "Sec-WebSocket-Version" -> "13"
+        )
+      )
+      read <- ZIO.attemptBlocking(conn.upgrade(request))
+      _ <- read match
+        case RawRead.Response(r) => Stage.put(r.toLastResponse) *> Stage.put(r)
+        case RawRead.Closed =>
+          ZIO.fail(
+            new RuntimeException(
+              "the intercept tunnel closed without answering the upgrade " +
+                s"(origin error: ${origin.lastError.getOrElse("none")})"
+            )
+          )
+    yield ()
+  }
+
+  // A blind TCP tunnel would reach the origin too, and the client trusts the CA that signed the
+  // origin's leaf. Only a leaf that is not the origin's shows rift terminated TLS and relayed.
+  Then("the tunnel's TLS certificate was minted by the intercept listener, not the origin's") {
+    for
+      conn <- openTunnelTo("localhost")
+      origin <- ZIO.attemptBlocking(
+        java.security.cert.CertificateFactory
+          .getInstance("X.509")
+          .generateCertificate(
+            new java.io.ByteArrayInputStream(
+              fixture("/rift-fixtures/tls/server-cert.pem").getBytes("UTF-8")
+            )
+          )
+      )
+      peer = conn.peerCertificate
+      _ <- assertRepro(
+        peer.isDefined && !peer.contains(origin),
+        s"expected an intercept-minted leaf on the tunnel, got ${peer.map(_.toString.take(200))}"
+      )
+    yield ()
+  }
+
+  Then("a text frame " / string / " is echoed back as " / string) {
+    (sent: String, expected: String) =>
+      for
+        conn <- openTunnelTo("localhost")
+        origin <- wsOrigin
+        frame <- ZIO
+          .attemptBlocking {
+            conn.upgradedOut.write(WsEchoOrigin.clientTextFrame(sent))
+            conn.upgradedOut.flush()
+            WsEchoOrigin.readFrame(conn.upgradedIn)
+          }
+          .mapError(e =>
+            new RuntimeException(
+              s"no echo frame (${e.getMessage}; origin error: ${origin.lastError.getOrElse("none")})",
+              e
+            )
+          )
+        (opcode, payload) = frame
+        text = new String(payload, java.nio.charset.StandardCharsets.UTF_8)
+        _ <- assertRepro(
+          opcode == 1 && text == expected,
+          s"expected a text frame '$expected' back, got opcode $opcode '$text'"
+        )
+      yield ()
+  }
+
+  // The fall-through body is one text line: the message plus a trailing newline.
+  Then("the response body is the line " / string) { (line: String) =>
+    lastRawResponse.flatMap(r =>
+      assertRepro(r.bodyText == line + "\n", s"expected body '$line\\n', got '${r.bodyText}'")
+    )
   }

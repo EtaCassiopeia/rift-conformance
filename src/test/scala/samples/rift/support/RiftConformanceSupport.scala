@@ -1110,7 +1110,7 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
   When("a proxy imposter to the HTTPS upstream is created on an engine trusting the test CA") {
     for
       raw <- proxyToUpstreamJson
-      admin <- ZIO.serviceWithZIO[RiftHarness](_.startUpstreamTrustEngine)
+      admin <- ZIO.serviceWithZIO[RiftHarness](_.startUpstreamTrustEngine())
       port <- postAtFreshPort(admin, raw, "proxy to the HTTPS upstream (upstream-trust engine)")
       _ <- Stage.put(CurrentPort(port))
     yield ()

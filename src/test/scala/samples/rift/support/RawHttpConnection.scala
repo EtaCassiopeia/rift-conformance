@@ -89,6 +89,31 @@ final class RawHttpConnection private (socket: Socket):
         answered += 1
         RawRead.Response(RawResponse(status, headers, body))
 
+  /** Write an `Upgrade` request and read its answer. A `101` is returned with no body, and the
+    * connection then carries the upgraded protocol over [[upgradedIn]]/[[upgradedOut]]; any other
+    * status is read in full, like [[exchange]].
+    */
+  def upgrade(request: Array[Byte]): RawRead =
+    out.write(request)
+    out.flush()
+    RawHttpConnection.readHead(in) match
+      case None => RawRead.Closed
+      case Some((status, headers)) =>
+        val body =
+          if status == 101 then Array.emptyByteArray
+          else RawHttpConnection.readBody(in, status, headers)
+        answered += 1
+        RawRead.Response(RawResponse(status, headers, body))
+
+  /** The certificate the TLS peer presented, or `None` on a plaintext connection. */
+  def peerCertificate: Option[java.security.cert.Certificate] =
+    socket match
+      case tls: SSLSocket => tls.getSession.getPeerCertificates.headOption
+      case _ => None
+
+  def upgradedIn: java.io.InputStream = in
+  def upgradedOut: java.io.OutputStream = out
+
   def close(): Unit = socket.close()
 
 object RawHttpConnection:
@@ -123,9 +148,13 @@ object RawHttpConnection:
     ctx.init(null, tmf.getTrustManagers, new SecureRandom())
     ctx
 
-  /** `CONNECT target:443`, with any extra header lines (e.g. `Proxy-Authorization`). */
-  def connectRequest(target: String, headers: List[(String, String)] = Nil): Array[Byte] =
-    val lines = s"CONNECT $target:443 HTTP/1.1" :: s"Host: $target:443" ::
+  /** `CONNECT target:port`, with any extra header lines (e.g. `Proxy-Authorization`). */
+  def connectRequest(
+      target: String,
+      headers: List[(String, String)] = Nil,
+      port: Int = 443
+  ): Array[Byte] =
+    val lines = s"CONNECT $target:$port HTTP/1.1" :: s"Host: $target:$port" ::
       headers.map((k, v) => s"$k: $v")
     (lines.mkString("\r\n") + "\r\n\r\n").getBytes(ISO_8859_1)
 
@@ -133,31 +162,40 @@ object RawHttpConnection:
   def plain(host: String, port: Int): RawHttpConnection =
     new RawHttpConnection(connect(host, port))
 
-  /** `CONNECT target:443` through the proxy at `proxyHost:proxyPort`, then a TLS handshake over the
-    * tunnel for `target` (SNI + hostname verification) with `ssl`, offering only `http/1.1` in
-    * ALPN. `connectHeaders` ride on the `CONNECT` itself. Fails unless the proxy answers the
-    * `CONNECT` with `200`.
+  /** `CONNECT target:targetPort` through the proxy at `proxyHost:proxyPort`, then a TLS handshake
+    * over the tunnel for `sni` (SNI + hostname verification; `target` unless given) with `ssl`,
+    * offering only `http/1.1` in ALPN. `connectHeaders` ride on the `CONNECT` itself. Fails unless
+    * the proxy answers the `CONNECT` with `200`.
     */
   def tunnel(
       proxyHost: String,
       proxyPort: Int,
       target: String,
       ssl: SSLContext,
-      connectHeaders: List[(String, String)] = Nil
+      connectHeaders: List[(String, String)] = Nil,
+      targetPort: Int = 443,
+      sni: Option[String] = None
   ): RawHttpConnection =
     val raw = connect(proxyHost, proxyPort)
     try
-      raw.getOutputStream.write(connectRequest(target, connectHeaders))
+      raw.getOutputStream.write(connectRequest(target, connectHeaders, targetPort))
       raw.getOutputStream.flush()
       // Read the CONNECT reply unbuffered: nothing after its blank line may be consumed here, as
       // those bytes belong to the TLS handshake.
       readHead(raw.getInputStream) match
         case Some((200, _)) => ()
-        case other => throw new IllegalStateException(s"CONNECT $target:443 -> $other, not 200")
-      val tls = ssl.getSocketFactory.createSocket(raw, target, 443, true).asInstanceOf[SSLSocket]
+        case other =>
+          throw new IllegalStateException(s"CONNECT $target:$targetPort -> $other, not 200")
+      val serverName = sni.getOrElse(target)
+      val tls = ssl.getSocketFactory
+        .createSocket(raw, serverName, targetPort, true)
+        .asInstanceOf[SSLSocket]
       val params = tls.getSSLParameters
       params.setEndpointIdentificationAlgorithm("HTTPS")
       params.setApplicationProtocols(Array("http/1.1"))
+      // The JDK sends no SNI for a dotless name such as `localhost`, and the intercept listener
+      // refuses a handshake without one, so name the server explicitly.
+      params.setServerNames(java.util.List.of(new javax.net.ssl.SNIHostName(serverName)))
       tls.setSSLParameters(params)
       tls.startHandshake()
       new RawHttpConnection(tls)

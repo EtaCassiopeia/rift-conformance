@@ -274,3 +274,83 @@ Feature: Intercept / TLS-MITM forward-proxy (rift#413) — CONNECT interception 
   Scenario: GET /intercept/rules lists an object body as an object, not its rendering (rift#933)
     Given an intercept rule for host "object-list.example.com" path "/flags" serves the object body with "featureX" set to "ON"
     Then the intercept rule for host "object-list.example.com" lists its serve body as a JSON object with "featureX" set to "ON"
+
+  # #191: the remaining tunnel behaviour from rift's docs/features/intercept-proxy.md, on the shared
+  # listener. Every host is unique to its scenario, since embedded rules persist for the engine's life.
+  @intercept-raw
+  Scenario: an unmatched request through the tunnel falls through to rift's default 200
+    When a raw HTTPS GET to "unmatched-fallthrough.test" "/x" through the intercept tunnel
+    Then the response status is 200
+    And the response header "content-type" is "text/plain"
+    And the response body is the line "rift intercepted GET /x for unmatched-fallthrough.test"
+
+  # rift 0.18.0 (rift#936) widened `serve`: a numeric-string status, an array header value sent as
+  # one wire line per value, and non-string scalar header values coerced to strings.
+  @intercept-raw
+  Scenario: a serve rule takes a numeric-string status, an array header and a number header (rift#936)
+    Given an intercept rule for host "widened.example.com" serves status "418" with "set-cookie" as "a=1" and "b=2" and "x-n" as the number 7
+    When a raw HTTPS GET to "widened.example.com" "/" through the intercept tunnel
+    Then the response status is 418
+    And the raw response carries "set-cookie" lines "a=1" then "b=2"
+    And the response header "x-n" is "7"
+
+  @intercept-http
+  Scenario: GET /intercept/rules lists the widened status as a number and a scalar header as a string (rift#936)
+    Given an intercept rule for host "widened-list.example.com" serves status "418" with "set-cookie" as "a=1" and "b=2" and "x-n" as the number 7
+    Then the intercept rule for host "widened-list.example.com" lists statusCode 418 as a number and header "x-n" as the string "7"
+
+  @intercept-raw
+  Scenario: a serve rule with no body answers an empty body with content-length 0 (rift#936)
+    Given an intercept rule for host "no-body.example.com" serves 200 with no body
+    When a raw HTTPS GET to "no-body.example.com" "/" through the intercept tunnel
+    Then the response status is 200
+    And the raw response has content-length 0 and an empty body
+
+  # Rules match the CONNECT host, not the SNI name or the decrypted Host header.
+  @intercept-raw
+  Scenario: an intercept rule matches the CONNECT host, not the SNI or Host name
+    Given an intercept rule serves 200 "connect-host" for host "connect-a.example.com" path "/"
+    And an intercept rule serves 200 "sni-host" for host "connect-b.example.com" path "/"
+    When a raw HTTPS GET to "connect-a.example.com" "/" with SNI and Host "connect-b.example.com" through the intercept tunnel
+    Then the response status is 200
+    And the response body is "connect-host"
+
+  @intercept-raw
+  Scenario: a tunnelled request with broken chunked framing is refused 400
+    Given an intercept rule serves 200 "never" for host "bad-chunk.example.com" path "/upload"
+    When a raw HTTPS POST with the chunk-size line "zz" to "bad-chunk.example.com" "/upload" through the intercept tunnel
+    Then the response status is 400
+
+  @intercept-raw
+  Scenario: a forward rule to an unreachable port answers 502 on the tunnel
+    Given an intercept rule forwards host "dead-end.example.com" to a closed port
+    When a raw HTTPS GET to "dead-end.example.com" "/" through the intercept tunnel
+    Then the response status is 502
+
+  @intercept-http
+  Scenario: the intercept truststore is exported as JKS, and ca.pem as application/x-pem-file
+    Then the intercept JKS truststore with password "s3cret" echoes the password and holds the intercept CA
+    And the intercept CA PEM is served as "application/x-pem-file"
+
+  # @intercept-ws: WebSocket passthrough (rift 0.18.0, rift#997). An unmatched `Upgrade: websocket`
+  # handshake is relayed to the real origin and pumped both ways, dialling the origin with the
+  # process-wide outbound trust (`--upstream-ca-file`). The origin is an in-harness TLS echo server
+  # whose leaf the test CA signed, so this needs an engine started with both `--intercept-port` and
+  # `--upstream-ca-file`: external-only, excluded from the embedded and container aliases.
+  @intercept-ws
+  Scenario: an unmatched WebSocket upgrade is relayed to the origin and pumped both ways (rift#997)
+    Given a TLS WebSocket echo origin on localhost
+    And an intercept engine that trusts the test CA upstream
+    When a WebSocket upgrade to the echo origin is sent through that engine's intercept listener
+    Then the response status is 101
+    And the tunnel's TLS certificate was minted by the intercept listener, not the origin's
+    And a text frame "ping" is echoed back as "ping"
+
+  @intercept-ws
+  Scenario: a serve rule for the origin host answers the upgrade itself (rift#997)
+    Given a TLS WebSocket echo origin on localhost
+    And an intercept engine that trusts the test CA upstream
+    And an intercept rule on that engine serves "rule-wins" for host "localhost"
+    When a WebSocket upgrade to the echo origin is sent through that engine's intercept listener
+    Then the response status is 200
+    And the response body is "rule-wins"
