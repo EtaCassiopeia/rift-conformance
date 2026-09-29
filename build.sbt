@@ -145,6 +145,8 @@ addCommandAlias("engineConformance", "testOnly samples.rift.*")
 // 18-match-diagnostics (#193) runs here too: it needs only the admin HTTP and the data plane.
 // 21-admin-rest (#200) runs here too, minus `@admin-isolated`: its DELETE /imposters scenarios need a
 // second, raw-spawned engine (the recipe `upstream-trust` uses), which only external mode can start.
+// 20-tls-and-http2 (#197) runs here minus `@tls-flags`, whose scenarios start an engine with TLS CLI
+// flags or env vars; the container alias excludes the tag too, in case 20 is ever enrolled there.
 addCommandAlias(
   "engineEmbedded",
   "; testOnly samples.rift.ConsistencyGateSuite samples.rift.CoreServing02Suite " +
@@ -152,9 +154,9 @@ addCommandAlias(
     "samples.rift.Templating05Suite samples.rift.Behaviors06Suite samples.rift.SpacesFsm07Suite " +
     "samples.rift.AdminSurface08Suite samples.rift.Reload11Suite samples.rift.Intercept12Suite " +
     "samples.rift.BehaviorsResponseTypes14Suite samples.rift.MatchDiagnostics18Suite " +
-    "samples.rift.AdminRest21Suite " +
+    "samples.rift.TlsTermination20Suite samples.rift.AdminRest21Suite " +
     "-- --exclude-tags intercept-http,intercept-caller-ca,intercept-runtime,intercept-auth,intercept-ws,front-door,upstream-trust," +
-    "admin-isolated" +
+    "admin-isolated,tls-flags" +
     " ; testOnly samples.rift.RiftEmbeddedHarnessSpec samples.rift.RiftToolsParseSpec" +
     " samples.rift.FfiAdminParity75Spec samples.rift.FfiStubWarnings92Spec" +
     " samples.rift.FfiVerifyParity94Spec samples.rift.FfiLongTail205Spec" +
@@ -182,7 +184,7 @@ addCommandAlias(
   "engineContainer",
   "; testOnly samples.rift.RiftContainerHarnessSpec samples.rift.RiftToolsParseSpec" +
     " ; testOnly samples.rift.ConsistencyGateSuite samples.rift.FaultsTransport03Suite " +
-    "samples.rift.Intercept12Suite -- --exclude-tags full-corpus-verify,intercept-caller-ca,intercept-runtime,intercept-auth,intercept-ws,upstream-trust"
+    "samples.rift.Intercept12Suite -- --exclude-tags full-corpus-verify,intercept-caller-ca,intercept-runtime,intercept-auth,intercept-ws,upstream-trust,tls-flags"
 )
 
 // `lintFeatures` — the dry-run step-matching gate (#142): loads the feature suites and checks every

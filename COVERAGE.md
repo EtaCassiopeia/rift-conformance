@@ -270,8 +270,31 @@ intercept test CA.
 
 The `@upstream-trust` scenario runs on a dedicated engine spawned with `--upstream-ca-file`
 (`RiftHarness.startUpstreamTrustEngine`, reaped in `afterScenario`), following the `@intercept-runtime`
-sidecar pattern. `--upstream-tls-skip-verify` is not covered. On rift 0.17.0 the three mTLS
-scenarios fail: every client gets HTTP 200.
+sidecar pattern. `--upstream-tls-skip-verify` is covered by feature 20 (#197, below). On rift 0.17.0
+the three mTLS scenarios fail: every client gets HTTP 200.
+
+### `20-tls-and-http2.feature` ← rift docs/features/tls.md (#197, rift#977/#1029)
+
+Suite `TlsTermination20Suite`. Its HTTPS clients trust only the test CA, so a completed handshake
+proves the fixture chain was served. Untagged rows run on the shared engine, external + embedded;
+`@tls-flags` rows each start a dedicated engine (`RiftHarness.startTlsFlagEngine`, external only).
+
+| Engine contract | Asserted |
+|---|---|
+| inline `cert`+`key`, PKCS#8 and PKCS#1 (`server-leaf.key` / `server-leaf-rsa.key`) | 200, peer subject `CN=rift-conformance-test-server-leaf` (Outline) |
+| an inline chain is served leaf first | 2 peer certificates, the chain leaf first |
+| bad TLS config → `400 bad data` `TLS configuration error:` | key/cert mismatch (`cert/key mismatch?`), cert without key (`must provide both`), and the mTLS combos: `rejectUnauthorized`/`ca` without `mutualAuth`, `ca` without `rejectUnauthorized`, `rejectUnauthorized` without `ca`, `ca: []`, a `ca` with no certificate, `mutualAuth: true` on http — each row pins its own message. `mutualAuth: false` on http → 201 |
+| a client cert whose EKU lacks `clientAuth` is refused | `client-serverauth-only` fails the handshake against `tls/mutual-auth-ca` |
+| rift#1029 ALPN: `h2` unless a TCP fault or `_rift.script` is on the imposter | JDK `HTTP_2` client → `HTTP_2`; same with a `_rift.fault.tcp` stub or a `_rift.script` stub → `HTTP_1_1` |
+| h2c prior knowledge on a plain-HTTP imposter | a hand-framed HTTP/2 GET → `:status` 200 and the body over HTTP/2 |
+| `--default-tls-cert`/`--default-tls-key` (`@tls-flags`) | an HTTPS imposter with no cert serves the fixture leaf |
+| `--no-self-signed-tls` (`@tls-flags`) | an HTTPS imposter with no cert → 400 `self-signed generation is disabled` |
+| a missing `--default-tls-cert` file stops startup (`@tls-flags`) | the engine exits with code 1 before its admin API answers |
+| `RIFT_DISABLE_HTTP2=1` (`@tls-flags`) | an HTTPS imposter negotiates `HTTP_1_1` |
+| `--upstream-tls-skip-verify` (`@tls-flags`) | the shared engine's proxy to the test-CA upstream gets 502 + `x-rift-proxy-error`; the flag engine's gets 200 |
+
+Out of scope, per the issue: TLS session resumption, `SSL_CERT_FILE`/`SSL_CERT_DIR`, and the proxy
+`key/cert/passphrase/ciphers` no-op. The "only TLS 1.2 and 1.3 are offered" claim is not asserted.
 
 ### `10-proxy-record.feature` ← conformance proxy + ext proxy — DONE (closes #9)
 
