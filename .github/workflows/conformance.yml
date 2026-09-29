@@ -86,6 +86,49 @@ jobs:
           # Explicit for clarity even though this now matches RiftHarnessConfig.DefaultCorpusRoot.
           RIFT_CORPUS_ROOT: ${{ github.workspace }}/corpus
 
+  # Plane B (#143): the samples.mock.* MockControl corpus, which no job ran before — so a red
+  # `mockConformance` sat on main unnoticed. No Docker, JDK 21. The embedded Plane B leg runs in
+  # plane-a-embedded (it needs JDK 22+); the container leg's runner is still a stub.
+  plane-b:
+    name: Plane B — MockControl corpus (wiremock + rift-external)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up sbt
+        uses: sbt/setup-sbt@v1
+
+      # In-process WireMock: no engine involved, so a candidate-version run would only repeat the
+      # pinned result — skip it there.
+      - name: Run Plane B corpus (MOCK_BACKEND=wiremock)
+        if: ${{ !inputs.rift_version }}
+        run: scripts/conformance-mock.sh
+
+      - name: Install rift runtime deps (LuaJIT)
+        run: sudo apt-get update && sudo apt-get install -y libluajit-5.1-2
+
+      - name: Fetch released rift
+        run: |
+          out="$(scripts/build-rift.sh)" || { echo "build-rift.sh failed"; exit 1; }
+          eval "$out"
+          echo "RIFT_BUILD_DIR=$RIFT_BUILD_DIR" >> "$GITHUB_ENV"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RIFT_VERSION: ${{ inputs.rift_version }}
+
+      # The MockControl adapter over the same released engine Plane A spawns, so it follows
+      # RIFT_VERSION and is meaningful on a candidate run too.
+      - name: Run Plane B corpus (MOCK_BACKEND=rift-external)
+        run: scripts/conformance-rift-external.sh
+        env:
+          RIFT_CORPUS_ROOT: ${{ github.workspace }}/corpus
+
   # Same Plane A oracle, run IN-PROCESS over Panama FFM (#18): zero process spawn, no Docker. Needs a
   # JDK 22+ runtime (rift-java-embedded is Java-22 bytecode), so this job runs on JDK 25 while the
   # external job stays on 21. The engine is the librift_ffi native from rift-java-natives (pinned by

@@ -129,9 +129,9 @@ jobs:
 
           [Full run]($RUN_URL)
 
-          Scope of this verdict: it covers the **external** Plane A leg (plus compile/format). The
-          **container** leg (pins a published image tag) and the **embedded** leg (runs the
-          bundled \`librift_ffi\` native shipped by zio-bdd) are both skipped for candidate runs — \`RIFT_VERSION\`
+          Scope of this verdict: it covers the **external** Plane A leg and the **rift-external**
+          Plane B leg (plus compile/format). The **container** leg (pins a published image tag) and
+          the **embedded** leg (runs the \`librift_ffi\` from rift-java-natives) are both skipped for candidate runs — \`RIFT_VERSION\`
           does not move either engine, so including them would report a green that says nothing
           about the candidate.
 

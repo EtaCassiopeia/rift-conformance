@@ -135,6 +135,8 @@ and on manual `workflow_dispatch`:
 - **plane-a-engine** — fetches the released rift via `scripts/build-rift.sh`, then
   `sbt engineConformance` with `RIFT_MODE=external` and `RIFT_CORPUS_ROOT` pointed at the
   in-repo `./corpus`.
+- **plane-b** — the Plane B MockControl corpus on JDK 21, no Docker: `MOCK_BACKEND=wiremock`
+  (`sbt mockConformance`), then `MOCK_BACKEND=rift-external` against the same released rift.
 - **plane-a-embedded** — the same Plane A oracle in-process over Panama FFM, on JDK 25
   (`RIFT_MODE=embedded`), plus the Plane B corpus on `MOCK_BACKEND=embedded`.
 - **plane-a-container** — the container subset against the published image (`RIFT_IT=1`).
