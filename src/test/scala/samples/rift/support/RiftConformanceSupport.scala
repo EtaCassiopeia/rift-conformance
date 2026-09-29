@@ -236,6 +236,9 @@ final case class IsolatedAdmin(url: String)
 /** The key prefix of the scenario's Redis flow-store imposter (feature 15). */
 final case class RedisKeyPrefix(prefix: String)
 
+/** A response body kept for a later "differs from the remembered one" comparison. */
+final case class RememberedBody(body: String)
+
 /** Request headers/body staged for the next send. */
 final case class PendingRequest(
     headers: Map[String, String] = Map.empty,
@@ -2618,8 +2621,9 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
         r <- lastResponse
         got <- ZIO
           .attempt(java.time.OffsetDateTime.parse(r.body.trim).toLocalDate)
+          .orElse(ZIO.attempt(java.time.LocalDate.parse(r.body.trim)))
           .mapError(e =>
-            new RuntimeException(s"body '${r.body}' is not an ISO date-time: ${e.getMessage}")
+            new RuntimeException(s"body '${r.body}' is not an ISO date(-time): ${e.getMessage}")
           )
         today = java.time.LocalDate.now(java.time.ZoneOffset.UTC)
         want <- unit match
@@ -2628,6 +2632,54 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
           case other => ZIO.fail(new RuntimeException(s"unknown date unit '$other' (days|months)"))
         _ <- assertRepro(got == want, s"expected a date $offset $unit from today ($want), got $got")
       yield ()
+  }
+
+  // Feature 05 `{{ uuid }}` (#195): a fresh value per request, so the second body must differ.
+  When("the client remembers the response body") {
+    lastResponse.flatMap(r => Stage.put(RememberedBody(r.body)))
+  }
+
+  Then("the response body differs from the remembered one") {
+    for
+      r <- lastResponse
+      prev <- Stage
+        .get[RememberedBody]
+        .mapError(e => new IllegalStateException(s"no remembered body ($e)"))
+      _ <- assertRepro(
+        r.body != prev.body,
+        s"expected a body other than '${prev.body}', got the same"
+      )
+    yield ()
+  }
+
+  // `delay(ms)` reports the injected latency in `x-rift-latency-ms` (feature 04, #195).
+  Then("the response header " / string / " is a number at least " / int) {
+    (h: String, floor: Int) =>
+      lastResponse.flatMap { r =>
+        val got = r.headers.get(h.toLowerCase).flatMap(_.headOption)
+        assertRepro(
+          got.flatMap(_.trim.toLongOption).exists(_ >= floor),
+          s"expected header $h to be a number >= $floor, got ${got.getOrElse("<absent>")}"
+        )
+      }
+  }
+
+  // The value at a dotted path of the last JSON response, compared as parsed JSON (key order aside).
+  Then("the response JSON at " / string / " is " / string) { (path: String, literal: String) =>
+    for
+      expected <- ZIO
+        .fromEither(literal.fromJson[Json])
+        .mapError(m => new IllegalArgumentException(s"step literal '$literal' is not JSON: $m"))
+      r <- lastResponse
+      served <- parseAdminJson(r.body)
+      got = RiftConformanceSupport.jsonAt(served, path)
+      _ <- assertRepro(
+        got
+          .map(RiftConformanceSupport.canonical)
+          .contains(RiftConformanceSupport.canonical(expected)),
+        s"at '$path': expected $literal, got ${got.fold("<absent>")(_.toJson)}"
+      )
+    yield ()
   }
 
   When("the client sends " / string / " " / string / " expecting a transport error") {

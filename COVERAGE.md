@@ -142,6 +142,23 @@ Remaining: `05-templating`, `06-behaviors`. #7 closes when feature 06 lands — 
 > suite (discovery snapshots before incremental compile finishes); a clean re-run picks it up. Watch for
 > this when wiring CI (#15) — run `compile` before `test`, or `sbt clean test`.
 
+**Script API ctx / result surface (#195, rift docs/features/scripting.md)** — fixtures `scripting/ctx-surface`, `scripting/default-engine-js`, `scripting/engine-lua`:
+
+| Engine contract | Plane A scenario |
+|---|---|
+| `http(201, #{a:1}).header("X-S","v")` → `{"a":1}`, `content-type: application/json`, `X-S: v`, `x-rift-script: rhai` | `http() with a map body serialises JSON and chains a header` |
+| `delay(50)` → `200` + `x-rift-latency-ms` ≥ 50 | `delay(ms) answers 200 with an x-rift-latency-ms header` |
+| `ctx.flowId` = the `header:X-Flow` value | `ctx.flowId is the flow resolved from flowIdSource` |
+| `ctx.stub.{id,scenarioName,scenarioState}` → `ctx-stub\|checkout\|Started` | `ctx.stub exposes the stub's id, scenario name and scenario state` |
+| `ctx.store.flow("other").set(...)` writes flow `other`, not the caller's | `ctx.store.flow(id) writes another flow's state` |
+| `ctx.request.json` parses JSON (`7`) and is unit otherwise | `ctx.request.json parses a JSON body and is unit otherwise` (Outline) |
+| `ctx.request.header("x-mixed")` finds `X-Mixed` | `ctx.request.header(name) is case-insensitive` |
+| a `javascript` `_rift.script` `respond(ctx)` → `x-rift-script: javascript` | `a javascript _rift.script respond(ctx) serves and names its engine` |
+| rift#1159: `defaultEngine: "javascript"` runs an engine-less JS-only script; `GET /imposters/{p}` shows `"engine":"javascript"` | `scriptEngine.defaultEngine javascript runs an engine-less script as JS and writes it back` |
+| `"engine":"lua"` → `400` naming `rhai`/`javascript` | `the removed lua engine is refused naming its replacement` |
+
+Out of scope (per #195): Boa loop/recursion bounds, `ctx.logger` output, `timestamp_header()`.
+
 ### `05-templating.feature` ← conformance-ext.sh (templating) — DONE
 
 | Shell assert | Plane A scenario | Fixture |
@@ -161,6 +178,21 @@ Remaining: `05-templating`, `06-behaviors`. #7 closes when feature 06 lands — 
 
 Date tokens verify the **actual computed offset** (expected date derived from wall-clock at
 assertion time), not merely "renders some ISO date". Remaining: `06-behaviors`. #7 closes when feature 06 lands — now shipped; see the 06 section below.
+
+**`_rift.templated` function grammar (#195, rift docs/features/date-templates.md)** — fixture `templating/functions`:
+
+| Engine contract | Plane A scenario |
+|---|---|
+| `{{ uuid }}` is a v4 UUID, fresh per request | `{{ uuid }} renders a fresh v4 UUID per request` |
+| `{{ now offset='+1d' format='%Y-%m-%d' }}` → tomorrow (UTC) | `{{ now }} honours an offset and a strftime format` |
+| `{{ request.json '$.items[1].id' }}` → `2` | `{{ request.json }} selects a JSONPath out of the request body` |
+| `?tag=a&tag=b` → `a,b` | `a repeated query key renders comma-joined` |
+| filters `last_segment` (`/seg/a/b/` → `b`), `regex '/u/(\d+)' 1` (→ `42`), `json` (`a"b` → `a\"b`) | `the <filter> filter` (Outline) |
+| a template in a header value (`X-Req: GET`) | `a template renders into a response header value` |
+| an unknown function renders empty, 200, no error header | `an unknown template function renders as an empty substitution` |
+| under `--debug` → `500` + `x-rift-template-error` + `x-rift-imposter`, message names the token | `under --debug an unknown template function fails the response with a 500` (`@rift-debug-env`, external only) |
+| `{{NOW}}` renders in a `defaultResponse` | `a date token renders in a defaultResponse` |
+| `{{ state.k }}` after an admin `PUT` on the default in-memory store | `{{ state.<key> }} reads the default in-memory flow store` |
 
 ### `06-behaviors.feature` ← conformance.sh + conformance-ext.sh (behaviors) — DONE
 

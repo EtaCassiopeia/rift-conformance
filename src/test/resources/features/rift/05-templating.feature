@@ -126,3 +126,79 @@ Feature: Response templating — request variables and date tokens
     And the client sends "GET" "/copy-lookup?id=123"
     Then the response status is 200
     And the response body is "q=${R}[price] name=Widget"
+
+  # ── the `_rift.templated` function grammar (rift docs/features/date-templates.md, #195) ────────
+
+  Scenario: {{ uuid }} renders a fresh v4 UUID per request
+    Given a fresh imposter from fixture "templating/functions"
+    When the client sends "GET" "/uuid"
+    Then the response status is 200
+    And the response body matches "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    When the client remembers the response body
+    And the client sends "GET" "/uuid"
+    Then the response body matches "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    And the response body differs from the remembered one
+
+  Scenario: {{ now }} honours an offset and a strftime format
+    Given a fresh imposter from fixture "templating/functions"
+    When the client sends "GET" "/tomorrow"
+    Then the response body matches "^\d{4}-\d{2}-\d{2}$"
+    And the response body is a date offset by 1 "days" from today
+
+  Scenario: {{ request.json }} selects a JSONPath out of the request body
+    Given a fresh imposter from fixture "templating/functions"
+    When the request body is "{\"items\":[{\"id\":1},{\"id\":2}]}"
+    And the client sends "POST" "/json"
+    Then the response body is "2"
+
+  Scenario: a repeated query key renders comma-joined
+    Given a fresh imposter from fixture "templating/functions"
+    When the client sends "GET" "/tags?tag=a&tag=b"
+    Then the response body is "a,b"
+
+  Scenario Outline: the <filter> filter
+    Given a fresh imposter from fixture "templating/functions"
+    When the request header "X-Q" is "a\"b"
+    And the client sends "GET" "<path>"
+    Then the response body is "<body>"
+
+    Examples:
+      | filter       | path         | body   |
+      | last_segment | /seg/a/b/    | b      |
+      | regex        | /u/42        | 42     |
+      | json         | /json-filter | a\\\"b |
+
+  Scenario: a template renders into a response header value
+    Given a fresh imposter from fixture "templating/functions"
+    When the client sends "GET" "/header"
+    Then the response header "X-Req" is "GET"
+
+  # By default a failing token renders empty (with a rift::template warning) and the response serves.
+  Scenario: an unknown template function renders as an empty substitution
+    Given a fresh imposter from fixture "templating/functions"
+    When the client sends "GET" "/unknown-fn"
+    Then the response status is 200
+    And the response body is "[]"
+    And the response has no header "x-rift-template-error"
+
+  @rift-debug-env
+  Scenario: under --debug an unknown template function fails the response with a 500
+    Given a fresh imposter from fixture "templating/functions" on an engine started with "--debug"
+    When the client sends "GET" "/unknown-fn"
+    Then the response status is 500
+    And the response header "x-rift-template-error" is "true"
+    And the response header "x-rift-imposter" is "true"
+    And the error envelope message contains "nosuchfn"
+
+  Scenario: a date token renders in a defaultResponse
+    Given a fresh imposter from fixture "templating/functions"
+    When the client sends "GET" "/no-stub-here"
+    Then the response header "x-rift-default-response" is "true"
+    And the response body is a date offset by 0 "days" from today
+
+  Scenario: {{ state.<key> }} reads the default in-memory flow store
+    Given a fresh imposter from fixture "templating/functions"
+    When the client sets flow-state "k" in flow "f9" to "kv"
+    And the request header "X-Flow" is "f9"
+    And the client sends "GET" "/state"
+    Then the response body is "k=kv"
