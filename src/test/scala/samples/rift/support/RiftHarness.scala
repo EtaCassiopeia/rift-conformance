@@ -679,17 +679,20 @@ object RiftHarness:
       pb.directory(cfg.corpusRoot.toFile)
       pb.redirectErrorStream(true)
       pb.redirectOutput(logFile)
-      val proc = pb.start()
-      // Belt-and-braces: an aborted sbt run (SIGINT) skips ZIO finalizers, so a JVM shutdown hook
-      // guarantees the child is not leaked — mirrors the old shell suite's pkill.
-      val hook = new Thread(() => if proc.isAlive then { proc.destroyForcibly(); () })
-      try java.lang.Runtime.getRuntime.addShutdownHook(hook)
-      catch
-        case e: Throwable => // never leak the child if the hook can't be registered
-          proc.destroyForcibly()
-          throw e
-      proc
+      reapOnJvmExit(pb.start())
     }
+
+  /** Belt-and-braces: an aborted sbt run (SIGINT) skips ZIO finalizers, so a JVM shutdown hook
+    * guarantees the child is not leaked — mirrors the old shell suite's pkill.
+    */
+  private[rift] def reapOnJvmExit(proc: Process): Process =
+    val hook = new Thread(() => if proc.isAlive then { proc.destroyForcibly(); () })
+    try java.lang.Runtime.getRuntime.addShutdownHook(hook)
+    catch
+      case e: Throwable => // never leak the child if the hook can't be registered
+        proc.destroyForcibly()
+        throw e
+    proc
 
   /** destroy → waitFor(5s) → destroyForcibly → waitFor(5s); throws if the process survives even
     * `SIGKILL` — the whole point of the harness is "no orphan", so a teardown that doesn't actually
