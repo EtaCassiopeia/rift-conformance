@@ -369,6 +369,14 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
       .ignore
   }
 
+  // Reap the feature-20 @tls-flags engine (#197) if this scenario started one.
+  afterScenario {
+    ZIO
+      .serviceWithZIO[RiftHarness](_.stopTlsFlagEngine)
+      .tapError(e => ZIO.logWarning(s"TLS-flag engine teardown failed: ${e.getMessage}"))
+      .ignore
+  }
+
   // ── Stage accessors ─────────────────────────────────────────────────────────────────────
 
   protected def trackedPorts: UIO[TrackedPorts] =
@@ -1114,6 +1122,17 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
       port <- postAtFreshPort(admin, raw, "proxy to the HTTPS upstream (upstream-trust engine)")
       _ <- Stage.put(CurrentPort(port))
     yield ()
+  }
+
+  // Feature 20 @tls-flags (#197). Not tracked, for the same reason as above.
+  When("a proxy imposter to the HTTPS upstream is created on an engine started with " / string) {
+    (flag: String) =>
+      for
+        raw <- proxyToUpstreamJson
+        admin <- ZIO.serviceWithZIO[RiftHarness](_.startTlsFlagEngine(List(flag), Map.empty))
+        port <- postAtFreshPort(admin, raw, s"proxy to the HTTPS upstream ($flag engine)")
+        _ <- Stage.put(CurrentPort(port))
+      yield ()
   }
 
   // ── metrics (rift#9, feature 09) ───────────────────────────────────────────────────────────

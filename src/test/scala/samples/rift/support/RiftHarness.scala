@@ -153,6 +153,22 @@ trait RiftHarness:
   /** Reap the [[startInterceptAuthEngine]] engine if one is running; a no-op otherwise. */
   def stopInterceptAuthEngine: Task[Unit] = ZIO.unit
 
+  /** Start a dedicated engine with extra TLS CLI flags `args` and environment `env`, and return its
+    * admin URL — feature 20 `@tls-flags` (#197: `--default-tls-*`, `--no-self-signed-tls`,
+    * `--upstream-tls-skip-verify`, `RIFT_DISABLE_HTTP2`). Fails if the engine exits before its
+    * admin API answers, which is the assertion for a flag that must stop startup. External mode
+    * only, as for [[startUpstreamTrustEngine]]. `logTo` captures the engine's output.
+    */
+  def startTlsFlagEngine(
+      args: List[String],
+      env: Map[String, String],
+      logTo: Option[Path] = None
+  ): Task[String] =
+    ZIO.fail(new UnsupportedOperationException("the TLS-flag engine is external-mode only"))
+
+  /** Reap the [[startTlsFlagEngine]] engine if one is running; a no-op otherwise. */
+  def stopTlsFlagEngine: Task[Unit] = ZIO.unit
+
   /** Swap in a `--configfile`-backed engine for the life of the returned `Scope`, reverting to a
     * plain engine (same admin/metrics ports) when the scope closes.
     */
@@ -266,6 +282,7 @@ private final class RiftHarnessLive(
     upstreamTrustRef: Ref[Option[Process]],
     isolatedAdminRef: Ref[Option[Process]],
     interceptAuthRef: Ref[Option[(Process, String, Int)]],
+    tlsFlagRef: Ref[Option[Process]],
     val tools: RiftTools,
     info: RiftBuildInfo
 ) extends RiftHarness:
@@ -352,6 +369,37 @@ private final class RiftHarnessLive(
 
   override def stopIsolatedAdminEngine: Task[Unit] =
     isolatedAdminRef.getAndSet(None).flatMap(_.fold(ZIO.unit)(RiftHarness.killProcess))
+
+  /** Same spawn-adopt-await discipline as [[startRuntimeInterceptEngine]]. */
+  override def startTlsFlagEngine(
+      args: List[String],
+      env: Map[String, String],
+      logTo: Option[Path]
+  ): Task[String] =
+    for
+      _ <- stopTlsFlagEngine
+      port <- RiftHarness.freePort
+      metricsPort <- RiftHarness.freePort
+      proc <- RiftHarness.rawSpawn(
+        cfg,
+        port,
+        metricsPort,
+        None,
+        None,
+        logTo = logTo,
+        extraArgs = args,
+        extraEnv = env
+      )
+      url = s"http://localhost:$port"
+      _ <- tlsFlagRef.set(Some(proc))
+      _ <- RiftHarness
+        .awaitReady(s"$url/imposters", proc)
+        .onError(_ => RiftHarness.killProcess(proc).ignore)
+    yield url
+
+  override def stopTlsFlagEngine: Task[Unit] =
+    tlsFlagRef.getAndSet(None).flatMap(_.fold(ZIO.unit)(RiftHarness.killProcess))
+
   override def startInterceptAuthEngine: Task[(String, Int)] =
     for
       _ <- stopInterceptAuthEngine
@@ -599,6 +647,9 @@ object RiftHarness:
       _ <- ZIO.addFinalizer(
         interceptAuthRef.get.flatMap(_.fold(ZIO.unit)(e => killProcess(e._1).orDie))
       )
+      // The feature-20 @tls-flags engine (#197), likewise.
+      tlsFlagRef <- Ref.make(Option.empty[Process])
+      _ <- ZIO.addFinalizer(tlsFlagRef.get.flatMap(_.fold(ZIO.unit)(killProcess(_).orDie)))
     yield RiftHarnessLive(
       s"http://localhost:$port",
       s"http://localhost:$metricsPort",
@@ -612,6 +663,7 @@ object RiftHarness:
       upstreamTrustRef,
       isolatedAdminRef,
       interceptAuthRef,
+      tlsFlagRef,
       RiftTools.fromBuildDir(cfg.buildDir),
       info
     )
