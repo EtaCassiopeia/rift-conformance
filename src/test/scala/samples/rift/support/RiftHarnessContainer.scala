@@ -69,7 +69,7 @@ object RiftHarnessContainer:
   private val InterceptPort = 8443
 
   // Container ports published 1:1 to the host (see the class doc). 2525 admin; 8443 intercept; 4500–
-  // 4599 covers the corpus imposters (declared 4501–4520) with margin; 4800–4899 covers the fixed
+  // 4599 covers the corpus imposters (declared 4501–4521) with margin; 4800–4899 covers the fixed
   // Plane A fixtures (4800–4819) and the dynamic probe pool (4820–4899).
   private val PublishedPorts: List[Int] =
     AdminPort :: InterceptPort :: ((4500 to 4599) ++ (4800 to 4899)).toList

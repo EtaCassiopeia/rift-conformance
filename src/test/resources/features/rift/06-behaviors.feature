@@ -73,3 +73,20 @@ Feature: Response behaviors — copy, lookup, wait, shellTransform, decorate
     When the client sends "GET" "/log"
     Then the response status is 200
     And the response body is "logged"
+
+  # rift#1195 (0.18.0): a `behaviors` ARRAY runs every copy/lookup/shellTransform element in order, as
+  # Mountebank 2.9.1 does. Before, the fold kept only the last element per key, so `${A}` stayed
+  # literal. The imposter is the static corpus file 21, which the feature-01 gate also lints and
+  # rift-verifies.
+  Scenario: a behaviors array applies every copy element in order
+    Given a fresh imposter from corpus file "21-behaviors-array-copy"
+    When the client sends "GET" "/copy"
+    Then the response status is 200
+    And the response body is "A=cop B=GET"
+
+  # Also rift#1195: a malformed EARLIER element (a copy with no `from`) is refused at the admin API
+  # rather than loading with that copy silently dead.
+  Scenario: a behaviors array with a malformed earlier copy element is refused at creation
+    When the client posts the imposter fixture "behaviors/array-copy-malformed"
+    Then the response status is 400
+    And the response body contains "`copy` behavior is malformed"
