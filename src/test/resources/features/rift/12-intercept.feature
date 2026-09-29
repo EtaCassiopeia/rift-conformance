@@ -98,3 +98,33 @@ Feature: Intercept / TLS-MITM forward-proxy (rift#413) — CONNECT interception 
     When a raw HTTPS POST of the chunked body "hello chunked world" to "chunked.example.com" "/upload" through the intercept tunnel
     Then the response status is 200
     And the response body is "chunked-matched"
+
+  # rift 0.18.0 (rift#993) keeps a successful tunnel alive for more requests; the pre-TLS refusals
+  # still close. (A 407 needs an engine started with --intercept-auth, which the shared harness is
+  # not, so it is not covered here.)
+  @intercept-raw
+  Scenario: two requests on one CONNECT tunnel are both answered on the same connection (rift#993)
+    Given an intercept rule serves 200 "first" for host "keepalive.example.com" path "/first"
+    And an intercept rule serves 200 "second" for host "keepalive.example.com" path "/second"
+    When a raw HTTPS GET to "keepalive.example.com" "/first" through the intercept tunnel
+    Then the response status is 200
+    And the response body is "first"
+    When a raw HTTPS GET to "keepalive.example.com" "/second" through the intercept tunnel
+    Then the response status is 200
+    And the response body is "second"
+    And the intercept tunnel answered 2 requests on one connection
+
+  @intercept-raw
+  Scenario: a non-CONNECT request to the intercept listener is refused 405 and the connection closed (rift#993)
+    When a plain GET for "http://plain.example.com/" is sent to the intercept listener
+    Then the response status is 405
+    And the intercept listener then closes the connection
+
+  # A 4 KiB tail past the cap: small enough that the engine may drain it and keep the tunnel.
+  @intercept-raw
+  Scenario: the unread tail of an over-cap body is never answered as a request (rift#993)
+    Given an intercept rule serves 200 "smuggled" for host "tail.example.com" path "/smuggled"
+    And an intercept rule serves 200 "after-413" for host "tail.example.com" path "/after"
+    When a raw HTTPS POST of 1052672 body bytes of pipelined "/smuggled" requests to "tail.example.com" "/upload" through the intercept tunnel
+    Then the response status is 413
+    And the next raw HTTPS GET to "tail.example.com" "/after" on the same tunnel is answered "after-413" or the connection is closed

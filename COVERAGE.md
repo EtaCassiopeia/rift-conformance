@@ -533,7 +533,11 @@ These are already tracked by open issues filed as the releases shipped:
   (a raw `CONNECT` + TLS client, `RawHttpConnection`): over-cap body → `413` with the forward target
   unreached, exactly 1 MiB forwarded, chunked body decoded before a body predicate. External,
   embedded and container. The `408` body-read timeout is left to the engine's own test (slow, flaky).
-- CONNECT tunnel reuse: #151
+- CONNECT tunnel reuse: #151 — **covered**: `12-intercept` `@intercept-raw` on the same raw client.
+  Two requests on one tunnel are both answered on one connection. A non-`CONNECT` request gets `405`
+  and then EOF. After a `413` whose 4 KiB tail is back-to-back `GET /smuggled` requests, the next
+  request is either answered correctly or the connection is closed, and is never answered from the
+  tail. External, embedded and container. `407` is not covered: it needs an `--intercept-auth` engine.
 - intercept multi-value headers and HTTP/2 negotiation: #152
 - reload re-applying front-door routes: #153
 - behaviors on proxy/inject responses: #154

@@ -185,17 +185,32 @@ object Intercept12Suite
     */
   private final case class RawTunnel(host: String, conn: RawHttpConnection)
 
+  /** A plaintext connection to the intercept listener itself, before any tunnel (#151). */
+  private final case class ListenerConnection(conn: RawHttpConnection)
+
+  private def interceptListener: ZIO[RiftHarness, Throwable, (String, Int)] =
+    ZIO
+      .serviceWithZIO[RiftHarness](_.interceptEndpoint)
+      .someOrFail(new RuntimeException("no intercept listener in this RIFT_MODE"))
+
+  /** The scenario's already-open tunnel to `host`; never opens one, so a step using it proves
+    * reuse.
+    */
+  private def openTunnelTo(host: String): IO[Throwable, RawHttpConnection] =
+    Stage.get[RawTunnel].option.flatMap {
+      case Some(RawTunnel(`host`, conn)) => ZIO.succeed(conn)
+      case other =>
+        ZIO.fail(new IllegalStateException(s"no open raw tunnel to $host (have $other)"))
+    }
+
   /** The open tunnel to `host`, or a fresh one through the intercept listener trusting its CA. */
   private def tunnelTo(host: String): ZIO[RiftHarness, Throwable, RawHttpConnection] =
     Stage.get[RawTunnel].option.flatMap {
       case Some(RawTunnel(`host`, conn)) => ZIO.succeed(conn)
       case _ =>
         for
-          ep <- ZIO.serviceWithZIO[RiftHarness](_.interceptEndpoint)
-          hostPort <- ZIO
-            .fromOption(ep)
-            .orElseFail(new RuntimeException("no intercept listener in this RIFT_MODE"))
-          (iHost, iPort) = hostPort
+          listener <- interceptListener
+          (iHost, iPort) = listener
           bytes <- ZIO.serviceWithZIO[RiftHarness](_.interceptTruststore(TrustPassword))
           ssl <- sslFromTruststore(bytes)
           conn <- ZIO.attemptBlocking(RawHttpConnection.tunnel(iHost, iPort, host, ssl))
@@ -322,6 +337,78 @@ object Intercept12Suite
   ) { (body: String, host: String, path: String) =>
     // Several chunks, so the body only reads right if the engine reassembles them.
     rawExchange(host, RawHttpConnection.chunkedRequest("POST", host, path, body.grouped(5).toList))
+  }
+
+  When("a raw HTTPS GET to " / string / " " / string / " through the intercept tunnel") {
+    (host: String, path: String) => rawExchange(host, RawHttpConnection.request("GET", host, path))
+  }
+
+  Then("the intercept tunnel answered " / int / " requests on one connection") { (n: Int) =>
+    Stage.get[RawTunnel].option.flatMap {
+      case Some(RawTunnel(host, conn)) =>
+        assertRepro(
+          conn.responsesRead == n,
+          s"expected $n responses on the one tunnel to $host, got ${conn.responsesRead}"
+        )
+      case None => ZIO.fail(new IllegalStateException("no raw tunnel was opened"))
+    }
+  }
+
+  // The body is back-to-back copies of a complete `GET <smuggled>` request. If the engine ever framed
+  // the unread tail of the refused body as requests, the next response would be the smuggled one.
+  When(
+    "a raw HTTPS POST of " / int / " body bytes of pipelined " / string / " requests to " / string / " " / string / " through the intercept tunnel"
+  ) { (n: Int, smuggled: String, host: String, path: String) =>
+    val unit = RawHttpConnection.request("GET", host, smuggled)
+    val body = Array.tabulate(n)(i => unit(i % unit.length))
+    rawExchange(host, RawHttpConnection.request("POST", host, path, body = body))
+  }
+
+  // rift#993 allows either outcome after a 413: the connection is reused (and the tail discarded),
+  // or it is closed. What it must never do is answer from the leftover bytes.
+  Then(
+    "the next raw HTTPS GET to " / string / " " / string / " on the same tunnel is answered " / string / " or the connection is closed"
+  ) { (host: String, path: String, expected: String) =>
+    for
+      conn <- openTunnelTo(host)
+      read <- ZIO.attemptBlocking(conn.exchange(RawHttpConnection.request("GET", host, path)))
+      _ <- read match
+        case RawRead.Closed => ZIO.unit
+        case RawRead.Response(r) =>
+          assertRepro(
+            r.status == 200 && r.bodyText == expected,
+            s"after the 413, GET $path on the same tunnel should be answered 200 '$expected' " +
+              s"(or the connection closed), got ${r.status} '${r.bodyText.take(80)}'"
+          )
+    yield ()
+  }
+
+  When("a plain GET for " / string / " is sent to the intercept listener") { (url: String) =>
+    for
+      listener <- interceptListener
+      conn <- ZIO.attemptBlocking(RawHttpConnection.plain(listener._1, listener._2))
+      _ <- openTunnels.update(conn :: _)
+      _ <- Stage.put(ListenerConnection(conn))
+      host = java.net.URI.create(url).getHost
+      read <- ZIO.attemptBlocking(conn.exchange(RawHttpConnection.request("GET", host, url)))
+      _ <- read match
+        case RawRead.Response(r) => Stage.put(r.toLastResponse)
+        case RawRead.Closed =>
+          ZIO.fail(new RuntimeException("the intercept listener closed without answering"))
+    yield ()
+  }
+
+  Then("the intercept listener then closes the connection") {
+    for
+      listener <- Stage
+        .get[ListenerConnection]
+        .mapError(e => new IllegalStateException(s"no listener connection was opened ($e)"))
+      read <- ZIO.attemptBlocking(listener.conn.readNext())
+      _ <- assertRepro(
+        read == RawRead.Closed,
+        s"expected the listener to close after the refusal, but it sent another response: $read"
+      )
+    yield ()
   }
 
   Then("the current imposter has recorded " / int / " requests") { (n: Int) =>
