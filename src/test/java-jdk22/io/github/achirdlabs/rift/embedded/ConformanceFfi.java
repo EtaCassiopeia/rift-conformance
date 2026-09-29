@@ -2,7 +2,12 @@ package io.github.achirdlabs.rift.embedded;
 
 import io.github.achirdlabs.rift.EmbeddedOptions;
 import java.lang.foreign.Arena;
+import java.lang.foreign.FunctionDescriptor;
+import java.lang.foreign.Linker;
 import java.lang.foreign.MemorySegment;
+import java.lang.foreign.SymbolLookup;
+import java.lang.foreign.ValueLayout;
+import java.lang.invoke.MethodHandle;
 import samples.rift.support.EmbeddedFfi;
 
 /**
@@ -14,6 +19,9 @@ import samples.rift.support.EmbeddedFfi;
  * discipline is the same as {@code FfiCalls}: a string result is read then freed, a null result or
  * a non-zero status is an engine error carrying {@code rift_last_error}.
  *
+ * <p>{@code RiftFfi} (rift-java 0.3.3) binds neither {@code rift_abi_version} nor {@code
+ * rift_stop_intercept}, so those two are bound here directly against the same library.
+ *
  * <p>Compiled only on a JDK 22+ build (the FFM floor of rift-java-embedded).
  */
 public final class ConformanceFfi implements EmbeddedFfi {
@@ -21,12 +29,23 @@ public final class ConformanceFfi implements EmbeddedFfi {
   private final Arena libArena;
   private final RiftFfi ffi;
   private final MemorySegment handle;
+  private final MethodHandle abiVersion;
+  private final MethodHandle stopIntercept;
 
   public ConformanceFfi() {
     var lib = NativeLibraryResolver.resolve(EmbeddedOptions.builder().build()).path();
     var arena = Arena.ofShared();
     try {
       var bound = RiftFfi.load(lib, arena);
+      var symbols = SymbolLookup.libraryLookup(lib, arena);
+      var linker = Linker.nativeLinker();
+      this.abiVersion =
+          linker.downcallHandle(
+              symbols.find("rift_abi_version").orElseThrow(), FunctionDescriptor.of(ValueLayout.JAVA_INT));
+      this.stopIntercept =
+          linker.downcallHandle(
+              symbols.find("rift_stop_intercept").orElseThrow(),
+              FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.ADDRESS));
       var h = bound.start();
       if (RiftFfi.isNull(h)) {
         throw new IllegalStateException("failed to start the embedded rift engine");
@@ -182,6 +201,127 @@ public final class ConformanceFfi implements EmbeddedFfi {
   public String verify(int port, String bodyJson) {
     try (var a = Arena.ofConfined()) {
       return readAndFree(ffi.verify(handle, port, FfmCompat.allocateCString(a, bodyJson)));
+    }
+  }
+
+  @Override
+  public int abiVersion() {
+    try {
+      return (int) abiVersion.invokeExact();
+    } catch (Throwable t) {
+      throw new IllegalStateException("rift_abi_version failed", t);
+    }
+  }
+
+  @Override
+  public void stopIntercept() {
+    int status;
+    try {
+      status = (int) stopIntercept.invokeExact(handle);
+    } catch (Throwable t) {
+      throw new IllegalStateException("rift_stop_intercept failed", t);
+    }
+    check(status);
+  }
+
+  @Override
+  public String interceptListRules() {
+    return readAndFree(ffi.interceptListRules(handle));
+  }
+
+  @Override
+  public String applyConfig(String json) {
+    try (var a = Arena.ofConfined()) {
+      return readAndFree(ffi.applyConfig(handle, FfmCompat.allocateCString(a, json)));
+    }
+  }
+
+  @Override
+  public String flowStateGet(int port, String flowId, String key) {
+    try (var a = Arena.ofConfined()) {
+      return readAndFree(
+          ffi.flowStateGet(
+              handle, port, FfmCompat.allocateCString(a, flowId), FfmCompat.allocateCString(a, key)));
+    }
+  }
+
+  @Override
+  public void flowStatePut(int port, String flowId, String key, String valueJson) {
+    try (var a = Arena.ofConfined()) {
+      check(
+          ffi.flowStatePut(
+              handle,
+              port,
+              FfmCompat.allocateCString(a, flowId),
+              FfmCompat.allocateCString(a, key),
+              FfmCompat.allocateCString(a, valueJson)));
+    }
+  }
+
+  @Override
+  public void flowStateDelete(int port, String flowId, String key) {
+    try (var a = Arena.ofConfined()) {
+      check(
+          ffi.flowStateDelete(
+              handle, port, FfmCompat.allocateCString(a, flowId), FfmCompat.allocateCString(a, key)));
+    }
+  }
+
+  @Override
+  public void spaceAddStub(int port, String flowId, String stubJson) {
+    try (var a = Arena.ofConfined()) {
+      check(
+          ffi.spaceAddStub(
+              handle,
+              port,
+              FfmCompat.allocateCString(a, flowId),
+              FfmCompat.allocateCString(a, stubJson)));
+    }
+  }
+
+  @Override
+  public String spaceListStubs(int port, String flowId) {
+    try (var a = Arena.ofConfined()) {
+      return readAndFree(ffi.spaceListStubs(handle, port, FfmCompat.allocateCString(a, flowId)));
+    }
+  }
+
+  @Override
+  public void spaceDelete(int port, String flowId) {
+    try (var a = Arena.ofConfined()) {
+      check(ffi.spaceDelete(handle, port, FfmCompat.allocateCString(a, flowId)));
+    }
+  }
+
+  @Override
+  public String spaceRecorded(int port, String flowId) {
+    try (var a = Arena.ofConfined()) {
+      return readAndFree(ffi.spaceRecorded(handle, port, FfmCompat.allocateCString(a, flowId)));
+    }
+  }
+
+  /**
+   * Fail one call (clearing recorded requests on port 0, which is never an imposter), optionally
+   * follow it with a successful one, then read {@code rift_last_error} — all on this one thread,
+   * since the error is thread-local. The raw status is not routed through {@link #check}, which
+   * would read the error itself.
+   */
+  @Override
+  public String lastErrorAfterFailure(boolean thenSucceed) {
+    if (ffi.clearRecorded(handle, 0) == 0) {
+      throw new IllegalStateException("clearing recorded requests on port 0 unexpectedly succeeded");
+    }
+    if (thenSucceed) {
+      readAndFree(ffi.listImposters(handle, MemorySegment.NULL));
+    }
+    var e = ffi.lastError();
+    if (RiftFfi.isNull(e)) {
+      return null;
+    }
+    try {
+      return RiftFfi.readString(e);
+    } finally {
+      ffi.free(e);
     }
   }
 

@@ -135,9 +135,9 @@ addCommandAlias("engineConformance", "testOnly samples.rift.*")
 // this list is an allowlist — enrolling an unverified suite would make the embedded job red for a
 // reason that has nothing to do with the envelope contract it exists to pin.
 // 14-behaviors-response-types (#154) was verified green on the embedded leg before being enrolled.
-// FfiAdminParity75Spec (#75), FfiStubWarnings92Spec (#92) and FfiVerifyParity94Spec (#94) diff
-// C-ABI calls against the admin HTTP API on one engine; they no-op outside RIFT_MODE=embedded, so
-// only this alias runs them.
+// FfiAdminParity75Spec (#75), FfiStubWarnings92Spec (#92), FfiVerifyParity94Spec (#94) and
+// FfiLongTail205Spec (#205) diff C-ABI calls against the admin HTTP API on one engine; they no-op
+// outside RIFT_MODE=embedded, so only this alias runs them.
 addCommandAlias(
   "engineEmbedded",
   "; testOnly samples.rift.ConsistencyGateSuite samples.rift.CoreServing02Suite " +
@@ -148,7 +148,7 @@ addCommandAlias(
     "-- --exclude-tags intercept-http,intercept-caller-ca,intercept-runtime,front-door,upstream-trust" +
     " ; testOnly samples.rift.RiftEmbeddedHarnessSpec samples.rift.RiftToolsParseSpec" +
     " samples.rift.FfiAdminParity75Spec samples.rift.FfiStubWarnings92Spec" +
-    " samples.rift.FfiVerifyParity94Spec"
+    " samples.rift.FfiVerifyParity94Spec samples.rift.FfiLongTail205Spec"
 )
 
 // Plane A container pass (issue #12, RIFT_MODE=container): the acceptance subset the Docker-run
