@@ -13,7 +13,8 @@ import java.nio.file.{Path, Paths}
   *   - `rift script check` on a valid script → exit 0, "OK";
   *   - `rift script check` on a syntactically broken script → non-zero, a "FAILED" error report;
   *   - `rift script run` on a valid script → the debug-mode trace (the `respond` decision,
-  *     printed).
+  *     printed);
+  *   - the `run` options `--request`, `--state`, `--flow-id` and `--engine` (#204).
   *
   * Self-gating: a no-op pass when `RIFT_BUILD_DIR` is unset (no binaries to drive), mirroring the
   * other tool gates. No engine is spawned — `script check`/`run` are offline.
@@ -55,6 +56,47 @@ object RiftScriptTooling88Spec extends ZIOSpecDefault:
           // so a regression to a boilerplate trace can't pass.
           assertTrue(r.exitCode == 0, out.contains("decision:"), out.contains("from-file-lib"))
         }
+      }
+    },
+    // `rift script run` options (#204; rift docs/configuration/cli.md § script).
+    test("rift script run --request feeds the script the given request") {
+      whenTools { t =>
+        t.riftScriptRun(
+          scriptsDir.resolve("echo-method.rhai"),
+          List("--request", scriptsDir.resolve("post-request.json").toString)
+        ).map(r => assertTrue(r.exitCode == 0, r.stdout.contains("body=\"method=POST\"")))
+      }
+    },
+    test("rift script run --state seeds JSON-parsed flow state") {
+      whenTools { t =>
+        t.riftScriptRun(scriptsDir.resolve("incr-state.rhai"), List("--state", "n=5"))
+          .map(r =>
+            assertTrue(
+              r.exitCode == 0,
+              r.stdout.contains("body=\"n=6\""),
+              r.stdout.contains("n = 6")
+            )
+          )
+      }
+    },
+    test("rift script run --flow-id sets ctx.flowId") {
+      whenTools { t =>
+        t.riftScriptRun(scriptsDir.resolve("flow-id.rhai"), List("--flow-id", "f9"))
+          .map(r => assertTrue(r.exitCode == 0, r.stdout.contains("body=\"flow=f9\"")))
+      }
+    },
+    test("rift script run --engine js runs a file whose extension names no engine") {
+      whenTools { t =>
+        val script = scriptsDir.resolve("js-body.txt")
+        for
+          inferred <- t.riftScriptRun(script)
+          explicit <- t.riftScriptRun(script, List("--engine", "js"))
+        yield assertTrue(
+          inferred.exitCode != 0,
+          (inferred.stdout + inferred.stderr).contains("cannot infer script engine"),
+          explicit.exitCode == 0,
+          explicit.stdout.contains("body=\"js-engine\"")
+        )
       }
     }
   ) @@ TestAspect.withLiveClock @@ TestAspect.sequential @@ TestAspect.timeout(60.seconds)
