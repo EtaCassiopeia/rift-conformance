@@ -127,6 +127,8 @@ addCommandAlias("engineConformance", "testOnly samples.rift.*")
 // `defaultForward` 502, the over-size-body cap) were only verified against the spawned engine, and
 // this list is an allowlist — enrolling an unverified suite would make the embedded job red for a
 // reason that has nothing to do with the envelope contract it exists to pin.
+// FfiAdminParity75Spec (#75) diffs the v2 admin C-ABI against the admin HTTP API on one engine; it
+// no-ops outside RIFT_MODE=embedded, so only this alias actually exercises it.
 addCommandAlias(
   "engineEmbedded",
   "; testOnly samples.rift.ConsistencyGateSuite samples.rift.CoreServing02Suite " +
@@ -134,7 +136,8 @@ addCommandAlias(
     "samples.rift.Templating05Suite samples.rift.Behaviors06Suite samples.rift.SpacesFsm07Suite " +
     "samples.rift.AdminSurface08Suite samples.rift.Reload11Suite samples.rift.Intercept12Suite " +
     "-- --exclude-tags intercept-http,intercept-caller-ca,intercept-runtime,front-door" +
-    " ; testOnly samples.rift.RiftEmbeddedHarnessSpec samples.rift.RiftToolsParseSpec"
+    " ; testOnly samples.rift.RiftEmbeddedHarnessSpec samples.rift.RiftToolsParseSpec" +
+    " samples.rift.FfiAdminParity75Spec"
 )
 
 // Plane A container pass (issue #12, RIFT_MODE=container): the acceptance subset the Docker-run

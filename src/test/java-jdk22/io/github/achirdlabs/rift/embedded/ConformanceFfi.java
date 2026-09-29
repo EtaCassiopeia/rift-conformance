@@ -49,7 +49,13 @@ public final class ConformanceFfi implements EmbeddedFfi {
 
   @Override
   public String buildInfo() {
-    return readAndFree(ffi.buildInfo());
+    // rift_build_info returns a static `const char *`: freeing it would release the engine's own
+    // cached buffer, so it is read but never passed to rift_free.
+    var s = ffi.buildInfo();
+    if (RiftFfi.isNull(s)) {
+      throw engineError();
+    }
+    return RiftFfi.readString(s);
   }
 
   @Override
@@ -79,12 +85,106 @@ public final class ConformanceFfi implements EmbeddedFfi {
   }
 
   @Override
+  public String listImposters(String optionsJson) {
+    try (var a = Arena.ofConfined()) {
+      return readAndFree(ffi.listImposters(handle, FfmCompat.allocateCString(a, optionsJson)));
+    }
+  }
+
+  @Override
+  public String getImposter(int port, String optionsJson) {
+    try (var a = Arena.ofConfined()) {
+      return readAndFree(
+          ffi.getImposter(handle, port, FfmCompat.allocateCString(a, optionsJson)));
+    }
+  }
+
+  @Override
+  public void addStub(int port, String stubJson, int index) {
+    try (var a = Arena.ofConfined()) {
+      check(ffi.addStub(handle, port, FfmCompat.allocateCString(a, stubJson), index));
+    }
+  }
+
+  @Override
+  public String getStub(int port, String refJson) {
+    try (var a = Arena.ofConfined()) {
+      return readAndFree(ffi.getStub(handle, port, FfmCompat.allocateCString(a, refJson)));
+    }
+  }
+
+  @Override
+  public void updateStub(int port, String refJson, String stubJson) {
+    try (var a = Arena.ofConfined()) {
+      check(
+          ffi.updateStub(
+              handle,
+              port,
+              FfmCompat.allocateCString(a, refJson),
+              FfmCompat.allocateCString(a, stubJson)));
+    }
+  }
+
+  @Override
+  public void deleteStub(int port, String refJson) {
+    try (var a = Arena.ofConfined()) {
+      check(ffi.deleteStub(handle, port, FfmCompat.allocateCString(a, refJson)));
+    }
+  }
+
+  @Override
+  public void clearRecorded(int port) {
+    check(ffi.clearRecorded(handle, port));
+  }
+
+  @Override
+  public void clearProxyRecordings(int port) {
+    check(ffi.clearProxyRecordings(handle, port));
+  }
+
+  @Override
+  public void setImposterEnabled(int port, boolean enabled) {
+    check(ffi.setImposterEnabled(handle, port, enabled ? 1 : 0));
+  }
+
+  @Override
+  public String scenarios(int port, String flowId) {
+    try (var a = Arena.ofConfined()) {
+      return readAndFree(ffi.scenarios(handle, port, cStringOrNull(a, flowId)));
+    }
+  }
+
+  @Override
+  public void setScenarioState(int port, String name, String stateJson) {
+    try (var a = Arena.ofConfined()) {
+      check(
+          ffi.setScenarioState(
+              handle,
+              port,
+              FfmCompat.allocateCString(a, name),
+              FfmCompat.allocateCString(a, stateJson)));
+    }
+  }
+
+  @Override
+  public void resetScenarios(int port, String flowId) {
+    try (var a = Arena.ofConfined()) {
+      check(ffi.resetScenarios(handle, port, cStringOrNull(a, flowId)));
+    }
+  }
+
+  @Override
   public void stop() {
     try {
       ffi.stop(handle);
     } finally {
       libArena.close();
     }
+  }
+
+  /** A null {@code flowId} crosses the C-ABI as a null pointer: the imposter's default flow. */
+  private static MemorySegment cStringOrNull(Arena a, String s) {
+    return s == null ? MemorySegment.NULL : FfmCompat.allocateCString(a, s);
   }
 
   private String readAndFree(MemorySegment s) {

@@ -19,6 +19,19 @@ trait EmbeddedFfi:
   def startIntercept(optionsJson: String): String
   def interceptAddRules(rulesJson: String): Unit
   def interceptExportTruststore(format: String, password: String, outPath: String): Unit
+  // The v2 admin long-tail (rift#491, #75). A `null` flowId selects the imposter's default flow.
+  def listImposters(optionsJson: String): String
+  def getImposter(port: Int, optionsJson: String): String
+  def addStub(port: Int, stubJson: String, index: Int): Unit
+  def getStub(port: Int, refJson: String): String
+  def updateStub(port: Int, refJson: String, stubJson: String): Unit
+  def deleteStub(port: Int, refJson: String): Unit
+  def clearRecorded(port: Int): Unit
+  def clearProxyRecordings(port: Int): Unit
+  def setImposterEnabled(port: Int, enabled: Boolean): Unit
+  def scenarios(port: Int, flowId: String): String
+  def setScenarioState(port: Int, name: String, stateJson: String): Unit
+  def resetScenarios(port: Int, flowId: String): Unit
   def stop(): Unit
 
 /** Starts the in-process engine with its real admin API for the Plane A `RiftHarness` embedded mode
@@ -67,6 +80,85 @@ object EmbeddedAdmin:
     /** Export the intercept truststore (PKCS#12) to `outPath`. */
     def interceptExportTruststore(password: String, outPath: String): Task[Unit] =
       ZIO.attemptBlocking(ffi.interceptExportTruststore("pkcs12", password, outPath))
+
+    // ── v2 admin long-tail (rift#491, #75): the C-ABI twins of the imposter admin routes ──
+
+    /** `rift_list_imposters` — the summary list, or the `replayable` projection. */
+    def listImposters(replayable: Boolean = false, removeProxies: Boolean = false): Task[Json] =
+      ZIO
+        .attemptBlocking(ffi.listImposters(viewOptions(replayable, removeProxies)))
+        .flatMap(parseJson)
+
+    /** `rift_get_imposter` — the detail object, or the `replayable` projection. */
+    def getImposter(
+        port: Int,
+        replayable: Boolean = false,
+        removeProxies: Boolean = false
+    ): Task[Json] =
+      ZIO
+        .attemptBlocking(ffi.getImposter(port, viewOptions(replayable, removeProxies)))
+        .flatMap(parseJson)
+
+    /** `rift_add_stub` — insert at `index`, or append when `None` (the C-ABI treats any negative
+      * index as append).
+      */
+    def addStub(port: Int, stub: Json, index: Option[Int] = None): Task[Unit] =
+      ZIO.attemptBlocking(ffi.addStub(port, stub.toJson, index.getOrElse(-1)))
+
+    def getStub(port: Int, ref: StubRef): Task[Json] =
+      ZIO.attemptBlocking(ffi.getStub(port, ref.toJson)).flatMap(parseJson)
+
+    def updateStub(port: Int, ref: StubRef, stub: Json): Task[Unit] =
+      ZIO.attemptBlocking(ffi.updateStub(port, ref.toJson, stub.toJson))
+
+    def deleteStub(port: Int, ref: StubRef): Task[Unit] =
+      ZIO.attemptBlocking(ffi.deleteStub(port, ref.toJson))
+
+    def clearRecorded(port: Int): Task[Unit] =
+      ZIO.attemptBlocking(ffi.clearRecorded(port))
+
+    def clearProxyRecordings(port: Int): Task[Unit] =
+      ZIO.attemptBlocking(ffi.clearProxyRecordings(port))
+
+    def setImposterEnabled(port: Int, enabled: Boolean): Task[Unit] =
+      ZIO.attemptBlocking(ffi.setImposterEnabled(port, enabled))
+
+    /** `rift_scenarios` — `{"flowId","scenarios":[{"name","state"}]}`; `None` = default flow. */
+    def scenarios(port: Int, flowId: Option[String] = None): Task[Json] =
+      ZIO.attemptBlocking(ffi.scenarios(port, flowId.orNull)).flatMap(parseJson)
+
+    def setScenarioState(
+        port: Int,
+        name: String,
+        state: String,
+        flowId: Option[String] = None
+    ): Task[Unit] =
+      val body = Json.Obj(
+        Chunk("state" -> Json.Str(state)) ++ flowId.toList.map(f => "flowId" -> Json.Str(f))
+      )
+      ZIO.attemptBlocking(ffi.setScenarioState(port, name, body.toJson))
+
+    def resetScenarios(port: Int, flowId: Option[String] = None): Task[Unit] =
+      ZIO.attemptBlocking(ffi.resetScenarios(port, flowId.orNull))
+
+  /** How `rift_get_stub`/`rift_update_stub`/`rift_delete_stub` address a stub. */
+  enum StubRef:
+    case ByIndex(index: Int)
+    case ById(id: String)
+
+    def toJson: String = this match
+      case ByIndex(i) => Json.Obj("index" -> Json.Num(i)).toJson
+      case ById(id) => Json.Obj("id" -> Json.Str(id)).toJson
+
+  private def viewOptions(replayable: Boolean, removeProxies: Boolean): String =
+    Json
+      .Obj("replayable" -> Json.Bool(replayable), "removeProxies" -> Json.Bool(removeProxies))
+      .toJson
+
+  private def parseJson(out: String): Task[Json] =
+    ZIO
+      .fromEither(out.fromJson[Json])
+      .mapError(e => new RuntimeException(s"embedded engine answered non-JSON ($e): $out"))
 
   /** Start the in-process engine and its real admin API on loopback:`port` (0 → OS-assigned),
     * seeding `configFile` so `POST /admin/reload` reconciles toward it (feature 11). Scoped: the
