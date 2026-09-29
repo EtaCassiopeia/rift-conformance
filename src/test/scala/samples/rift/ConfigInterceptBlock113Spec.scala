@@ -1,6 +1,9 @@
 package samples.rift
 
+import samples.rift.support.{RawHttpConnection, RawRead}
 import zio.*
+import zio.json.*
+import zio.json.ast.{Json, JsonCursor}
 import zio.test.*
 
 import java.net.URI
@@ -190,6 +193,54 @@ object ConfigInterceptBlock113Spec extends ZIOSpecDefault:
           hosts.contains("declared.example"),
           // The forward rule points at an imposter declared in the same document.
           hosts.contains("forwarded.example")
+        )
+      }
+    },
+    // rift#933: a block rule's serve body may be a JSON object, as on the admin door. It must boot,
+    // list back as an object, and serve its compact rendering through the block's own listener.
+    test(
+      "a block rule with a JSON object body boots, lists as an object, and serves compact JSON"
+    ) {
+      external {
+        for
+          dir <- tempDir
+          impPort <- freePort
+          icPort <- freePort
+          rule =
+            """{"host":"object.example","action":{"serve":{"statusCode":200,"body":{"featureX":"ON"}}}}"""
+          cfg <- writeConfig(dir, "object-body.json", wrapperConfig(impPort, icPort, rule))
+          eng <- engine(cfg)
+          admin = eng._1
+          listed <- send(s"$admin/intercept/rules", "GET", None)
+          listedBody = listed._2
+            .fromJson[Json]
+            .toOption
+            .flatMap(_.asArray)
+            .flatMap(_.headOption)
+            .flatMap(
+              _.get(
+                JsonCursor.field("action").isObject.field("serve").isObject.field("body")
+              ).toOption
+            )
+          truststore <- ZIO.attemptBlocking {
+            val req = HttpRequest
+              .newBuilder(URI.create(s"$admin/intercept/truststore.p12?password=changeit"))
+              .GET()
+              .build()
+            client.send(req, HttpResponse.BodyHandlers.ofByteArray()).body
+          }
+          served <- ZIO.attemptBlocking {
+            val ssl = RawHttpConnection.sslTrusting(truststore, "changeit")
+            val conn = RawHttpConnection.tunnel("127.0.0.1", icPort, "object.example", ssl)
+            try conn.exchange(RawHttpConnection.request("GET", "object.example", "/"))
+            finally conn.close()
+          }
+          servedBody = served match
+            case RawRead.Response(r) if r.status == 200 => Some(r.bodyText)
+            case _ => None
+        yield assertTrue(
+          listedBody.contains(Json.Obj("featureX" -> Json.Str("ON"))),
+          servedBody.contains("""{"featureX":"ON"}""")
         )
       }
     },

@@ -157,3 +157,27 @@ Feature: Intercept / TLS-MITM forward-proxy (rift#413) — CONNECT interception 
     Then the response status is 200
     And the response body is "upstream-ok"
     And the current imposter recorded header "x-multi" as "first" then "second"
+
+  # rift 0.18.0 (rift#933): a serve rule's `body` may be any JSON value, not just a string, as with
+  # `is.body` on an imposter. A non-string body is rendered to compact JSON once, when the rule is
+  # added, and is listed back in the shape it was posted in.
+  @intercept-raw
+  Scenario: an intercept serve rule with a JSON object body serves it as compact JSON (rift#933)
+    Given an intercept rule for host "object-body.example.com" path "/flags" serves the object body with "featureX" set to "ON"
+    When a raw HTTPS GET to "object-body.example.com" "/flags" through the intercept tunnel
+    Then the response status is 200
+    And the response body is the compact JSON object with "featureX" set to "ON"
+    And the response content-length matches its body
+
+  @intercept-raw
+  Scenario: the object body and its escaped-string form serve byte-identical bodies (rift#933)
+    Given an intercept rule for host "object-form.example.com" path "/flags" serves the object body with "featureX" set to "ON"
+    And an intercept rule for host "string-form.example.com" path "/flags" serves the escaped-string body with "featureX" set to "ON"
+    When a raw HTTPS GET to "object-form.example.com" "/flags" through the intercept tunnel
+    Then the response status is 200
+    And the response body is byte-identical to a raw HTTPS GET to "string-form.example.com" "/flags" through the intercept tunnel
+
+  @intercept-http
+  Scenario: GET /intercept/rules lists an object body as an object, not its rendering (rift#933)
+    Given an intercept rule for host "object-list.example.com" path "/flags" serves the object body with "featureX" set to "ON"
+    Then the intercept rule for host "object-list.example.com" lists its serve body as a JSON object with "featureX" set to "ON"

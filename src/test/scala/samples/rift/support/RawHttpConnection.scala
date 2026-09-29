@@ -1,10 +1,18 @@
 package samples.rift.support
 
-import java.io.{BufferedInputStream, ByteArrayOutputStream, EOFException, IOException, InputStream}
+import java.io.{
+  BufferedInputStream,
+  ByteArrayInputStream,
+  ByteArrayOutputStream,
+  EOFException,
+  IOException,
+  InputStream
+}
 import java.net.{InetSocketAddress, Socket, SocketTimeoutException}
 import java.nio.charset.StandardCharsets.{ISO_8859_1, UTF_8}
 import java.util.concurrent.atomic.AtomicReference
-import javax.net.ssl.{SSLContext, SSLSocket}
+import java.security.{KeyStore, SecureRandom}
+import javax.net.ssl.{SSLContext, SSLSocket, TrustManagerFactory}
 
 /** One HTTP/1.1 response exactly as framed on the wire. Header names are lower-cased and kept in
   * wire order, so a repeated header stays repeated.
@@ -86,6 +94,18 @@ final class RawHttpConnection private (socket: Socket):
 object RawHttpConnection:
   /** Connect, read and write-drain bound: generous for CI, far below the scenario timeout. */
   val TimeoutMillis: Int = 10000
+
+  /** A TLS context trusting only the CAs in a PKCS#12 truststore — what a real SUT does with the
+    * intercept listener's exported `truststore.p12` to trust the MITM leaf certificates.
+    */
+  def sslTrusting(truststore: Array[Byte], password: String): SSLContext =
+    val ks = KeyStore.getInstance("PKCS12")
+    ks.load(new ByteArrayInputStream(truststore), password.toCharArray)
+    val tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm)
+    tmf.init(ks)
+    val ctx = SSLContext.getInstance("TLS")
+    ctx.init(null, tmf.getTrustManagers, new SecureRandom())
+    ctx
 
   /** A plaintext connection to `host:port` — the intercept listener before any tunnel exists. */
   def plain(host: String, port: Int): RawHttpConnection =
