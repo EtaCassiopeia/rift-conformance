@@ -90,3 +90,39 @@ Feature: Response templating — request variables and date tokens
     When the client sends "GET" "/users/42/extra"
     Then the response status is 200
     And the response body is "user="
+
+  # rift#1203 (fixed in 0.18.0): text substituted from the REQUEST is data, never re-scanned as a
+  # template token. Each scenario sends a client value that spells a live token; the author's own
+  # tokens still render (proving the pass ran), while the client's token is served literally.
+  # products.csv row id=123 is name=Widget, price=9.99 — `price` stands in for the "secret" column.
+  Scenario: a lookup token sent in the query is served literally while the author's lookup renders
+    Given a fresh imposter from fixture "templating/no-reexpand"
+    When the client sends "GET" "/lookup?id=123&q=%24%7BR%7D%5Bprice%5D"
+    Then the response status is 200
+    And the response body is "q=${R}[price] name=Widget"
+
+  Scenario: a templated response serves a client-sent ${request.headers} token literally
+    Given a fresh imposter from fixture "templating/no-reexpand"
+    When the request header "x-internal" is "SECRET"
+    And the client sends "GET" "/templated?q=%24%7Brequest.headers.x-internal%7D"
+    Then the response status is 200
+    And the response body is "q=${request.headers.x-internal}"
+
+  # The client sends an UNCLOSED token; the author's closing `}` would complete it after substitution.
+  Scenario: a partial token completed by the author's delimiter is served as sent
+    Given a fresh imposter from fixture "templating/no-reexpand"
+    When the request header "x-internal" is "SECRET"
+    And the client sends "GET" "/partial?id=%24%7Brequest.headers.x-internal"
+    Then the response status is 200
+    And the response body is "{\"id\":${request.headers.x-internal}"
+
+  # Deliberate divergence from Mountebank 2.9.1: there, a later `lookup` re-scans the body after an
+  # earlier `copy`, so a client-sent `${R}[price]` would render as `9.99`. Rift treats copied request
+  # text as data (rift#1203) and serves it literally.
+  @rift-only
+  Scenario: copy then lookup serves a client-sent lookup token literally
+    Given a fresh imposter from fixture "templating/no-reexpand"
+    When the request header "X-Q" is "${R}[price]"
+    And the client sends "GET" "/copy-lookup?id=123"
+    Then the response status is 200
+    And the response body is "q=${R}[price] name=Widget"
