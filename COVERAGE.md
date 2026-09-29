@@ -174,6 +174,12 @@ assertion time), not merely "renders some ISO date". Remaining: `06-behaviors`. 
 | Set-Cookie multi-value survives a `copy` (rift#272) | `multi-value Set-Cookie survives a copy behavior (rift#272)` (2 distinct headers) | `behaviors/behaviors` |
 | JS `decorate` rewrites the response | `a JS decorate behavior rewrites the response` | `behaviors/behaviors` |
 | rift#1195: a `behaviors` array runs every `copy` element in order (`GET /copy` → `A=cop B=GET`, as in Mountebank 2.9.1) | `a behaviors array applies every copy element in order` | corpus `21-behaviors-array-copy` (also gated by feature 01 lint + rift-verify `_verify`) |
+| rift#1198: a `behaviors` array runs two `decorate` elements in order (`x` → `x12`) | `a behaviors array runs two decorate elements in order` | `behaviors/array-order` |
+| rift#1198: a `behaviors` array runs two `wait` elements (≥ 600 ms; lower bound only) | `a behaviors array runs two wait elements, delaying for both` | `behaviors/array-order` |
+| rift#1198: array order holds across keys — a `decorate` before a `copy` wins (`DEC-WON`) | `a behaviors array runs a decorate before a later copy` | `behaviors/array-order` |
+| rift#1198: the object form runs in Mountebank's order, `shellTransform` then `decorate` (`SD`) | `the object form runs shellTransform before decorate` | `behaviors/array-order` |
+| rift#1198: object-form `{copy, lookup}` serves a copied lookup token literally | `the object form serves a copied lookup token literally` | `behaviors/array-order` |
+| rift#1199: `GET /imposters` writes a multi-item `copy` back as one `behaviors` element per item (the rift half only; the "a real `mb` accepts it" half needs a Mountebank binary this harness does not run) | `a multi-item copy is written back as one behaviors element per item` | `behaviors/array-order` |
 | rift#1195: a malformed earlier `copy` element is refused with a `400` naming `` `copy` behavior is malformed `` | `a behaviors array with a malformed earlier copy element is refused at creation` | `behaviors/array-copy-malformed` |
 
 **Note on the former `@gap` probes:** the design tagged `shellTransform`-on-static-`is`,

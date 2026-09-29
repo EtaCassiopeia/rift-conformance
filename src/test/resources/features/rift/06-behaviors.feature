@@ -90,3 +90,50 @@ Feature: Response behaviors — copy, lookup, wait, shellTransform, decorate
     When the client posts the imposter fixture "behaviors/array-copy-malformed"
     Then the response status is 400
     And the response body contains "`copy` behavior is malformed"
+
+  # rift#1198 (0.18.0): a `behaviors` ARRAY is an ordered program, run element by element as
+  # Mountebank does. Before, it was folded into one object per key, so the last `decorate` or `wait`
+  # won and the object form's fixed order applied.
+  Scenario: a behaviors array runs two decorate elements in order
+    Given a fresh imposter from fixture "behaviors/array-order"
+    When the client sends "GET" "/decorate-twice"
+    Then the response status is 200
+    And the response body is "x12"
+
+  # Only a lower bound: two 300 ms waits must both apply. No upper bound, so CI jitter cannot flake it.
+  Scenario: a behaviors array runs two wait elements, delaying for both
+    Given a fresh imposter from fixture "behaviors/array-order"
+    When the client sends "GET" "/wait-twice"
+    Then the response status is 200
+    And the response took at least 600 ms
+
+  # The decorate element runs FIRST and consumes `${T}`, so the later copy has no token to fill.
+  Scenario: a behaviors array runs a decorate before a later copy
+    Given a fresh imposter from fixture "behaviors/array-order"
+    When the request header "X-T" is "COPY"
+    And the client sends "GET" "/decorate-then-copy"
+    Then the response status is 200
+    And the response body is "DEC-WON"
+
+  # The object form runs in Mountebank's fixed order, where shellTransform precedes decorate.
+  Scenario: the object form runs shellTransform before decorate
+    Given a fresh imposter from fixture "behaviors/array-order"
+    When the client sends "GET" "/object-order"
+    Then the response status is 200
+    And the response body is "SD"
+
+  # Object form: copy then lookup, and a copied value spelling a lookup token stays literal (rift#1203).
+  Scenario: the object form serves a copied lookup token literally
+    Given a fresh imposter from fixture "behaviors/array-order"
+    When the request header "X-Q" is "${R}[price]"
+    And the client sends "GET" "/object-copy-lookup?id=123"
+    Then the response status is 200
+    And the response body is "q=${R}[price] name=Widget"
+
+  # rift#1199: a multi-item `copy` is written back by GET /imposters as one element per item. Only the
+  # rift half is asserted; "a real mb accepts it" needs a Mountebank binary this harness does not run.
+  Scenario: a multi-item copy is written back as one behaviors element per item
+    Given a fresh imposter from fixture "behaviors/array-order"
+    When the client sends "GET" "/multi-copy"
+    Then the response body is "a=multi b=GET"
+    And the current imposter writes stub 5 back with 2 single-item copy behaviors
