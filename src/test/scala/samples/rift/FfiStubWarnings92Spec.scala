@@ -2,6 +2,7 @@ package samples.rift
 
 import samples.rift.support.EmbeddedAdmin.{Admin, StubRef}
 import samples.rift.support.FfiParity.*
+import samples.rift.support.TestPorts
 import zio.*
 import zio.json.ast.Json
 import zio.test.*
@@ -91,7 +92,7 @@ object FfiStubWarnings92Spec extends ZIOSpecDefault:
     test("an unknown port is an FFI error carrying the engine's message") {
       withEngine { admin =>
         for
-          unknown <- freePort
+          unknown <- TestPorts.next
           failure <- admin.handle
             .stubWarnings(unknown)
             .either

@@ -1,6 +1,6 @@
 package samples.rift
 
-import samples.rift.support.{RiftHarnessConfig, RiftTools}
+import samples.rift.support.{RiftHarnessConfig, RiftTools, TestPorts}
 import zio.*
 import zio.test.*
 
@@ -114,11 +114,7 @@ object AllowInjectionMatrix116Spec extends ZIOSpecDefault:
       using buildDir: Path
   ): ZIO[Scope, Throwable, (String, () => String)] =
     for
-      port <- ZIO.attemptBlocking {
-        val s = new java.net.ServerSocket(0)
-        try s.getLocalPort
-        finally s.close()
-      }
+      port <- TestPorts.next
       log <- ZIO.acquireRelease(
         ZIO.attemptBlocking(Files.createTempFile("rift-gate-", ".log"))
       )(p => ZIO.attemptBlocking(Files.deleteIfExists(p)).orDie)
@@ -407,14 +403,10 @@ object AllowInjectionMatrix116Spec extends ZIOSpecDefault:
     test("POST /intercept/rules refuses an inject rule and accepts a clean serve rule") {
       external {
         for
-          // Released before the engine spawns — it must be, since the engine binds this port. A
+          // Allocated before the engine spawns — it must be, since the engine binds this port. A
           // collision with the engine's own admin probe surfaces as a loud bind failure in the
           // captured log, never as a silent pass.
-          interceptPort <- ZIO.attemptBlocking {
-            val s = new java.net.ServerSocket(0)
-            try s.getLocalPort
-            finally s.close()
-          }
+          interceptPort <- TestPorts.next
           eng <- engine(List("--intercept-port", interceptPort.toString))
           admin = eng._1
           clean <- send(

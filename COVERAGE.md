@@ -567,6 +567,27 @@ fixes below adapt the harness, and every Plane A leg is green again (external, e
 The vendored examples are synced to v0.18.0. `task-management-api.json` carries the rift#808 reorder, so
 the two pinned-divergence drives flip to the advertised `count:1` and `404` (**closes #140**).
 
+### Follow-up: test port allocator closes the remaining TOCTOU (#184)
+
+The `probeFree` fix above closed the "second layer build shares the shared admin port" race, but a
+second, narrower TOCTOU survived in every case that picks a port for a **bespoke, per-case** engine
+(`ConfigInterceptBlock113Spec`, `AllowInjectionMatrix116Spec`, `FileScriptAuthoring87Spec`,
+`MbEjsStringify89Spec`, `SdkCorpusReplay83Spec`, `ShippedExamples120Spec`, `AdminEventsCursor122Spec`,
+`support/FfiParity.scala`, and `RiftHarness.freePort` itself): each called `new ServerSocket(0)`,
+read `getLocalPort`, and closed the socket — releasing an OS ephemeral-range port back to the pool
+between the probe and the spawned rift's own bind. `ConfigInterceptBlock113Spec` flaked on CI with
+exactly that shape (`intercept: bind failed: Address already in use`, filed from PR #183).
+
+New `samples.rift.support.TestPorts` replaces the pattern everywhere above: it allocates from a
+fixed `[20000, 32000)` range that sits outside both Linux's (`32768–60999`) and macOS's
+(`49152–65535`) ephemeral pools, so the JVM's own outgoing connections can no longer contend for the
+same port; it skips any port with a live listener (the same connect-then-bind check `probeFree` uses,
+now shared via `TestPorts.isFree`); and it never hands back a port already dispensed in the same JVM
+run, which also retires the ad hoc `freePort.repeatUntil(_ != port)` workaround `ShippedExamples120Spec`
+carried. `TestPortsSpec` pins distinctness, range membership, and the busy-port skip against a
+deterministic small allocator. Verified on `engineConformance` (external, twice) and `engineEmbedded`
+(JDK 25) against rift 0.18.1.
+
 ### Embedded leg: engine-version split closed, binding gap gone
 
 zio-bdd 1.5.0 (zio-bdd#336) removed `zio-bdd-rift-embedded*`. The embedded engine is now rift-java's

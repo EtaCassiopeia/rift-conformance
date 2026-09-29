@@ -1,6 +1,6 @@
 package samples.rift
 
-import samples.rift.support.{RawHttpConnection, RawRead}
+import samples.rift.support.{RawHttpConnection, RawRead, TestPorts}
 import zio.*
 import zio.json.*
 import zio.json.ast.{Json, JsonCursor}
@@ -51,12 +51,6 @@ object ConfigInterceptBlock113Spec extends ZIOSpecDefault:
       (r.statusCode, r.body)
     }
 
-  private def freePort: Task[Int] = ZIO.attemptBlocking {
-    val s = new java.net.ServerSocket(0)
-    try s.getLocalPort
-    finally s.close()
-  }
-
   /** Hosts of the rules the listener currently holds, in order. */
   private def ruleHosts(admin: String): Task[List[String]] =
     send(s"$admin/intercept/rules", "GET", None).map { case (_, body) =>
@@ -92,7 +86,7 @@ object ConfigInterceptBlock113Spec extends ZIOSpecDefault:
       allowInjection: Boolean = true
   )(using buildDir: Path): ZIO[Scope, Throwable, (String, () => String)] =
     for
-      port <- freePort
+      port <- TestPorts.next
       log <- ZIO.acquireRelease(ZIO.attemptBlocking(Files.createTempFile("rift-cfg-", ".log")))(p =>
         ZIO.attemptBlocking(Files.deleteIfExists(p)).orDie
       )
@@ -156,8 +150,8 @@ object ConfigInterceptBlock113Spec extends ZIOSpecDefault:
       external {
         for
           dir <- tempDir
-          impPort <- freePort
-          icPort <- freePort
+          impPort <- TestPorts.next
+          icPort <- TestPorts.next
           // Two rules, including a `forward` at the imposter declared in the SAME document — the
           // point of the block is that both halves are wired to each other at boot.
           cfg <- writeConfig(
@@ -204,8 +198,8 @@ object ConfigInterceptBlock113Spec extends ZIOSpecDefault:
       external {
         for
           dir <- tempDir
-          impPort <- freePort
-          icPort <- freePort
+          impPort <- TestPorts.next
+          icPort <- TestPorts.next
           rule =
             """{"host":"object.example","action":{"serve":{"statusCode":200,"body":{"featureX":"ON"}}}}"""
           cfg <- writeConfig(dir, "object-body.json", wrapperConfig(impPort, icPort, rule))
@@ -248,8 +242,8 @@ object ConfigInterceptBlock113Spec extends ZIOSpecDefault:
       external {
         for
           dir <- tempDir
-          impPort <- freePort
-          icPort <- freePort
+          impPort <- TestPorts.next
+          icPort <- TestPorts.next
           cfg <- writeConfig(
             dir,
             "declared.json",
@@ -275,8 +269,8 @@ object ConfigInterceptBlock113Spec extends ZIOSpecDefault:
       external {
         for
           dir <- tempDir
-          impPort <- freePort
-          icPort <- freePort
+          impPort <- TestPorts.next
+          icPort <- TestPorts.next
           cfg <- writeConfig(
             dir,
             "declared.json",
@@ -301,9 +295,9 @@ object ConfigInterceptBlock113Spec extends ZIOSpecDefault:
       external {
         for
           dir <- tempDir
-          impPort <- freePort
-          icPort <- freePort
-          clashPort <- freePort
+          impPort <- TestPorts.next
+          icPort <- TestPorts.next
+          clashPort <- TestPorts.next
           cfg <- writeConfig(
             dir,
             "declared.json",
@@ -329,8 +323,8 @@ object ConfigInterceptBlock113Spec extends ZIOSpecDefault:
       external {
         for
           dir <- tempDir
-          impPort <- freePort
-          icPort <- freePort
+          impPort <- TestPorts.next
+          icPort <- TestPorts.next
           poisoned =
             s"""{"host":"declared.example","predicates":[{"inject":"function (c) { return true; }"}],""" +
               """"action":{"serve":{"statusCode":200,"headers":{"content-type":"text/plain"},"body":"x"}}}"""
@@ -353,8 +347,8 @@ object ConfigInterceptBlock113Spec extends ZIOSpecDefault:
       external {
         for
           dir <- tempDir
-          impPort <- freePort
-          icPort <- freePort
+          impPort <- TestPorts.next
+          icPort <- TestPorts.next
           // Single-imposter document: the block would be silently ignored, so the engine refuses.
           cfg <- writeConfig(
             dir,

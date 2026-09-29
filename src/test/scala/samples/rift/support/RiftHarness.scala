@@ -519,9 +519,10 @@ object RiftHarness:
       ZIO.logInfo(s"admin port $preferred busy; falling back to a free port") *> freePort
     }.orDie
 
-  /** Busy means a live listener OR an unbindable port. The connect check comes first because the
-    * bind probe alone cannot see a listener: `ServerSocket` sets SO_REUSEADDR and binds the
-    * wildcard, and on macOS that bind succeeds beside a process listening on IPv4 `0.0.0.0`.
+  /** Busy means a live listener OR an unbindable port — delegates to [[TestPorts.isFree]], which
+    * implements exactly this connect-then-bind check (the connect check has to come first: the bind
+    * probe alone cannot see a listener, since `ServerSocket` sets SO_REUSEADDR and binds the
+    * wildcard, and on macOS that bind succeeds beside a process listening on IPv4 `0.0.0.0`).
     * zio-bdd builds the environment layer more than once per run, so a second build finding "2525
     * free" while the first build's engine holds it spawns a doomed engine. Since rift 0.18.0 binds
     * the admin listener LAST (after metrics and intercept), that doomed engine passes every
@@ -530,28 +531,19 @@ object RiftHarness:
     * ports.
     */
   private def probeFree(port: Int): IO[Throwable, Int] =
-    ZIO.attemptBlocking {
-      val probe = new Socket()
-      val listening =
-        try
-          // IPv4 loopback explicitly: rift binds `0.0.0.0`, which `localhost` resolving to `::1`
-          // would miss.
-          probe.connect(new InetSocketAddress("127.0.0.1", port), 200)
-          true
-        catch case _: java.io.IOException => false // refused/timed out: nobody is listening
-        finally probe.close()
-      if listening then throw new java.net.BindException(s"port $port has a live listener")
-      val s = new ServerSocket(port)
-      s.close()
-      port
+    TestPorts.isFree(port).flatMap {
+      case true => ZIO.succeed(port)
+      case false => ZIO.fail(new java.net.BindException(s"port $port has a live listener"))
     }
-  private[support] def freePort: IO[Throwable, Int] =
-    ZIO.attemptBlocking {
-      val s = new ServerSocket(0)
-      val p = s.getLocalPort
-      s.close()
-      p
-    }
+
+  /** A fresh port for a spawned engine's metrics/intercept/front-door listener, or its admin port
+    * on the fresh-port fallback leg of [[choosePort]]. `TestPorts.next` (#184), not a bare
+    * `ServerSocket(0)`: the latter hands back a port from the OS ephemeral range, which the JVM's
+    * own outgoing connections (and other processes) draw from too — a TOCTOU window between this
+    * probe-and-release and the spawned rift's own bind. See [[TestPorts]]'s scaladoc for the full
+    * rationale.
+    */
+  private[support] def freePort: IO[Throwable, Int] = TestPorts.next
 
   /** RAW spawn — starts `rift` with the given ports (and, when present, a `--configfile`) and
     * registers the same belt-and-braces JVM shutdown hook `layer` always has, but does NOT wrap the

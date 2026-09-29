@@ -1,11 +1,11 @@
 package samples.rift
 
+import samples.rift.support.TestPorts
 import zio.*
 import zio.test.*
 
 import java.net.URI
 import java.net.http.{HttpClient, HttpRequest, HttpResponse}
-import java.net.ServerSocket
 import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Path, Paths}
 
@@ -25,13 +25,6 @@ object MbEjsStringify89Spec extends ZIOSpecDefault:
   private val Inlined = "hello-from-ejs-stringify"
 
   private def buildDir: Option[Path] = sys.env.get("RIFT_BUILD_DIR").map(Paths.get(_))
-
-  private def freePort: Task[Int] =
-    ZIO.attemptBlocking {
-      val s = new ServerSocket(0)
-      try s.getLocalPort
-      finally s.close()
-    }
 
   /** A temp dir holding `greeting.txt` + a `config.ejs` that inlines it via `stringify` on the
     * `imposterPort` imposter; deleted when the scope closes. `stringify` resolves relative to the
@@ -108,9 +101,9 @@ object MbEjsStringify89Spec extends ZIOSpecDefault:
         case Some(bd) =>
           ZIO.scoped {
             for
-              imposterPort <- freePort
-              adminPort <- freePort
-              metricsPort <- freePort
+              imposterPort <- TestPorts.next
+              adminPort <- TestPorts.next
+              metricsPort <- TestPorts.next
               dir <- ejsConfigDir(imposterPort)
               proc <- spawnEngine(bd, dir.resolve("config.ejs"), adminPort, metricsPort)
               _ <- awaitReady(s"http://127.0.0.1:$imposterPort/e", proc)

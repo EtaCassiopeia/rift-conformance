@@ -2,6 +2,7 @@ package samples.rift
 
 import samples.rift.support.EmbeddedAdmin.Admin
 import samples.rift.support.FfiParity.*
+import samples.rift.support.TestPorts
 import zio.*
 import zio.json.*
 import zio.json.ast.Json
@@ -121,7 +122,7 @@ object FfiVerifyParity94Spec extends ZIOSpecDefault:
     test("an unknown port is an FFI error carrying the engine's message") {
       withEngine { admin =>
         for
-          unknown <- freePort
+          unknown <- TestPorts.next
           failure <- admin.handle
             .verify(unknown, verifyBody("/hi"))
             .either

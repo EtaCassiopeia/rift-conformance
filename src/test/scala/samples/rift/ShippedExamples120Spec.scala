@@ -1,6 +1,6 @@
 package samples.rift
 
-import samples.rift.support.RiftTools
+import samples.rift.support.{RiftTools, TestPorts}
 import zio.*
 import zio.json.*
 import zio.json.ast.{Json, JsonCursor}
@@ -8,7 +8,6 @@ import zio.test.*
 
 import java.net.URI
 import java.net.http.{HttpClient, HttpRequest, HttpResponse}
-import java.net.ServerSocket
 import java.nio.file.{Files, Path, Paths}
 import scala.jdk.CollectionConverters.*
 
@@ -187,13 +186,6 @@ object ShippedExamples120Spec extends ZIOSpecDefault:
     // behavior to take effect. Same for authentication's user-not-found and logout stubs: they are
     // plain status responses with no predicate or behavior machinery behind them.
   )
-
-  private def freePort: Task[Int] =
-    ZIO.attemptBlocking {
-      val s = new ServerSocket(0)
-      try s.getLocalPort
-      finally s.close()
-    }
 
   private def spawnEngine(bd: Path, port: Int, metricsPort: Int): ZIO[Scope, Throwable, Process] =
     ZIO.acquireRelease(
@@ -387,10 +379,11 @@ object ShippedExamples120Spec extends ZIOSpecDefault:
       case None => ZIO.none
       case Some(bd) =>
         for
-          port <- freePort
-          // Each freePort closes its socket before returning, so two calls can hand back the same
-          // number — which would spawn the engine with --port == --metrics-port and fail to bind.
-          metricsPort <- freePort.repeatUntil(_ != port)
+          // TestPorts never hands back a port it has already dispensed this JVM run, so — unlike
+          // the old ServerSocket(0) `freePort` — a second call here can't collide with the first and
+          // spawn the engine with --port == --metrics-port.
+          port <- TestPorts.next
+          metricsPort <- TestPorts.next
           proc <- spawnEngine(bd, port, metricsPort)
           _ <- awaitAdmin(port, proc)
           a <- use(port)
