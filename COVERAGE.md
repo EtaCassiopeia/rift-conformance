@@ -154,6 +154,10 @@ Remaining: `05-templating`, `06-behaviors`. #7 closes when feature 06 lands — 
 | `{{DAYS-N}}` renders today-N | `date token DAYS-5 …` (Outline: -5 days) | `templating/templates` |
 | `{{MONTHS+N}}` renders today+N months | `date token MONTHS+1 …` (Outline: +1 months) | `templating/templates` |
 | `{{MONTHS-N}}` renders today-N months | `date token MONTHS-1 …` (Outline: -1 months) | `templating/templates` |
+| rift#1203: query text spelling a `lookup` token is not re-expanded | `a lookup token sent in the query is served literally while the author's lookup renders` | `templating/no-reexpand` |
+| rift#1203: `_rift.templated` serves a client-sent `${request.headers.*}` literally | `a templated response serves a client-sent ${request.headers} token literally` | `templating/no-reexpand` |
+| rift#1203: partial token completed by the author's `}` served as sent | `a partial token completed by the author's delimiter is served as sent` | `templating/no-reexpand` |
+| rift#1203: `behaviors: [{copy},{lookup}]` serves a copied lookup token literally (`@rift-only`: diverges from Mountebank 2.9.1, which re-expands) | `copy then lookup serves a client-sent lookup token literally` | `templating/no-reexpand` |
 
 Date tokens verify the **actual computed offset** (expected date derived from wall-clock at
 assertion time), not merely "renders some ISO date". Remaining: `06-behaviors`. #7 closes when feature 06 lands — now shipped; see the 06 section below.
