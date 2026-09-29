@@ -63,34 +63,31 @@ final case class RiftTools(lint: Path, verify: Path, engine: Path):
     * decision, the mutated flow state, captured `ctx.logger` output and the duration (the
     * debug-mode script trace, #88). No server running.
     */
-  def riftScriptRun(target: Path): IO[Throwable, RiftTools.RawRun] =
-    runCapture(Command(engine.toString, "script", "run", target.toString))
+  def riftScriptRun(target: Path, args: List[String] = Nil): IO[Throwable, RiftTools.RawRun] =
+    runCapture(Command(engine.toString, (List("script", "run", target.toString) ++ args)*))
 
   /** `rift-lint -o json <path>` — since rift#347 stdout is pure JSON (the banner goes to stderr),
     * so counts come straight from the tool's own JSON summary.
     */
-  def riftLint(path: Path): IO[Throwable, LintReport] =
-    runCapture(Command(lint.toString, "-o", "json", path.toString)).flatMap { r =>
+  def riftLint(path: Path, args: List[String] = Nil): IO[Throwable, LintReport] =
+    riftLintRaw(path, List("-o", "json") ++ args).flatMap { r =>
       ZIO.fromEither(RiftTools.parseLint(r)).mapError(new RuntimeException(_))
     }
 
-  /** `rift-verify --admin-url <url> --skip-dynamic --verify-dynamic -o json` against a running
-    * engine — since rift#347 stdout carries only the JSON summary (banner/progress → stderr).
+  /** `rift-lint <args> <path>` unparsed — for the text output and `--fix`, which have no JSON. */
+  def riftLintRaw(path: Path, args: List[String]): IO[Throwable, RiftTools.RawRun] =
+    runCapture(Command(lint.toString, (args :+ path.toString)*))
+
+  /** `rift-verify --admin-url <url> <args> -o json` against a running engine (`args` defaults to
+    * the corpus gate's [[RiftTools.CorpusVerifyArgs]]) — since rift#347 stdout carries only the
+    * JSON summary (banner/progress → stderr).
     */
-  def riftVerify(adminUrl: String): IO[Throwable, VerifyReport] =
+  def riftVerify(
+      adminUrl: String,
+      args: List[String] = RiftTools.CorpusVerifyArgs
+  ): IO[Throwable, VerifyReport] =
     runCapture(
-      Command(
-        verify.toString,
-        "--admin-url",
-        adminUrl,
-        "--skip-dynamic",
-        "--verify-dynamic",
-        // Per-test detail on stderr; the JSON summary on stdout is unaffected (rift#347). Without
-        // it a red gate can only report a count (#126).
-        "--verbose",
-        "-o",
-        "json"
-      )
+      Command(verify.toString, (List("--admin-url", adminUrl) ++ args ++ List("-o", "json"))*)
     ).flatMap { r =>
       ZIO.fromEither(RiftTools.parseVerify(r)).mapError(new RuntimeException(_))
     }
@@ -107,6 +104,13 @@ final case class RiftTools(lint: Path, verify: Path, engine: Path):
     yield RiftTools.RawRun(outs._1, outs._2, code.code)
 
 object RiftTools:
+
+  /** The flags the corpus gate verifies with. `--verbose` puts per-test detail on stderr; the JSON
+    * summary on stdout is unaffected (rift#347). Without it a red gate can only report a count
+    * (#126).
+    */
+  val CorpusVerifyArgs: List[String] = List("--skip-dynamic", "--verify-dynamic", "--verbose")
+
   /** Build the tools from the directory that scripts/build-rift.sh populated. */
   def fromBuildDir(buildDir: Path): RiftTools =
     RiftTools(
