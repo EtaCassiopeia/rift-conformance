@@ -1740,6 +1740,43 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
       yield ()
   }
 
+  // The never-2xx-on-failure sweep (#173): a raw admin request whose status is the assertion, so it
+  // cannot go through the fixture helpers (which demand 201). `payload` names a raw file under
+  // rift-fixtures/ ("-" = no body). Three placeholders, in the path and the payload alike:
+  // `{port}` = the scenario's imposter; `{unknownPort}` = a port with no imposter on it;
+  // `{newPort}` = a fresh port for a CREATE, which also becomes the current imposter so a pinned
+  // gap can drive its data plane. Every probed port is tracked: if a door that should refuse
+  // starts creating, the stray imposter is still torn down.
+  When(
+    "the client sends admin " / string / " " / string / " with payload " / string
+  ) { (method: String, pathTemplate: String, payload: String) =>
+    for
+      admin <- ZIO.serviceWith[RiftHarness](_.adminUrl)
+      body0 <-
+        if payload == "-" then ZIO.none
+        else loadResource(s"/rift-fixtures/$payload.json").asSome
+      mentions = (p: String) => pathTemplate.contains(p) || body0.exists(_.contains(p))
+      port <- if mentions("{port}") then currentPort.asSome else ZIO.none
+      unknown <- if mentions("{unknownPort}") then freeProbePort.tap(track).asSome else ZIO.none
+      fresh <-
+        if mentions("{newPort}") then
+          freeProbePort.tap(p => track(p) *> Stage.put(CurrentPort(p))).asSome
+        else ZIO.none
+      fill = (s: String) =>
+        List("{port}" -> port, "{unknownPort}" -> unknown, "{newPort}" -> fresh).foldLeft(s) {
+          case (acc, (k, v)) => v.fold(acc)(p => acc.replace(k, p.toString))
+        }
+      url = s"$admin${fill(pathTemplate)}"
+      body = body0.map(fill)
+      _ <- recordCurl(
+        s"curl -i -X $method $url -H 'Content-Type: application/json'" +
+          body.fold("")(b => s" -d '$b'")
+      )
+      resp <- httpSend(url, method, Map("Content-Type" -> "application/json"), body)
+      _ <- Stage.put(resp)
+    yield ()
+  }
+
   Given("a fresh verbatim imposter from fixture " / string) { (name: String) =>
     postImposterVerbatimFixture(name).unit
   }
