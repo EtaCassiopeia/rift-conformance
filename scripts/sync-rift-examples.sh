@@ -11,7 +11,7 @@
 set -euo pipefail
 
 REPO="${RIFT_REPO:-achird-labs/rift}"
-VERSION="${RIFT_VERSION:-0.18.0}"
+VERSION="${RIFT_VERSION:-0.18.1}"
 TAG="v${VERSION}"
 DEST="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/corpus/rift-examples"
 CHECK_ONLY=0

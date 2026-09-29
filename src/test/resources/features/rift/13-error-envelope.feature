@@ -209,30 +209,28 @@ Feature: Error-response envelope — the standard {"errors":[{code,message}]} co
       | verify with non-JSON                   | POST   | /imposters/{port}/verify                  | admin-doors/not-json                | 400    | bad data         |
       | get an unknown flow-state key          | GET    | /imposters/{port}/flow-state/f/missing    | -                                   | 404    | no such resource |
 
-  # @gap rift#1220 (a rift#181 regression): a MALFORMED jsonpath/xpath selector is accepted with 201
-  # instead of refused, and the failed extraction is compared as the empty string — so an
-  # `equals body ""` stub matches EVERY request. Pinned as current behavior; when the fix lands the
-  # create answers 400 "bad data" and this flips into the outline above.
-  @gap
-  Scenario Outline: GAP rift#1220 — a malformed <kind> selector is accepted and matches any request
-    When the client sends admin "POST" "/imposters" with payload "admin-doors/bad-<kind>"
-    Then the response status is 201
-    When the request body is "{\"a\":1}"
-    And the client sends "POST" "/anything"
-    Then the response body is "MATCHED"
+  # rift#1220 (a rift#181 regression) and rift#1221, fixed in 0.18.1: a stub whose `jsonpath`/`xpath`
+  # selector or `matches` regex does not compile is refused at every door that parses a stub, with
+  # 400 "bad data" naming the offending selector/regex — including one nested under not/and/or.
+  # Before 0.18.1 both were accepted with 201: the failed extraction compared as "" (so an
+  # `equals body ""` stub matched EVERY request) and the bad regex silently never matched. Probed
+  # with curl against 0.18.1; the named literal is the observed message fragment.
+  Scenario Outline: a malformed <what> is refused at "<door>" with 400 bad data naming it
+    Given a fresh imposter from fixture "admin/base"
+    When the client sends admin "<method>" "<path>" with payload "<payload>"
+    Then the response status is 400
+    And the response is a rift error envelope
+    And the error envelope code is "400"
+    And the error envelope type is "bad data"
+    And the error envelope message contains "<names>"
 
     Examples:
-      | kind     |
-      | jsonpath |
-      | xpath    |
-
-  # @gap rift#1221: an invalid `matches` regex is accepted with 201; the stub silently never
-  # matches, so the request falls through to the empty default response.
-  @gap
-  Scenario: GAP rift#1221 — an invalid matches regex is accepted and the stub never matches
-    When the client sends admin "POST" "/imposters" with payload "admin-doors/bad-regex"
-    Then the response status is 201
-    When the client sends "GET" "/anything"
-    Then the response status is 200
-    And the response body is ""
+      | what                           | door              | method | path                    | payload                       | names                          |
+      | jsonpath selector              | create            | POST   | /imposters              | admin-doors/bad-jsonpath      | selector `$[[[bad`             |
+      | xpath selector                 | create            | POST   | /imposters              | admin-doors/bad-xpath         | selector `//*[[`               |
+      | jsonpath selector under `not`  | create            | POST   | /imposters              | admin-doors/bad-jsonpath-not  | selector `$[[[bad`             |
+      | matches regex                  | create            | POST   | /imposters              | admin-doors/bad-regex         | invalid regex `([`             |
+      | matches regex under `and`      | create            | POST   | /imposters              | admin-doors/bad-regex-and     | invalid regex `([`             |
+      | matches regex on a keyed field | add a stub        | POST   | /imposters/{port}/stubs | admin-doors/stub-bad-regex    | invalid regex `([`             |
+      | xpath selector                 | replace the stubs | PUT    | /imposters/{port}/stubs | admin-doors/stubs-bad-xpath   | selector `//*[[`               |
 

@@ -29,11 +29,12 @@ import scala.jdk.CollectionConverters.*
   * ships no `examples/`, and vendoring keeps this spec hermetic. `scripts/sync-rift-examples.sh
   * --check` is what catches a stale copy at pin-bump time.
   *
-  * Up to v0.18.0 four of the six examples declare port 4545, so they cannot be co-loaded. One
-  * engine serves all of them: load → drive → `DELETE /imposters/{port}` → next. Each example is
-  * served on the port its own document declares (read from the file, not hardcoded here), so a pin
-  * bump that re-vendors examples with new ports (rift#1218 moves three off 4545) needs no code
-  * change here. Rewriting the ports would stop the oracle from replaying the examples *as shipped*.
+  * Since v0.18.1 (rift#1218) every example declares its own port (up to v0.18.0 four shared 4545).
+  * One engine still serves them one at a time: load → drive → `DELETE /imposters/{port}` → next, so
+  * each is replayed alone, as a user loading that one file would. Each example is served on the
+  * port its own document declares (read from the file, not hardcoded here), so a re-vendor with new
+  * ports needs no code change here. Rewriting the ports would stop the oracle from replaying the
+  * examples *as shipped*.
   *
   * Self-gating on `RIFT_BUILD_DIR` like the other tool gates. External-leg only (spawns a real
   * engine + `rift-lint`): absent from the enumerated `engineEmbedded`/`engineContainer` aliases,
@@ -434,26 +435,21 @@ object ShippedExamples120Spec extends ZIOSpecDefault:
       buildDir match
         case None => ZIO.succeed(assertCompletes)
         case Some(bd) =>
-          // One lint run PER FILE: each example is a standalone config, loaded alone, and four of
-          // them share port 4545 by design. Since rift 0.18.0 (#1094) a directory run reports E002
-          // for a port shared across its files, so linting the folder as one run flags a conflict
-          // no real user of these examples can hit. rift#1218 gives each example its own port; once
-          // the pin carries it, lint the directory as one run again (#160).
-          val tools = RiftTools.fromBuildDir(bd)
-          exampleFilesOnDisk.flatMap { onDisk =>
-            ZIO.foreach(onDisk.toList.sorted)(f => tools.riftLint(examplesDir.resolve(f))).map {
-              reports =>
-                val offenders = reports.flatMap(RiftTools.errorOffenders)
-                // Exactly one file per run: a run that checked 0 files would otherwise read green.
-                val lintedEveryFile = reports.forall(_.filesChecked == 1)
-                assertTrue(
-                  reports.forall(_.exitCode == 0),
-                  offenders == List.empty[String],
-                  reports.map(_.errors).sum == 0,
-                  lintedEveryFile,
-                  reports.size == onDisk.size
-                )
-            }
+          // ONE run over the whole directory, exactly as rift's examples/README documents. Since
+          // v0.18.1 (rift#1217/#1218) every example declares its own port, so a directory run's
+          // cross-file E002 port check must also pass (#160).
+          RiftTools.fromBuildDir(bd).riftLint(examplesDir).zip(exampleFilesOnDisk).map {
+            (report, onDisk) =>
+              val offenders = RiftTools.errorOffenders(report)
+              // Exactly the files on disk, not `>=`: a lower bound would stay green if lint silently
+              // skipped one of them.
+              val lintedEveryFile = report.filesChecked == onDisk.size
+              assertTrue(
+                report.exitCode == 0,
+                offenders == List.empty[String],
+                report.errors == 0,
+                lintedEveryFile
+              )
           }
     }
   ) @@ TestAspect.withLiveClock @@ TestAspect.sequential @@ TestAspect.timeout(180.seconds)

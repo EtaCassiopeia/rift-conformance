@@ -115,3 +115,26 @@ Feature: Admin surface — stub-by-id, enable/disable, savedRequests filtering, 
     When the client sends "GET" "/old"
     Then the response status is 200
     And the response body is "old"
+
+  # rift#1219 (fixed in 0.18.1): `GET /imposters/{port}?replayable=true` serves the replayable
+  # config — the same document `GET /imposters?replayable=true` lists — built from the LIVE stubs,
+  # so a stub added after creation is exported too. Before 0.18.1 the route ignored `replayable`
+  # and answered the detail view. Without the flag the detail view is unchanged; asserting both
+  # makes the field checks discriminating. @native-lag: the embedded natives (rift-java 0.3.2)
+  # still carry rift 0.18.0, so engineEmbedded excludes this until they carry >= 0.18.1.
+  @native-lag
+  Scenario: GET /imposters/{port}?replayable=true exports the live stubs without the detail fields
+    Given a fresh imposter from fixture "admin/base"
+    When the client sends admin "POST" "/imposters/{port}/stubs" with payload "admin/added-stub"
+    Then the response status is 200
+    When the client sends admin "GET" "/imposters/{port}" with payload "-"
+    Then the response status is 200
+    And the response JSON has top-level field "numberOfRequests"
+    And the response JSON has top-level field "_links"
+    When the client sends admin "GET" "/imposters/{port}?replayable=true" with payload "-"
+    Then the response status is 200
+    And the response JSON has no top-level field "requests"
+    And the response JSON has no top-level field "numberOfRequests"
+    And the response JSON has no top-level field "_links"
+    And the response JSON has 2 stubs and none carries "_links"
+    And the response body contains "/added"
