@@ -550,7 +550,11 @@ These are already tracked by open issues filed as the releases shipped:
   and then EOF. After a `413` whose 4 KiB tail is back-to-back `GET /smuggled` requests, the next
   request is either answered correctly or the connection is closed, and is never answered from the
   tail. External, embedded and container. `407` is not covered: it needs an `--intercept-auth` engine.
-- intercept multi-value headers and HTTP/2 negotiation: #152
+- intercept multi-value headers and HTTP/2 negotiation: #152 — **covered** in `12-intercept`. An
+  `HTTP_2` JDK client negotiates h2 through the tunnel (ALPN) and gets the served body. Two `x-multi`
+  header lines, sent with the raw client, match a rule keyed on either value, and a forward rule
+  delivers both values, in order, to the imposter (read back from its recorded request). External,
+  embedded and container.
 - reload re-applying front-door routes: #153
 - behaviors on proxy/inject responses: #154
 - repeated copy behaviors: #155
