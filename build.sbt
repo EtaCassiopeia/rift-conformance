@@ -138,14 +138,17 @@ addCommandAlias("engineConformance", "testOnly samples.rift.*")
 // FfiAdminParity75Spec (#75), FfiStubWarnings92Spec (#92), FfiVerifyParity94Spec (#94) and
 // FfiLongTail205Spec (#205) diff C-ABI calls against the admin HTTP API on one engine; they no-op
 // outside RIFT_MODE=embedded, so only this alias runs them.
+// 21-admin-rest (#200) runs here too, minus `@admin-isolated`: its DELETE /imposters scenarios need a
+// second, raw-spawned engine (the recipe `upstream-trust` uses), which only external mode can start.
 addCommandAlias(
   "engineEmbedded",
   "; testOnly samples.rift.ConsistencyGateSuite samples.rift.CoreServing02Suite " +
     "samples.rift.FaultsTransport03Suite samples.rift.ScriptingBounds04Suite " +
     "samples.rift.Templating05Suite samples.rift.Behaviors06Suite samples.rift.SpacesFsm07Suite " +
     "samples.rift.AdminSurface08Suite samples.rift.Reload11Suite samples.rift.Intercept12Suite " +
-    "samples.rift.BehaviorsResponseTypes14Suite " +
-    "-- --exclude-tags intercept-http,intercept-caller-ca,intercept-runtime,front-door,upstream-trust" +
+    "samples.rift.BehaviorsResponseTypes14Suite samples.rift.AdminRest21Suite " +
+    "-- --exclude-tags intercept-http,intercept-caller-ca,intercept-runtime,front-door,upstream-trust," +
+    "admin-isolated" +
     " ; testOnly samples.rift.RiftEmbeddedHarnessSpec samples.rift.RiftToolsParseSpec" +
     " samples.rift.FfiAdminParity75Spec samples.rift.FfiStubWarnings92Spec" +
     " samples.rift.FfiVerifyParity94Spec samples.rift.FfiLongTail205Spec"

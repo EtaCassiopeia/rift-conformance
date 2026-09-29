@@ -127,6 +127,17 @@ trait RiftHarness:
     */
   def stopUpstreamTrustEngine: Task[Unit] = ZIO.unit
 
+  /** Start a dedicated plain engine and return its admin URL — feature 21 `@admin-isolated`
+    * (rift-conformance#200): `DELETE /imposters` wipes every imposter on the engine it hits, so it
+    * cannot run against the shared one. External mode only; the other modes fail and the scenarios
+    * are excluded there by tag.
+    */
+  def startIsolatedAdminEngine: Task[String] =
+    ZIO.fail(new UnsupportedOperationException("the isolated admin engine is external-mode only"))
+
+  /** Reap the [[startIsolatedAdminEngine]] engine if one is running; a no-op otherwise. */
+  def stopIsolatedAdminEngine: Task[Unit] = ZIO.unit
+
   /** Swap in a `--configfile`-backed engine for the life of the returned `Scope`, reverting to a
     * plain engine (same admin/metrics ports) when the scope closes.
     */
@@ -238,6 +249,7 @@ private final class RiftHarnessLive(
     pendingConfigRef: Ref[Option[Path]],
     runtimeInterceptRef: Ref[Option[(Process, String)]],
     upstreamTrustRef: Ref[Option[Process]],
+    isolatedAdminRef: Ref[Option[Process]],
     val tools: RiftTools,
     info: RiftBuildInfo
 ) extends RiftHarness:
@@ -293,6 +305,23 @@ private final class RiftHarnessLive(
 
   override def stopUpstreamTrustEngine: Task[Unit] =
     upstreamTrustRef.getAndSet(None).flatMap(_.fold(ZIO.unit)(RiftHarness.killProcess))
+
+  /** Same spawn-adopt-await discipline as [[startRuntimeInterceptEngine]]. */
+  override def startIsolatedAdminEngine: Task[String] =
+    for
+      _ <- stopIsolatedAdminEngine
+      port <- RiftHarness.freePort
+      metricsPort <- RiftHarness.freePort
+      proc <- RiftHarness.rawSpawn(cfg, port, metricsPort, None, None)
+      url = s"http://localhost:$port"
+      _ <- isolatedAdminRef.set(Some(proc))
+      _ <- RiftHarness
+        .awaitReady(s"$url/imposters", proc)
+        .onError(_ => RiftHarness.killProcess(proc).ignore)
+    yield url
+
+  override def stopIsolatedAdminEngine: Task[Unit] =
+    isolatedAdminRef.getAndSet(None).flatMap(_.fold(ZIO.unit)(RiftHarness.killProcess))
 
   override def stopRuntimeInterceptEngine: Task[Unit] =
     runtimeInterceptRef.getAndSet(None).flatMap {
@@ -498,6 +527,8 @@ object RiftHarness:
       runtimeInterceptRef <- Ref.make(Option.empty[(Process, String)])
       // The feature-09 @upstream-trust engine, reaped here too for the same reason.
       upstreamTrustRef <- Ref.make(Option.empty[Process])
+      // The feature-21 @admin-isolated engine, likewise.
+      isolatedAdminRef <- Ref.make(Option.empty[Process])
       // A closure over `engineRef`, NOT `proc0` directly — this is what lets a later swap (and
       // revert) still be reaped at layer-scope close.
       _ <- ZIO.addFinalizer(engineRef.get.flatMap(killProcess).orDie)
@@ -506,6 +537,7 @@ object RiftHarness:
         case None => ZIO.unit
       })
       _ <- ZIO.addFinalizer(upstreamTrustRef.get.flatMap(_.fold(ZIO.unit)(killProcess(_).orDie)))
+      _ <- ZIO.addFinalizer(isolatedAdminRef.get.flatMap(_.fold(ZIO.unit)(killProcess(_).orDie)))
     yield RiftHarnessLive(
       s"http://localhost:$port",
       s"http://localhost:$metricsPort",
@@ -517,6 +549,7 @@ object RiftHarness:
       pendingConfigRef,
       runtimeInterceptRef,
       upstreamTrustRef,
+      isolatedAdminRef,
       RiftTools.fromBuildDir(cfg.buildDir),
       info
     )
