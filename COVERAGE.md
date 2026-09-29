@@ -636,6 +636,27 @@ set, so a regression there would wipe other scenarios' imposters).
 | A **malformed `jsonpath`/`xpath` selector** is accepted (`201`), and the failed extraction is compared as `""`, so an `equals body ""` stub matches every request — a rift#181 regression | [#1220](https://github.com/achird-labs/rift/issues/1220) | **`@gap`** — pinned in `13-error-envelope` (201 + `MATCHED` for any body); flips to a row of the outline (`400 "bad data"`) on fix |
 | An **invalid `matches` regex** is accepted (`201`); the stub silently never matches | [#1221](https://github.com/achird-labs/rift/issues/1221) | **`@gap`** — pinned in `13-error-envelope` (201 + the empty default response); flips to `400` on fix |
 
+### Flow-store backend parity, in-memory vs Redis (#174, umbrella #115)
+
+The backend-parity class (rift#537/#562/#987). `15-flow-store-redis` drives each flow-state
+scenario once per backend against the same fixture (`rift-fixtures/flowstore/`). The step forces
+`_rift.flowState.backend`, and for Redis adds `redis: {url, keyPrefix}` with a prefix unique to the
+scenario, following rift's docs/features/flow-state.md. Every row asserts literal values, so a
+divergence fails the Redis row alone:
+
+| Row | Asserted (identical on both backends) |
+|---|---|
+| scenario-state transitions (`requiredScenarioState`/`newScenarioState`) | `Started→paid→shipped` with statuses 201/202/200; the terminal state holds |
+| `ctx.state` `incr_by`/`exists`/`cas`/`ttl` from a script | `5`,`10`; `exists` false→true; `cas` `true:v2`, stale `false:v2`; `ttl(k,0)` → `true:false`; `ttl` on an absent key → `false` |
+| flow-state TTL expiry (`ttlSeconds: 1`) | `v1`, then `EXPIRED` after 2.5 s |
+| `{{ state.* }}` in a header (`stateOps` increment) | `X-Hits` = `""`, `1`, `2` (reads the value from before the increment) |
+| state really lives in Redis | the key `<prefix>flow:<port>:k` exists in the container, so a silent fallback to in-memory cannot pass |
+
+No divergence on 0.18.0. The suite is `samples.redis.FlowStoreRedis15Suite`, outside
+`engineConformance`'s `samples.rift.*` because it needs Docker. Run it with `RIFT_IT=1 sbt
+engineRedis`. The harness owns the `redis:7-alpine` container (testcontainers, a JVM shutdown hook,
+Ryuk as the backstop). CI job `plane-a-redis` runs it on every push.
+
 ## v0.15.0 new-capability coverage gaps (pin bump 0.14.0 → 0.15.0) — tracked by [#72](https://github.com/EtaCassiopeia/rift-conformance/issues/72)
 
 Verified green on the bump: all 14 Plane A features pass against 0.15.0 with no conforming change.

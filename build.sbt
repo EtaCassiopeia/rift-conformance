@@ -189,8 +189,14 @@ addCommandAlias(
 // `reload` (or start a new sbt) first.
 addCommandAlias(
   "lintFeatures",
-  """;set Test / javaOptions += "-Drift.dryRun=true";testOnly samples.rift.*Suite -- --dry-run"""
+  """;set Test / javaOptions += "-Drift.dryRun=true";testOnly samples.rift.*Suite samples.redis.*Suite -- --dry-run"""
 )
+
+// Flow-store backend parity (#174): feature 15 drives the same flow-state scenarios against an
+// in-memory and a Redis-backed imposter. It needs Docker (a redis:7-alpine container the harness
+// starts itself) and the external engine, so it lives in `samples.redis` — outside
+// `engineConformance`'s `samples.rift.*` — and runs only here, with RIFT_IT=1.
+addCommandAlias("engineRedis", "testOnly samples.redis.*")
 addCommandAlias("mockSmoke", "testOnly samples.mock.* -- --include-tags smoke")
 // `rift` is excluded alongside scripting/templating/proxyrecord/intercept — matching zio-bdd-samples'
 // scripts/conformance.sh (`--exclude-tags scripting,templating,proxyrecord,rift`) plus `intercept`
