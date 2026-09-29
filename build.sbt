@@ -129,6 +129,7 @@ addCommandAlias("engineConformance", "testOnly samples.rift.*")
 // `defaultForward` 502, the over-size-body cap) were only verified against the spawned engine, and
 // this list is an allowlist — enrolling an unverified suite would make the embedded job red for a
 // reason that has nothing to do with the envelope contract it exists to pin.
+// 14-behaviors-response-types (#154) was verified green on the embedded leg before being enrolled.
 // FfiAdminParity75Spec (#75), FfiStubWarnings92Spec (#92) and FfiVerifyParity94Spec (#94) diff
 // C-ABI calls against the admin HTTP API on one engine; they no-op outside RIFT_MODE=embedded, so
 // only this alias runs them.
@@ -138,6 +139,7 @@ addCommandAlias(
     "samples.rift.FaultsTransport03Suite samples.rift.ScriptingBounds04Suite " +
     "samples.rift.Templating05Suite samples.rift.Behaviors06Suite samples.rift.SpacesFsm07Suite " +
     "samples.rift.AdminSurface08Suite samples.rift.Reload11Suite samples.rift.Intercept12Suite " +
+    "samples.rift.BehaviorsResponseTypes14Suite " +
     "-- --exclude-tags intercept-http,intercept-caller-ca,intercept-runtime,front-door,upstream-trust" +
     " ; testOnly samples.rift.RiftEmbeddedHarnessSpec samples.rift.RiftToolsParseSpec" +
     " samples.rift.FfiAdminParity75Spec samples.rift.FfiStubWarnings92Spec" +
