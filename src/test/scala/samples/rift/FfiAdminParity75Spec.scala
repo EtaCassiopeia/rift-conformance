@@ -1,16 +1,11 @@
 package samples.rift
 
-import samples.rift.support.EmbeddedAdmin
 import samples.rift.support.EmbeddedAdmin.{Admin, StubRef}
+import samples.rift.support.FfiParity.*
 import zio.*
 import zio.json.*
 import zio.json.ast.Json
 import zio.test.*
-
-import java.net.{ServerSocket, URI}
-import java.net.http.{HttpClient, HttpRequest, HttpResponse}
-import java.nio.charset.StandardCharsets
-import java.nio.file.{Files, Path}
 
 /** FFI ↔ admin-HTTP parity for the 12 v2 admin C-ABI symbols (rift#491/#513, #75).
   *
@@ -35,68 +30,8 @@ import java.nio.file.{Files, Path}
   */
 object FfiAdminParity75Spec extends ZIOSpecDefault:
 
-  private val client = HttpClient.newHttpClient()
-
-  private final case class Resp(status: Int, body: String)
-
-  private def http(method: String, url: String, body: Option[String] = None): Task[Resp] =
-    ZIO.attemptBlocking {
-      val publisher =
-        body.fold(HttpRequest.BodyPublishers.noBody())(HttpRequest.BodyPublishers.ofString)
-      val req = HttpRequest
-        .newBuilder(URI.create(url))
-        .header("Content-Type", "application/json")
-        .method(method, publisher)
-        .build()
-      val resp = client.send(req, HttpResponse.BodyHandlers.ofString())
-      Resp(resp.statusCode, resp.body)
-    }
-
-  /** An HTTP call that must answer `expected`; its body parsed as JSON (an empty body is `null`).
-    */
-  private def httpJson(
-      method: String,
-      url: String,
-      body: Option[String] = None,
-      expected: Int = 200
-  ): Task[Json] =
-    http(method, url, body).flatMap { r =>
-      if r.status != expected then
-        ZIO.fail(
-          new RuntimeException(s"$method $url -> ${r.status} (expected $expected): ${r.body}")
-        )
-      else if r.body.isBlank then ZIO.succeed(Json.Null)
-      else
-        ZIO
-          .fromEither(r.body.fromJson[Json])
-          .mapError(e => new RuntimeException(s"$method $url answered non-JSON ($e): ${r.body}"))
-    }
-
-  /** Order-insensitive object keys, `_links` (HTTP-only hypermedia) removed; arrays keep order. */
-  private def norm(j: Json): Json = j match
-    case Json.Obj(fields) =>
-      Json.Obj(fields.filterNot(_._1 == "_links").map((k, v) => k -> norm(v)).sortBy(_._1))
-    case Json.Arr(elems) => Json.Arr(elems.map(norm))
-    case other => other
-
-  private def field(j: Json, name: String): Json = j match
-    case Json.Obj(fields) => fields.collectFirst { case (`name`, v) => v }.getOrElse(Json.Null)
-    case _ => Json.Null
-
-  private def arr(j: Json): Chunk[Json] = j match
-    case Json.Arr(elems) => elems
-    case _ => Chunk.empty
-
-  private def str(j: Json): Option[String] = j match
-    case Json.Str(s) => Some(s)
-    case _ => None
-
   private def firstResponseKind(stub: Json): Option[String] =
     arr(field(stub, "responses")).headOption.flatMap(r => fieldNames(r).find(_ != "_behaviors"))
-
-  private def fieldNames(j: Json): Set[String] = j match
-    case Json.Obj(fields) => fields.map(_._1).toSet
-    case _ => Set.empty
 
   /** A `{"imposters":[…]}` listing keyed by port, normalised. */
   private def byPort(list: Json): Map[Int, Json] =
@@ -107,24 +42,6 @@ object FfiAdminParity75Spec extends ZIOSpecDefault:
     }.toMap
 
   private def stubIds(stubs: Json): Chunk[Option[String]] = arr(stubs).map(s => str(field(s, "id")))
-
-  private def freePort: Task[Int] =
-    ZIO.attemptBlocking {
-      val s = new ServerSocket(0)
-      try s.getLocalPort
-      finally s.close()
-    }
-
-  // ── fixtures ──
-
-  private def stub(id: String, path: String, body: String): Json =
-    Json.Obj(
-      "id" -> Json.Str(id),
-      "predicates" -> Json.Arr(Json.Obj("equals" -> Json.Obj("path" -> Json.Str(path)))),
-      "responses" -> Json.Arr(
-        Json.Obj("is" -> Json.Obj("statusCode" -> Json.Num(200), "body" -> Json.Str(body)))
-      )
-    )
 
   private val TwoStubs = Chunk(stub("a", "/a", "A"), stub("b", "/b", "B"))
 
@@ -142,46 +59,16 @@ object FfiAdminParity75Spec extends ZIOSpecDefault:
       )
     Chunk(fsmStub("Started", Some("done"), 201), fsmStub("done", None, 200))
 
-  private def imposterJson(port: Int, stubs: Chunk[Json], extra: (String, Json)*): String =
-    Json
-      .Obj(
-        Chunk(
-          "protocol" -> Json.Str("http"),
-          "port" -> Json.Num(port),
-          "recordRequests" -> Json.Bool(true),
-          "stubs" -> Json.Arr(stubs)
-        ) ++ extra
-      )
-      .toJson
-
   private val InMemoryFlowState: (String, Json) =
     "_rift" -> Json.Obj("flowState" -> Json.Obj("backend" -> Json.Str("inmemory")))
-
-  /** Create an imposter over HTTP on a fresh port; yields the port. */
-  private def create(admin: Admin, stubs: Chunk[Json], extra: (String, Json)*): Task[Int] =
-    for
-      port <- freePort
-      _ <- httpJson(
-        "POST",
-        s"${admin.adminUrl}/imposters",
-        Some(imposterJson(port, stubs, extra*)),
-        201
-      )
-    yield port
 
   /** Two identical imposters: the first is mutated over FFI, the second over HTTP. */
   private def twins(admin: Admin, stubs: Chunk[Json], extra: (String, Json)*): Task[(Int, Int)] =
     create(admin, stubs, extra*).zip(create(admin, stubs, extra*))
 
-  private def hit(port: Int, path: String): Task[Int] =
-    http("GET", s"http://127.0.0.1:$port$path").map(_.status)
-
   /** The imposter's live stubs as `GET /imposters/{port}` reports them. */
   private def httpStubs(admin: Admin, port: Int): Task[Json] =
     httpImposter(admin, port).map(j => norm(field(j, "stubs")))
-
-  private def httpImposter(admin: Admin, port: Int): Task[Json] =
-    httpJson("GET", s"${admin.adminUrl}/imposters/$port")
 
   private def httpScenarios(admin: Admin, port: Int, flowId: Option[String] = None): Task[Json] =
     httpJson(
@@ -194,31 +81,6 @@ object FfiAdminParity75Spec extends ZIOSpecDefault:
     arr(field(scenarios, "scenarios"))
       .find(s => str(field(s, "name")).contains(name))
       .flatMap(s => str(field(s, "state")))
-
-  // ── engine: one per spec, shared by every case ──
-
-  private val embedded: Boolean =
-    sys.env.getOrElse("RIFT_MODE", "external").trim.equalsIgnoreCase("embedded")
-
-  private val emptyConfig: ZIO[Scope, Throwable, Path] =
-    ZIO.acquireRelease(
-      ZIO.attemptBlocking {
-        val p = Files.createTempFile("rift-ffi-parity-75-", ".json")
-        Files.write(p, """{"imposters":[]}""".getBytes(StandardCharsets.UTF_8))
-        p
-      }
-    )(p => ZIO.attemptBlocking(Files.deleteIfExists(p)).orDie)
-
-  private val engine: ZLayer[Any, Throwable, Option[Admin]] =
-    ZLayer.scoped {
-      if !embedded || !EmbeddedAdmin.available then ZIO.none
-      else emptyConfig.flatMap(cfg => EmbeddedAdmin.serve(0, cfg)).asSome
-    }
-
-  private def withEngine(
-      f: Admin => Task[TestResult]
-  ): ZIO[Option[Admin], Throwable, TestResult] =
-    ZIO.serviceWithZIO[Option[Admin]](_.fold(ZIO.succeed(assertCompletes))(f))
 
   def spec = suite("FFI ↔ admin HTTP parity: v2 admin C-ABI (embedded, #75)")(
     test("rift_list_imposters matches GET /imposters (summary and replayable)") {

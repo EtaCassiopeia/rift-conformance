@@ -174,6 +174,11 @@ public final class ConformanceFfi implements EmbeddedFfi {
   }
 
   @Override
+  public String stubWarnings(int port) {
+    return readAndFree(ffi.stubWarnings(handle, port));
+  }
+
+  @Override
   public void stop() {
     try {
       ffi.stop(handle);
