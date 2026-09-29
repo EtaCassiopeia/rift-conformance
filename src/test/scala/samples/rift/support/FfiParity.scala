@@ -24,15 +24,20 @@ object FfiParity:
 
   final case class Resp(status: Int, body: String)
 
-  def http(method: String, url: String, body: Option[String] = None): Task[Resp] =
+  def http(
+      method: String,
+      url: String,
+      body: Option[String] = None,
+      headers: Map[String, String] = Map.empty
+  ): Task[Resp] =
     ZIO.attemptBlocking {
       val publisher =
         body.fold(HttpRequest.BodyPublishers.noBody())(HttpRequest.BodyPublishers.ofString)
-      val req = HttpRequest
+      val builder = HttpRequest
         .newBuilder(URI.create(url))
         .header("Content-Type", "application/json")
-        .method(method, publisher)
-        .build()
+      headers.foreach((k, v) => builder.header(k, v))
+      val req = builder.method(method, publisher).build()
       val resp = client.send(req, HttpResponse.BodyHandlers.ofString())
       Resp(resp.statusCode, resp.body)
     }
