@@ -112,6 +112,20 @@ trait RiftHarness:
     */
   def stopRuntimeInterceptEngine: Task[Unit] = ZIO.unit
 
+  /** Start a dedicated plain engine with `--upstream-ca-file` pointing at the committed test CA
+    * (`rift-fixtures/intercept/ca-cert.pem`) and return its admin URL — feature 09
+    * `@upstream-trust` (rift#974): its proxy stubs trust an HTTPS upstream serving a leaf that CA
+    * signed, where the shared engine (no flag) refuses it. External mode only; the other modes
+    * cannot spawn a second engine, so they fail and the scenario is excluded there by tag.
+    */
+  def startUpstreamTrustEngine: Task[String] =
+    ZIO.fail(new UnsupportedOperationException("the upstream-trust engine is external-mode only"))
+
+  /** Reap the [[startUpstreamTrustEngine]] engine if one is running; a no-op otherwise, so it is
+    * safe to call unconditionally from a cleanup hook.
+    */
+  def stopUpstreamTrustEngine: Task[Unit] = ZIO.unit
+
   /** Swap in a `--configfile`-backed engine for the life of the returned `Scope`, reverting to a
     * plain engine (same admin/metrics ports) when the scope closes.
     */
@@ -208,6 +222,7 @@ private final class RiftHarnessLive(
     engineRef: Ref[Process],
     pendingConfigRef: Ref[Option[Path]],
     runtimeInterceptRef: Ref[Option[(Process, String)]],
+    upstreamTrustRef: Ref[Option[Process]],
     val tools: RiftTools,
     info: RiftBuildInfo
 ) extends RiftHarness:
@@ -243,6 +258,26 @@ private final class RiftHarnessLive(
       case Some((_, url)) => ZIO.succeed(url)
       case None => ZIO.fail(new IllegalStateException("no runtime-intercept engine started"))
     }
+
+  /** Same spawn-adopt-await discipline as [[startRuntimeInterceptEngine]]. */
+  override def startUpstreamTrustEngine: Task[String] =
+    for
+      _ <- stopUpstreamTrustEngine
+      ca <- ZIO
+        .fromOption(RiftHarness.interceptCa)
+        .orElseFail(new IllegalStateException("test CA fixture rift-fixtures/intercept missing"))
+      port <- RiftHarness.freePort
+      metricsPort <- RiftHarness.freePort
+      proc <- RiftHarness.rawSpawn(cfg, port, metricsPort, None, None, upstreamCaFile = Some(ca._1))
+      url = s"http://localhost:$port"
+      _ <- upstreamTrustRef.set(Some(proc))
+      _ <- RiftHarness
+        .awaitReady(s"$url/imposters", proc)
+        .onError(_ => RiftHarness.killProcess(proc).ignore)
+    yield url
+
+  override def stopUpstreamTrustEngine: Task[Unit] =
+    upstreamTrustRef.getAndSet(None).flatMap(_.fold(ZIO.unit)(RiftHarness.killProcess))
 
   override def stopRuntimeInterceptEngine: Task[Unit] =
     runtimeInterceptRef.getAndSet(None).flatMap {
@@ -417,6 +452,8 @@ object RiftHarness:
       // The runtime-intercept sidecar engine (feature 12, @intercept-runtime): started/stopped
       // per-scenario, but reaped here too so an aborted scenario never leaks it past layer-scope.
       runtimeInterceptRef <- Ref.make(Option.empty[(Process, String)])
+      // The feature-09 @upstream-trust engine, reaped here too for the same reason.
+      upstreamTrustRef <- Ref.make(Option.empty[Process])
       // A closure over `engineRef`, NOT `proc0` directly — this is what lets a later swap (and
       // revert) still be reaped at layer-scope close.
       _ <- ZIO.addFinalizer(engineRef.get.flatMap(killProcess).orDie)
@@ -424,6 +461,7 @@ object RiftHarness:
         case Some((proc, _)) => killProcess(proc).orDie
         case None => ZIO.unit
       })
+      _ <- ZIO.addFinalizer(upstreamTrustRef.get.flatMap(_.fold(ZIO.unit)(killProcess(_).orDie)))
     yield RiftHarnessLive(
       s"http://localhost:$port",
       s"http://localhost:$metricsPort",
@@ -434,6 +472,7 @@ object RiftHarness:
       engineRef,
       pendingConfigRef,
       runtimeInterceptRef,
+      upstreamTrustRef,
       RiftTools.fromBuildDir(cfg.buildDir),
       info
     )
@@ -526,7 +565,8 @@ object RiftHarness:
       metricsPort: Int,
       configFile: Option[Path],
       interceptPort: Option[Int],
-      frontDoorPort: Option[Int] = None
+      frontDoorPort: Option[Int] = None,
+      upstreamCaFile: Option[Path] = None
   ): Task[Process] =
     ZIO.attemptBlocking {
       val binary = cfg.buildDir.resolve("rift").toString
@@ -556,6 +596,7 @@ object RiftHarness:
         configFile.toList.flatMap(p => List("--configfile", p.toString)) ++
         interceptPort.toList.flatMap(p => List("--intercept-port", p.toString)) ++
         frontDoorPort.toList.flatMap(p => List("--front-door", p.toString)) ++
+        upstreamCaFile.toList.flatMap(p => List("--upstream-ca-file", p.toString)) ++
         caArgs
       val pb = new ProcessBuilder(args*)
       pb.directory(cfg.corpusRoot.toFile)

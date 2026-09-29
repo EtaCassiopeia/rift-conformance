@@ -12,7 +12,7 @@ import java.net.{InetSocketAddress, ServerSocket, Socket, URI}
 import java.net.http.{HttpClient, HttpRequest, HttpResponse}
 import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Path, Paths}
-import javax.net.ssl.{SSLContext, TrustManager, X509TrustManager}
+import javax.net.ssl.{KeyManagerFactory, SSLContext, TrustManager, X509TrustManager}
 import scala.jdk.CollectionConverters.*
 
 /** Sending a body the server may reject mid-upload (issue #131).
@@ -263,6 +263,9 @@ final case class ConcurrentBurst(
   */
 final case class ReloadActive(active: Boolean)
 
+/** The port of this scenario's HTTPS upstream imposter (feature 09 `@upstream-trust`, rift#974). */
+final case class UpstreamPort(port: Int)
+
 /** The front-door port of this scenario's `--front-door` reload engine (feature 11, rift#1160). */
 final case class FrontDoorPort(port: Int)
 
@@ -336,6 +339,15 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
         .when(ra.active)
         .unit
     }
+  }
+
+  // Reap the feature-09 @upstream-trust engine (rift#974) if this scenario started one; a no-op
+  // otherwise. Same swallow-but-log posture as the hooks above.
+  afterScenario {
+    ZIO
+      .serviceWithZIO[RiftHarness](_.stopUpstreamTrustEngine)
+      .tapError(e => ZIO.logWarning(s"upstream-trust engine teardown failed: ${e.getMessage}"))
+      .ignore
   }
 
   // ── Stage accessors ─────────────────────────────────────────────────────────────────────
@@ -420,25 +432,32 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
   /** Load a fixture imposter, assign it a fresh 48xx port, POST it to the admin API, and track it.
     */
   protected def postImposterFromFixture(name: String): ZIO[RiftHarness, Throwable, Int] =
-    loadFixture(name).flatMap(rewriteFixtureJson).flatMap { raw =>
-      // Pick a port and POST it; a non-201 usually means the freshly-probed port was taken between
-      // the probe and the engine's bind (TOCTOU) — re-probe a new port and retry a few times.
-      val attempt =
-        for
-          port <- freeProbePort
-          body <- ZIO.fromEither(injectPort(raw, port)).mapError(new RuntimeException(_))
-          admin <- ZIO.serviceWith[RiftHarness](_.adminUrl)
-          code <- postImposter(admin, body)
-          _ <- ZIO
-            .fail(
-              new RuntimeException(s"POST imposter (fixture $name) returned $code, expected 201")
-            )
-            .when(code != 201)
-        yield port
-      attempt.retry(Schedule.recurs(3)).flatMap { port =>
-        track(port) *> Stage.put(CurrentPort(port)).as(port)
-      }
-    }
+    for
+      raw <- loadFixture(name).flatMap(rewriteFixtureJson)
+      admin <- ZIO.serviceWith[RiftHarness](_.adminUrl)
+      port <- postAtFreshPort(admin, raw, s"fixture $name")
+      _ <- track(port) *> Stage.put(CurrentPort(port))
+    yield port
+
+  /** POST imposter JSON (no `port`) to `admin` at a fresh pool port and return the port. A non-201
+    * usually means the freshly-probed port was taken between the probe and the engine's bind
+    * (TOCTOU), so re-probe a new port and retry a few times. Neither tracks nor stages the port.
+    */
+  private def postAtFreshPort(
+      admin: String,
+      raw: String,
+      label: String
+  ): ZIO[RiftHarness, Throwable, Int] =
+    val attempt =
+      for
+        port <- freeProbePort
+        body <- ZIO.fromEither(injectPort(raw, port)).mapError(new RuntimeException(_))
+        code <- postImposter(admin, body)
+        _ <- ZIO
+          .fail(new RuntimeException(s"POST imposter ($label) returned $code, expected 201"))
+          .when(code != 201)
+      yield port
+    attempt.retry(Schedule.recurs(3))
 
   protected def sendToCurrent(method: String, path: String): ZIO[RiftHarness, Throwable, Unit] =
     for
@@ -521,8 +540,10 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
       .mapError(e => new IllegalStateException(s"no concurrent burst ($e)"))
 
   private def loadFixture(name: String): IO[Throwable, String] =
+    loadResource(s"/rift-fixtures/$name.json")
+
+  private def loadResource(resource: String): IO[Throwable, String] =
     ZIO.attemptBlocking {
-      val resource = s"/rift-fixtures/$name.json"
       val is = getClass.getResourceAsStream(resource)
       if is == null then throw new RuntimeException(s"fixture not found on classpath: $resource")
       try new String(is.readAllBytes(), StandardCharsets.UTF_8)
@@ -634,8 +655,25 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
   // Delegated to the harness so container mode (whose imposters bind inside the container, with the
   // host ports held by Docker's 1:1 forward) can hand out from its published pool instead of a
   // host-freeness scan. External/embedded use the default host scan.
+  // Skips ports this scenario already holds: the host scan binds the wildcard address, which macOS
+  // allows alongside a live imposter's listener, so a second fresh imposter could be handed the
+  // first one's port.
   private def freeProbePort: ZIO[RiftHarness, Throwable, Int] =
-    ZIO.serviceWithZIO[RiftHarness](_.freshImposterPort(ProbePortLo, ProbePortHi))
+    trackedPorts.flatMap { held =>
+      // Bounded by the pool size: container mode hands out a rotating cursor rather than scanning,
+      // so wrap to the pool start instead of narrowing past its end.
+      def from(lo: Int, attemptsLeft: Int): ZIO[RiftHarness, Throwable, Int] =
+        if attemptsLeft == 0 then
+          ZIO.fail(new RuntimeException(s"no free probe port in $ProbePortLo..$ProbePortHi"))
+        else
+          ZIO
+            .serviceWithZIO[RiftHarness](_.freshImposterPort(lo, ProbePortHi))
+            .flatMap { p =>
+              if !held.ports.contains(p) then ZIO.succeed(p)
+              else from(if p >= ProbePortHi then ProbePortLo else p + 1, attemptsLeft - 1)
+            }
+      from(ProbePortLo, ProbePortHi - ProbePortLo + 1)
+    }
 
   private def postImposter(adminUrl: String, json: String): IO[Throwable, Int] =
     ZIO.attemptBlocking {
@@ -845,6 +883,137 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
           s"HTTP ${probe.response.map(_.status).getOrElse("-")}"
       )
     yield ()
+
+  // ── TLS trust (feature 09): imposter mutualAuth (rift#977), outbound --upstream-ca-file (rift#974)
+
+  /** An HTTPS client presenting the committed test client certificate `name`
+    * (`rift-fixtures/tls/<name>-cert.pem` + `<name>-key.pem`, a PKCS#8 key), or no certificate for
+    * `None`. It trusts any server certificate, like `httpInsecure`: these scenarios are about the
+    * CLIENT's certificate, and the imposter serves rift's self-signed default.
+    */
+  private def mtlsClient(name: Option[String]): IO[Throwable, HttpClient] =
+    name match
+      case None => ZIO.succeed(httpInsecure)
+      case Some(n) =>
+        for
+          certPem <- loadResource(s"/rift-fixtures/tls/$n-cert.pem")
+          keyPem <- loadResource(s"/rift-fixtures/tls/$n-key.pem")
+          client <- ZIO.attempt {
+            val cert = java.security.cert.CertificateFactory
+              .getInstance("X.509")
+              .generateCertificate(
+                new java.io.ByteArrayInputStream(certPem.getBytes(StandardCharsets.UTF_8))
+              )
+            val der = java.util.Base64.getMimeDecoder.decode(
+              keyPem.replaceAll("-----(BEGIN|END) PRIVATE KEY-----", "")
+            )
+            val key = java.security.KeyFactory
+              .getInstance(cert.getPublicKey.getAlgorithm)
+              .generatePrivate(new java.security.spec.PKCS8EncodedKeySpec(der))
+            val password = Array.emptyCharArray
+            val store = java.security.KeyStore.getInstance("PKCS12")
+            store.load(null, null)
+            store.setKeyEntry("client", key, password, Array(cert))
+            val kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm)
+            kmf.init(store, password)
+            val ctx = SSLContext.getInstance("TLS")
+            ctx.init(
+              kmf.getKeyManagers,
+              Array[TrustManager](trustAllManager),
+              new java.security.SecureRandom()
+            )
+            HttpClient.newBuilder().sslContext(ctx).build()
+          }
+        yield client
+
+  /** An HTTPS probe of the current imposter at `path`, presenting client certificate `cert`. */
+  private def mtlsProbe(
+      method: String,
+      path: String,
+      cert: Option[String]
+  ): ZIO[RiftHarness, Throwable, TransportProbe] =
+    for
+      port <- currentPort
+      host <- ZIO.serviceWith[RiftHarness](_.hostFor(port))
+      url = s"https://$host:$port$path"
+      curlCert = cert.fold("")(n => s" --cert $n-cert.pem --key $n-key.pem")
+      _ <- recordCurl(s"curl -k -X $method$curlCert '$url'")
+      client <- mtlsClient(cert)
+      probe <- timedProbeWith(client, url, method, Map.empty, None)
+    yield probe
+
+  private def mtlsSend(
+      method: String,
+      path: String,
+      cert: Option[String]
+  ): ZIO[RiftHarness, Throwable, Unit] =
+    mtlsProbe(method, path, cert).flatMap(probe =>
+      probe.response match
+        case Some(r) => Stage.put(r)
+        case None =>
+          ZIO.fail(
+            new RuntimeException(s"mTLS send to $path failed: ${probe.error.getOrElse("-")}")
+          )
+    )
+
+  /** The handshake is refused, so no HTTP status ever arrives: a response of any status fails. */
+  private def mtlsRefused(path: String, cert: Option[String]): ZIO[RiftHarness, Throwable, Unit] =
+    mtlsProbe("GET", path, cert).flatMap(probe =>
+      assertRepro(
+        probe.response.isEmpty,
+        s"expected the TLS handshake to be refused (client cert: ${cert.getOrElse("none")}), " +
+          s"but got HTTP ${probe.response.map(_.status).getOrElse("-")}"
+      )
+    )
+
+  When(
+    "the client sends " / string / " " / string / " over HTTPS presenting client certificate " / string
+  ) { (method: String, path: String, cert: String) =>
+    mtlsSend(method, path, Some(cert))
+  }
+
+  Then("an HTTPS request to " / string / " presenting no client certificate is refused") {
+    (path: String) => mtlsRefused(path, None)
+  }
+
+  Then(
+    "an HTTPS request to " / string / " presenting client certificate " / string / " is refused"
+  ) { (path: String, cert: String) =>
+    mtlsRefused(path, Some(cert))
+  }
+
+  private def proxyToUpstreamJson: IO[Throwable, String] =
+    Stage
+      .get[UpstreamPort]
+      .mapError(_ => new IllegalStateException("no HTTPS upstream imposter in this scenario"))
+      .map(u =>
+        // `localhost`, not hostFor: the upstream's leaf is issued for localhost, and this is
+        // external-only anyway.
+        s"""{"protocol":"http","stubs":[{"responses":[{"proxy":{"to":"https://localhost:${u.port}","mode":"proxyAlways"}}]}]}"""
+      )
+
+  Given("an HTTPS upstream imposter from fixture " / string) { (name: String) =>
+    postImposterFromFixture(name).flatMap(p => Stage.put(UpstreamPort(p)))
+  }
+
+  When("a proxy imposter to the HTTPS upstream is created") {
+    for
+      raw <- proxyToUpstreamJson
+      admin <- ZIO.serviceWith[RiftHarness](_.adminUrl)
+      port <- postAtFreshPort(admin, raw, "proxy to the HTTPS upstream")
+      _ <- track(port) *> Stage.put(CurrentPort(port))
+    yield ()
+  }
+
+  // Not tracked: the imposter lives on the upstream-trust engine, which afterScenario kills whole.
+  When("a proxy imposter to the HTTPS upstream is created on an engine trusting the test CA") {
+    for
+      raw <- proxyToUpstreamJson
+      admin <- ZIO.serviceWithZIO[RiftHarness](_.startUpstreamTrustEngine)
+      port <- postAtFreshPort(admin, raw, "proxy to the HTTPS upstream (upstream-trust engine)")
+      _ <- Stage.put(CurrentPort(port))
+    yield ()
+  }
 
   // ── metrics (rift#9, feature 09) ───────────────────────────────────────────────────────────
 
