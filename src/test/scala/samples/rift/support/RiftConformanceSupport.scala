@@ -2293,6 +2293,68 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
     yield ()
   }
 
+  // ── match diagnostics (feature 18, #193) ─────────────────────────────────────────────────
+
+  Then("the response JSON at " / string / " is the boolean true") { (path: String) =>
+    assertJsonAt(path, "true")(_ == Json.Bool(true))
+  }
+
+  Then("the response JSON at " / string / " is the boolean false") { (path: String) =>
+    assertJsonAt(path, "false")(_ == Json.Bool(false))
+  }
+
+  Then("the response JSON at " / string / " contains " / string) { (path: String, sub: String) =>
+    assertJsonAt(path, s"a string containing \"$sub\"") {
+      case Json.Str(s) => s.contains(sub)
+      case _ => false
+    }
+  }
+
+  When("the request header " / string / " is removed") { (h: String) =>
+    pendingRequest.flatMap(pr =>
+      Stage.put(pr.copy(headers = pr.headers.filterNot(_._1.equalsIgnoreCase(h))))
+    )
+  }
+
+  /** `k=v,k2=v2`: each value is `absent`, an integer, or a string — the exact field a warning
+    * carries.
+    */
+  private def warningMatches(w: Chunk[(String, Json)], fields: String): Boolean =
+    fields.split(',').map(_.trim).filter(_.nonEmpty).forall { kv =>
+      val (k, v) = kv.span(_ != '=') match { case (k, v) => (k, v.drop(1)) }
+      val got = w.collectFirst { case (`k`, j) => j }
+      v match
+        case "absent" => got.isEmpty
+        case n if n.toIntOption.isDefined =>
+          got.exists {
+            case Json.Num(x) => BigDecimal(x) == BigDecimal(n.toInt)
+            case _ => false
+          }
+        case s => got.contains(Json.Str(s))
+    }
+
+  Then(
+    "the response has a " / string / " warning with " / string / " and a message containing " /
+      string
+  ) { (kind: String, fields: String, sub: String) =>
+    lastResponse.flatMap(r =>
+      parseAdminJson(r.body).flatMap { root =>
+        val warnings = jsonAt(root, "_rift.warnings") match
+          case Some(Json.Arr(ws)) => ws.collect { case Json.Obj(f) => f }
+          case _ => Chunk.empty
+        val hit = warnings.exists(w =>
+          w.contains("warningType" -> Json.Str(kind)) && warningMatches(w, fields) &&
+            w.collectFirst { case ("message", Json.Str(m)) => m }.exists(_.contains(sub))
+        )
+        assertRepro(
+          hit,
+          s"expected a '$kind' warning with $fields and a message containing '$sub'; got " +
+            warnings.map(Json.Obj(_).toJson).mkString("[", ", ", "]")
+        )
+      }
+    )
+  }
+
   // #596/#597: one connect attempt, no retry — the delete must already have unbound the listener.
   Then("an immediate TCP connect to the current imposter is refused") {
     currentImposterAccepts.flatMap((host, port, ok) =>
