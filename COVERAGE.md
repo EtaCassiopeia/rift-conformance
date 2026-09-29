@@ -723,6 +723,19 @@ No divergence on 0.18.0. The suite is `samples.redis.FlowStoreRedis15Suite`, out
 engineRedis`. The harness owns the `redis:7-alpine` container (testcontainers, a JVM shutdown hook,
 Ryuk as the backstop). CI job `plane-a-redis` runs it on every push.
 
+### CLI flags and dedicated-engine specs (coverage audit, 2026-09)
+
+The shared harness engine only ever runs with `--allow-injection`, `--metrics-port` and
+`--intercept-port`, so the CLI surface below is driven by dedicated engines: `SpawnedEngine`
+(`support/`) spawns through `RiftHarness.rawSpawn` (now taking `extraArgs`/`extraEnv`/`log`) on
+`TestPorts` ports, reaps with `killProcess` in a scope finalizer, and exposes the engine's output.
+`SpawnedEngine.refused` waits (≤ 10 s) for a startup refusal and returns its exit code and output.
+These specs are external-only and self-gate on `RIFT_BUILD_DIR` + `RIFT_MODE=external`.
+
+| Surface | rift doc | Coverage status |
+|---|---|---|
+| Admin-plane auth and exposure: `--api-key`/`MB_APIKEY`, blank key, `--require-admin-auth`, `--local-only`, `--host` IP-literal, `--ip-whitelist` (never enforced), `GET /config` | cli.md § API-key authentication; api/index.md § GET /config | **covered (#188)** — `AdminExposureSpec`: a keyed engine answers `401 "unauthorized"` to no key and a wrong key on `/health` and `/imposters`, `200 {"status":"ok"}` to the key; the data plane, `/__rift/{port}/…` and `/metrics` stay ungated; `MB_APIKEY` behaves like the flag; `--api-key "  "` exits non-zero naming the `blank value`; `--require-admin-auth --host 0.0.0.0` without a key exits non-zero naming `--require-admin-auth` and `--api-key`, and serves on `127.0.0.1` or with a key; `--local-only` → `options.localOnly == true`; `--host localhost` → `not an IP literal`; `--ip-whitelist 10.0.0.1` → `ipWhitelist == ["*"]`, loopback still served, a `NOT enforced` warning; the shared engine's `/config` reports its real admin port, `serveOptions` containing `apiKey`/`requireAdminAuth`, and the `BUILD_INFO` version. Non-loopback reachability under `--local-only` is deliberately not probed (CI network topology varies) |
+
 ## v0.15.0 new-capability coverage gaps (pin bump 0.14.0 → 0.15.0) — tracked by [#72](https://github.com/EtaCassiopeia/rift-conformance/issues/72)
 
 Verified green on the bump: all 14 Plane A features pass against 0.15.0 with no conforming change.
