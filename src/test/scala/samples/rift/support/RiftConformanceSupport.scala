@@ -239,6 +239,18 @@ final case class RedisKeyPrefix(prefix: String)
 /** A response body kept for a later "differs from the remembered one" comparison. */
 final case class RememberedBody(body: String)
 
+/** What a raw socket read until close produced (feature 03 tcp faults, #196): the bytes before the
+  * peer closed or reset, whether it did close (a 5 s read timeout is not a close), and — over TLS —
+  * whether the handshake completed first.
+  */
+final case class RawCapture(
+    bytes: Array[Byte],
+    tlsHandshake: Option[Boolean],
+    closed: Boolean,
+    error: Option[String]
+):
+  def text: String = new String(bytes, StandardCharsets.ISO_8859_1)
+
 /** Request headers/body staged for the next send. */
 final case class PendingRequest(
     headers: Map[String, String] = Map.empty,
@@ -2680,6 +2692,121 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
         s"at '$path': expected $literal, got ${got.fold("<absent>")(_.toJson)}"
       )
     yield ()
+  }
+
+  // tcp faults the JDK client hides (#196): write one request on a raw socket and read until the
+  // peer closes or resets, keeping every byte that arrived first. `over TLS` handshakes trust-all
+  // first, recording whether the handshake completed, so a post-handshake reset is distinguishable
+  // from a TLS failure.
+  private def rawCapture(
+      method: String,
+      path: String,
+      tls: Boolean
+  ): ZIO[RiftHarness, Throwable, Unit] =
+    for
+      port <- currentPort
+      host <- ZIO.serviceWith[RiftHarness](_.hostFor(port))
+      _ <- recordCurl(
+        s"printf '$method $path HTTP/1.1\\r\\nHost: $host\\r\\n\\r\\n' | " +
+          (if tls then s"openssl s_client -quiet -connect $host:$port" else s"nc $host $port")
+      )
+      cap <- ZIO.attemptBlocking {
+        val plain = new Socket()
+        val buf = new ByteArrayOutputStream()
+        var handshake: Option[Boolean] = None
+        var closed = false
+        var error: Option[String] = None
+        // A failed connect fails the step (no fault kind refuses the TCP connect itself).
+        try plain.connect(new InetSocketAddress(host, port), 5000)
+        catch
+          case e: java.io.IOException =>
+            plain.close()
+            throw e
+        try
+          plain.setSoTimeout(5000)
+          val sock =
+            if !tls then plain
+            else
+              val ssl = insecureSslContext.getSocketFactory
+                .createSocket(plain, host, port, true)
+                .asInstanceOf[javax.net.ssl.SSLSocket]
+              handshake = Some(false)
+              ssl.startHandshake()
+              handshake = Some(true)
+              ssl
+          val out = sock.getOutputStream
+          out.write(
+            s"$method $path HTTP/1.1\r\nHost: $host\r\nConnection: close\r\n\r\n".getBytes(
+              StandardCharsets.US_ASCII
+            )
+          )
+          out.flush()
+          val in = sock.getInputStream
+          val chunk = new Array[Byte](4096)
+          var n = in.read(chunk)
+          while n >= 0 do
+            buf.write(chunk, 0, n)
+            n = in.read(chunk)
+          closed = true
+        catch
+          case e: java.net.SocketTimeoutException =>
+            error = Some(s"no close within 5s: ${e.getMessage}")
+          case e: java.io.IOException =>
+            // A reset, or a TLS read failing on one, is the peer closing the connection.
+            closed = true
+            error = Some(s"${e.getClass.getSimpleName}: ${e.getMessage}")
+        finally plain.close()
+        RawCapture(buf.toByteArray, handshake, closed, error)
+      }
+      _ <- Stage.put(cap)
+    yield ()
+
+  private def rawCaptured: IO[Throwable, RawCapture] =
+    Stage.get[RawCapture].mapError(e => new IllegalStateException(s"no raw send yet ($e)"))
+
+  When("the client sends a raw " / string / " " / string) { (m: String, p: String) =>
+    rawCapture(m, p, tls = false)
+  }
+
+  When("the client sends a raw " / string / " " / string / " over TLS") { (m: String, p: String) =>
+    rawCapture(m, p, tls = true)
+  }
+
+  Then("the raw response is empty") {
+    rawCaptured.flatMap(c =>
+      assertRepro(
+        c.bytes.isEmpty && c.closed,
+        s"expected the connection to close with no bytes, got ${c.bytes.length} " +
+          s"(closed=${c.closed}, ${c.error.getOrElse("EOF")}): '${c.text.take(200)}'"
+      )
+    )
+  }
+
+  Then("the raw response starts with " / string) { (prefix: String) =>
+    rawCaptured.flatMap(c =>
+      assertRepro(
+        c.text.startsWith(prefix),
+        s"expected raw bytes to start with '$prefix', got '${c.text.take(200)}'"
+      )
+    )
+  }
+
+  Then("the raw response contains " / string) { (sub: String) =>
+    rawCaptured.flatMap(c =>
+      assertRepro(
+        c.text.contains(sub),
+        s"expected raw bytes to contain '$sub', got '${c.text.take(200)}'"
+      )
+    )
+  }
+
+  Then("the TLS handshake completed") {
+    rawCaptured.flatMap(c =>
+      assertRepro(
+        c.tlsHandshake.contains(true),
+        s"expected a completed TLS handshake, got ${c.tlsHandshake} (${c.error.getOrElse("no error")})"
+      )
+    )
   }
 
   When("the client sends " / string / " " / string / " expecting a transport error") {
