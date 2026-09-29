@@ -14,8 +14,7 @@ import java.util.concurrent.TimeUnit
 final case class SpawnedEngine(proc: Process, adminPort: Int, metricsPort: Int, log: Path):
   val adminUrl: String = s"http://127.0.0.1:$adminPort"
   val metricsUrl: String = s"http://127.0.0.1:$metricsPort"
-  def output: Task[String] =
-    ZIO.attemptBlocking(new String(Files.readAllBytes(log), StandardCharsets.UTF_8))
+  def output: Task[String] = SpawnedEngine.readLog(log)
 
 /** How a rift process ended: its exit code and everything it printed. */
 final case class Exited(exitCode: Int, output: String)
@@ -97,15 +96,80 @@ object SpawnedEngine:
       extraArgs: List[String],
       extraEnv: Map[String, String] = Map.empty
   ): ZIO[Scope, Throwable, Exited] =
+    spawn(cfg, extraArgs, extraEnv).flatMap(eng =>
+      awaitExit(eng.proc, eng.output, extraArgs, ExitBudgetSeconds)
+    )
+
+  /** Launch `rift` with `args` VERBATIM — no injected `--port`/`--metrics-port`/`--allow-injection`
+    * — for cases where those flags are themselves the subject (an rcfile's `port`, a subcommand).
+    * Reaped by the scope like [[start]].
+    */
+  private def launch(
+      cfg: RiftHarnessConfig,
+      args: List[String],
+      extraEnv: Map[String, String]
+  ): ZIO[Scope, Throwable, (Process, Path)] =
     for
-      eng <- spawn(cfg, extraArgs, extraEnv)
-      exited <- ZIO.attemptBlocking(eng.proc.waitFor(ExitBudgetSeconds, TimeUnit.SECONDS))
-      out <- eng.output
+      log <- tempLog
+      proc <- ZIO.acquireRelease(ZIO.attemptBlocking {
+        val pb = new ProcessBuilder((cfg.buildDir.resolve("rift").toString :: args)*)
+        extraEnv.foreach((k, v) => pb.environment().put(k, v))
+        pb.directory(cfg.corpusRoot.toFile)
+        pb.redirectErrorStream(true)
+        pb.redirectOutput(log.toFile)
+        RiftHarness.reapOnJvmExit(pb.start())
+      })(p => RiftHarness.killProcess(p).orDie)
+    yield (proc, log)
+
+  /** [[launch]] a long-running engine whose `args` bind `adminPort` and `metricsPort` themselves
+    * (directly or through an rcfile), and wait for both listeners like [[start]].
+    */
+  def startRaw(
+      cfg: RiftHarnessConfig,
+      args: List[String],
+      adminPort: Int,
+      metricsPort: Int,
+      extraEnv: Map[String, String] = Map.empty
+  ): ZIO[Scope, Throwable, SpawnedEngine] =
+    for
+      launched <- launch(cfg, args, extraEnv)
+      (proc, log) = launched
+      eng = SpawnedEngine(proc, adminPort, metricsPort, log)
+      _ <- (RiftHarness.awaitTcpReady("127.0.0.1", metricsPort, proc) *>
+        RiftHarness.awaitTcpReady("127.0.0.1", adminPort, proc))
+        .tapError(_ => eng.output.flatMap(out => ZIO.logError(s"rift output:\n$out")).ignore)
+    yield eng
+
+  /** Run `rift <args>` (a subcommand, or an invocation expected to exit) to completion within
+    * `budgetSeconds` and return how it ended.
+    */
+  def run(
+      cfg: RiftHarnessConfig,
+      args: List[String],
+      extraEnv: Map[String, String] = Map.empty,
+      budgetSeconds: Long = ExitBudgetSeconds
+  ): ZIO[Scope, Throwable, Exited] =
+    launch(cfg, args, extraEnv).flatMap((proc, log) =>
+      awaitExit(proc, readLog(log), args, budgetSeconds)
+    )
+
+  private[support] def readLog(log: Path): Task[String] =
+    ZIO.attemptBlocking(new String(Files.readAllBytes(log), StandardCharsets.UTF_8))
+
+  private def awaitExit(
+      proc: Process,
+      output: Task[String],
+      args: List[String],
+      budgetSeconds: Long
+  ): Task[Exited] =
+    for
+      exited <- ZIO.attemptBlocking(proc.waitFor(budgetSeconds, TimeUnit.SECONDS))
+      out <- output
       _ <- ZIO.unless(exited)(
         ZIO.fail(
           new RuntimeException(
-            s"rift ${extraArgs.mkString(" ")} still running after ${ExitBudgetSeconds}s:\n$out"
+            s"rift ${args.mkString(" ")} still running after ${budgetSeconds}s:\n$out"
           )
         )
       )
-    yield Exited(eng.proc.exitValue(), out)
+    yield Exited(proc.exitValue(), out)
