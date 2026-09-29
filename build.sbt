@@ -4,7 +4,7 @@ ThisBuild / organization := "io.github.etacassiopeia"
 // Track zio-bdd's own ZIO: a lower pin here gets zio-test evicted upward while zio-test-sbt stays
 // behind, and the forked test runner dies with NoSuchMethodError before any spec runs.
 val zioVersion = "2.1.21"
-val zioBddVersion = "1.5.0"
+val zioBddVersion = "1.5.1"
 
 // zio-bdd 1.5.0 re-based its Rift adapters onto the official SDK (zio-bdd#336): `zio-bdd-rift` sits
 // on `rift-scala-zio`, and the in-process engine is rift-java's `rift-java-embedded` plus its

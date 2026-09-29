@@ -516,7 +516,8 @@ yet: `ConformanceFfi` wraps only the calls the harness uses today.
   [zio-bdd#349](https://github.com/EtaCassiopeia/zio-bdd/issues/349) (recorded text body reads back
   JSON-quoted; `08-received` red on rift-external + embedded) and
   [zio-bdd#350](https://github.com/EtaCassiopeia/zio-bdd/issues/350) (raw documents with `"port": 0`
-  refused; every raw-document scenario red on rift-external).
+  refused; every raw-document scenario red on rift-external). **Both fixed in zio-bdd 1.5.1
+  (zio-bdd#351), now pinned: every Plane B leg is green.**
 
 ### 0.16.0–0.18.0 new-capability gaps
 
