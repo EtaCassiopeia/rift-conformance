@@ -1,6 +1,13 @@
 package samples.rift
 
-import samples.rift.support.{LastResponse, RiftConformanceSupport, RiftHarness, RiftState}
+import samples.rift.support.{
+  LastResponse,
+  RawHttpConnection,
+  RawRead,
+  RiftConformanceSupport,
+  RiftHarness,
+  RiftState
+}
 import zio.*
 import zio.bdd.core.Assertions
 import zio.bdd.core.Suite
@@ -36,6 +43,10 @@ object Intercept12Suite
   private val http = HttpClient.newHttpClient()
   private val TrustPassword = "changeit"
 
+  /** Raw tunnels opened by @intercept-raw steps, closed after every scenario. */
+  private val openTunnels: Ref[List[RawHttpConnection]] =
+    Unsafe.unsafe(u => Ref.unsafe.make(List.empty[RawHttpConnection])(using u))
+
   // Rules are host-scoped and accumulate on the shared listener. For external/container this HTTP
   // DELETE actually clears them after each scenario (keeping the list/clear count assertions honest).
   // Embedded has NO clear capability — the FFI binds start/add-rules/export-truststore but not
@@ -44,18 +55,20 @@ object Intercept12Suite
   // scenario here uses a UNIQUE host, so accumulated rules never shadow each other — a required
   // convention for any embedded-capable scenario added later (there is no per-scenario reset there).
   afterScenario {
-    ZIO
-      .serviceWithZIO[RiftHarness](h =>
-        // Clear accumulated rules on the shared listener AND reap the @intercept-runtime sidecar
-        // engine if a scenario started one (a no-op otherwise). The rule-clear is logged-then-ignored
-        // (a non-404 failure is a real admin fault worth surfacing, per deleteRules) but must never
-        // block the sidecar reap that follows.
-        deleteRules(h.adminUrl)
-          .tapError(e => ZIO.logWarning(s"intercept rules cleanup failed: ${e.getMessage}"))
-          .ignore *> h.stopRuntimeInterceptEngine
-      )
-      .tapError(e => ZIO.logWarning(s"intercept sidecar cleanup failed: ${e.getMessage}"))
-      .ignore
+    // Close any raw tunnel an @intercept-raw scenario left open (a no-op otherwise).
+    openTunnels.getAndSet(Nil).flatMap(cs => ZIO.foreachDiscard(cs)(c => ZIO.succeed(c.close()))) *>
+      ZIO
+        .serviceWithZIO[RiftHarness](h =>
+          // Clear accumulated rules on the shared listener AND reap the @intercept-runtime sidecar
+          // engine if a scenario started one (a no-op otherwise). The rule-clear is logged-then-ignored
+          // (a non-404 failure is a real admin fault worth surfacing, per deleteRules) but must never
+          // block the sidecar reap that follows.
+          deleteRules(h.adminUrl)
+            .tapError(e => ZIO.logWarning(s"intercept rules cleanup failed: ${e.getMessage}"))
+            .ignore *> h.stopRuntimeInterceptEngine
+        )
+        .tapError(e => ZIO.logWarning(s"intercept sidecar cleanup failed: ${e.getMessage}"))
+        .ignore
   }
 
   // ── HTTP-only admin (list/clear/ca.pem) — external/container; embedded lacks these FFI bindings,
@@ -164,6 +177,46 @@ object Intercept12Suite
       }
     yield resp
 
+  // ── @intercept-raw: the raw tunnel client (framing + connection contracts HttpClient hides) ──
+
+  /** The scenario's open raw tunnel: `CONNECT host:443` + TLS, reused by every raw step to the same
+    * host so a second exchange rides the same connection. Kept in the Stage for the steps and in
+    * [[openTunnels]] so `afterScenario` closes it however the scenario ends.
+    */
+  private final case class RawTunnel(host: String, conn: RawHttpConnection)
+
+  /** The open tunnel to `host`, or a fresh one through the intercept listener trusting its CA. */
+  private def tunnelTo(host: String): ZIO[RiftHarness, Throwable, RawHttpConnection] =
+    Stage.get[RawTunnel].option.flatMap {
+      case Some(RawTunnel(`host`, conn)) => ZIO.succeed(conn)
+      case _ =>
+        for
+          ep <- ZIO.serviceWithZIO[RiftHarness](_.interceptEndpoint)
+          hostPort <- ZIO
+            .fromOption(ep)
+            .orElseFail(new RuntimeException("no intercept listener in this RIFT_MODE"))
+          (iHost, iPort) = hostPort
+          bytes <- ZIO.serviceWithZIO[RiftHarness](_.interceptTruststore(TrustPassword))
+          ssl <- sslFromTruststore(bytes)
+          conn <- ZIO.attemptBlocking(RawHttpConnection.tunnel(iHost, iPort, host, ssl))
+          _ <- openTunnels.update(conn :: _)
+          _ <- Stage.put(RawTunnel(host, conn))
+        yield conn
+    }
+
+  /** Send `request` on the tunnel to `host` and make the answer the scenario's last response. A
+    * close before any answer fails the step — the raw steps that allow a close say so themselves.
+    */
+  private def rawExchange(host: String, request: Array[Byte]): ZIO[RiftHarness, Throwable, Unit] =
+    for
+      conn <- tunnelTo(host)
+      read <- ZIO.attemptBlocking(conn.exchange(request))
+      _ <- read match
+        case RawRead.Response(r) => Stage.put(r.toLastResponse)
+        case RawRead.Closed =>
+          ZIO.fail(new RuntimeException(s"the intercept tunnel to $host closed without answering"))
+    yield ()
+
   // ── steps ─────────────────────────────────────────────────────────────────────────────────
 
   Then("the exported intercept CA is the caller-provided test CA") {
@@ -243,6 +296,40 @@ object Intercept12Suite
         rule = s"""{"host":"${jsonEscape(host)}","action":{"forward":{"port":$port}}}"""
         _ <- ZIO.serviceWithZIO[RiftHarness](_.interceptAddRule(rule))
       yield ()
+  }
+
+  Given(
+    "an intercept rule serves " / int / " " / string / " for host " / string / " when the body equals " / string
+  ) { (status: Int, body: String, host: String, expected: String) =>
+    val rule =
+      s"""{"host":"${jsonEscape(host)}","predicates":[{"equals":{"body":"${jsonEscape(
+          expected
+        )}"}}],"action":{"serve":{"statusCode":$status,"body":"${jsonEscape(body)}"}}}"""
+    ZIO.serviceWithZIO[RiftHarness](_.interceptAddRule(rule))
+  }
+
+  When(
+    "a raw HTTPS POST of " / int / " body bytes to " / string / " " / string / " through the intercept tunnel"
+  ) { (n: Int, host: String, path: String) =>
+    rawExchange(
+      host,
+      RawHttpConnection.request("POST", host, path, body = Array.fill(n)('a'.toByte))
+    )
+  }
+
+  When(
+    "a raw HTTPS POST of the chunked body " / string / " to " / string / " " / string / " through the intercept tunnel"
+  ) { (body: String, host: String, path: String) =>
+    // Several chunks, so the body only reads right if the engine reassembles them.
+    rawExchange(host, RawHttpConnection.chunkedRequest("POST", host, path, body.grouped(5).toList))
+  }
+
+  Then("the current imposter has recorded " / int / " requests") { (n: Int) =>
+    currentPort
+      .flatMap(numberOfRequests)
+      .flatMap(c =>
+        assertRepro(c == n, s"expected the imposter to have recorded $n request(s), got $c")
+      )
   }
 
   When("an HTTPS GET to " / string / " " / string / " through the intercept proxy") {

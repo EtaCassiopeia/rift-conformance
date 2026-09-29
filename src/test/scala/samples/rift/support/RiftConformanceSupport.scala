@@ -1903,7 +1903,7 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
     * reads the scenario's "current" imposter via `Stage[CurrentPort]`), the reload configfile's
     * imposters are never posted through `postImposterFromFixture`, so they target an explicit port.
     */
-  private def numberOfRequests(port: Int): ZIO[RiftHarness, Throwable, Int] =
+  protected def numberOfRequests(port: Int): ZIO[RiftHarness, Throwable, Int] =
     for
       admin <- ZIO.serviceWith[RiftHarness](_.adminUrl)
       resp <- httpSend(s"$admin/imposters/$port", "GET", Map.empty, None)

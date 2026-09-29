@@ -68,3 +68,33 @@ Feature: Intercept / TLS-MITM forward-proxy (rift#413) — CONNECT interception 
     Then the response status is 404
     When the intercept listener is stopped over the admin API
     Then the response status is 204
+
+  # @intercept-raw: request framing and connection handling inside the CONNECT tunnel (rift 0.18.0 —
+  # rift#991 moved the tunnel onto hyper). A JDK HttpClient hides both, so these scenarios drive a
+  # raw client: `CONNECT host:443`, TLS over the tunnel trusting the intercept CA, then hand-framed
+  # HTTP/1.1. The 1 MiB request-body cap is the tunnel's; a body over it is refused before matching
+  # or forwarding. (The 408 body-read timeout is not covered: it needs a multi-second stall, so it
+  # stays pinned engine-side.)
+  @intercept-raw
+  Scenario: a tunnelled request body over the 1 MiB cap is refused 413 and never forwarded (rift#991)
+    Given a fresh imposter from fixture "intercept/upstream"
+    And an intercept rule forwards host "overcap.example.com" to the current imposter
+    When a raw HTTPS POST of 1048577 body bytes to "overcap.example.com" "/svc" through the intercept tunnel
+    Then the response status is 413
+    And the current imposter has recorded 0 requests
+
+  @intercept-raw
+  Scenario: a tunnelled request body of exactly 1 MiB is still forwarded (rift#991)
+    Given a fresh imposter from fixture "intercept/upstream"
+    And an intercept rule forwards host "atcap.example.com" to the current imposter
+    When a raw HTTPS POST of 1048576 body bytes to "atcap.example.com" "/svc" through the intercept tunnel
+    Then the response status is 200
+    And the response body is "upstream-ok"
+    And the current imposter has recorded 1 requests
+
+  @intercept-raw
+  Scenario: a chunked tunnelled request body is decoded before rule matching (rift#991)
+    Given an intercept rule serves 200 "chunked-matched" for host "chunked.example.com" when the body equals "hello chunked world"
+    When a raw HTTPS POST of the chunked body "hello chunked world" to "chunked.example.com" "/upload" through the intercept tunnel
+    Then the response status is 200
+    And the response body is "chunked-matched"

@@ -529,7 +529,10 @@ These are already tracked by open issues filed as the releases shipped:
 
 - intercept serve-rule non-string body: #148
 - outbound `--upstream-ca-file` and imposter `mutualAuth`: #149
-- intercept tunnel 413 and decoded chunked bodies: #150
+- intercept tunnel 413 and decoded chunked bodies: #150 — **covered**: `12-intercept` `@intercept-raw`
+  (a raw `CONNECT` + TLS client, `RawHttpConnection`): over-cap body → `413` with the forward target
+  unreached, exactly 1 MiB forwarded, chunked body decoded before a body predicate. External,
+  embedded and container. The `408` body-read timeout is left to the engine's own test (slow, flaky).
 - CONNECT tunnel reuse: #151
 - intercept multi-value headers and HTTP/2 negotiation: #152
 - reload re-applying front-door routes: #153
