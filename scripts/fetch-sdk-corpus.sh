@@ -11,15 +11,20 @@
 # Environment overrides:
 #   RIFT_SDK_CORPUS_DIR  if set (and it already holds manifest.json), skips the fetch and is echoed
 #                        back as-is (branch/local-corpus testing).
-#   RIFT_VERSION         the released rift version to fetch (default: 0.13.1) — the corpus version
-#                        equals the engine release version (there is no independent corpus version).
+#   RIFT_VERSION         the released rift version to fetch (default: the engine pin, read from
+#                        build-rift.sh) — the corpus version equals the engine release version
+#                        (there is no independent corpus version).
 #   RIFT_BUILD_CACHE     cache ROOT for downloads (default: ~/.cache/rift-conformance). The corpus
 #                        lands in <root>/sdk-conformance-v<version>; a dir that already has
 #                        manifest.json is reused without re-downloading (idempotent).
 set -euo pipefail
 
 REPO="achird-labs/rift"
-RIFT_VERSION="${RIFT_VERSION:-0.13.1}"
+# Default to the engine pin so the corpus always matches the engine under test; build-rift.sh is
+# the one place the pin lives.
+PIN="$(sed -n 's/^RIFT_VERSION="\${RIFT_VERSION:-\([^}"]*\)}"$/\1/p' "$(dirname "$0")/build-rift.sh")"
+[ -n "$PIN" ] || { echo "fetch-sdk-corpus: no RIFT_VERSION default in build-rift.sh" >&2; exit 1; }
+RIFT_VERSION="${RIFT_VERSION:-$PIN}"
 CACHE_ROOT="${RIFT_BUILD_CACHE:-$HOME/.cache/rift-conformance}"
 
 log() { echo "fetch-sdk-corpus: $*" >&2; }
