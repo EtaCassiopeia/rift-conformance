@@ -386,6 +386,31 @@ How the front door routes a request, and the gateway's error and passthrough edg
 
 Not covered: `RouteObserver`, which is only an SPI for Rust embedders. The rule that the gateway is not gated by `--api-key` belongs to the admin-auth issue, which spawns a keyed engine. The empty-`id` and single-imposter-document `routes` rejections are also not asserted, because the issue scoped the boot Outline to six rows.
 
+### `17-metrics.feature` ← rift docs/features/metrics.md (#999/#1045; issue #192) — DONE
+
+The Prometheus families on `--metrics-port` and the admin `GET /metrics`. Exposition is parsed by `support/PromText`, which keys each series by exact name and label set, so a `_created` sibling is never summed in (the #1123 lesson). `PromTextSpec` pins the parser offline. Every assertion is a **delta** keyed by the scenario's own imposter (`rule_id`/`port`). A counter absent before the snapshot counts as 0, and the after-read is polled for up to about 2 s. The `@metrics-port` scenarios read the separate listener, which the embedded harness does not have, so `engineEmbedded` excludes them. The two admin `/metrics` scenarios run on both legs. Fixtures are under `metrics/`.
+
+| Engine contract | Plane A scenario |
+|---|---|
+| `rift_preface_failures_total`, `rift_accept_errors_total` and `rift_accept_error_outage` are exported at 0 before any failure; the outage gauge is 0 (#1045) | Outline `<series> is exported before anything happens`; `a healthy listener reports no accept-error outage` |
+| a latency fault: `rift_faults_injected_total{type=latency,source=rift}` +2 and `rift_latency_injected_ms_count` +2 | `a latency fault counts the fault and the injected-latency histogram` |
+| an error fault: `{type=error}` +1 and `rift_error_status_total{status=503}` +1 | `an error fault counts the fault and its status` |
+| a tcp fault: `{type=tcp}` +1 | `a tcp fault counts as type tcp` |
+| scripts: `pass()` → `rift_script_execution_duration_ms_count{result=pass}` +1; a throw → `rift_script_errors_total{error_type=runtime}` +1 and `result=error` +1; `reset()` → `{type=tcp,source=script}` +1 | `script outcomes are counted by result and error type` |
+| `ctx.state.incr` → `rift_flow_state_ops_total{operation=increment,result=success}` ≥ +1 (a global counter) | `a flow-state increment is counted` |
+| a proxied request → `rift_upstream_request_duration_ms_count{method=GET,status=200}` ≥ +1 | `a proxied request is timed as an upstream request` |
+| connect and close without sending → `rift_preface_failures_total{listener=imposter,kind=eof}` ≥ +1 | `a connection closed before any request counts as a preface eof` |
+| admin `GET /metrics`: `text/plain; version=0.0.4`, and `rift_imposters_total` equals the `GET /imposters` count | `admin /metrics is Prometheus text with the imposter count` |
+| admin `rift_imposter_requests_total{port}` +1 per request | `admin /metrics counts requests per imposter port` |
+
+The design asked for a script returning `http(200)` to count as `result="pass"`. On 0.18.1, a script that answers with `http(...)` counts as `result="fault"` plus `rift_faults_injected_total{type=error,source=script}`. Only `pass()` counts as `pass`, which matches the doc's "`pass` (no fault)" and the scripting table ("`pass()` … no injection"). The scenario pins `pass()`.
+
+Not covered:
+- `rift_accepted_connections_total{worker}` skew under `--runtime per-core` (ledger row #746).
+- The outage gauge flipping to 1 (needs fd exhaustion).
+- The preface `timeout` kind (needs a header-timeout sidecar).
+- `--local-only` on the metrics listener.
+
 ### `18-match-diagnostics.feature` ← rift docs/features/stub-analysis.md, debug-mode.md, docs/api/index.md § Why a request did not match (issue #193) — DONE
 
 These are the three surfaces that explain why a stub did or did not answer. The feature runs on the external and embedded legs, using only the admin HTTP API and the data plane. Fixtures are under `diagnostics/`. Every literal was probed with curl against a standalone 0.18.1 engine first.
@@ -823,8 +848,8 @@ These are already tracked by open issues filed as the releases shipped:
 - templating substitution not re-expanded: #157
 
 Graceful `SIGTERM` shutdown (#1155) is now covered by `RiftCliLifecycleSpec` (#189), and WebSocket
-passthrough (#997) by #191. Not yet tracked: `rift_preface_failures_total{listener,kind}` (rift#1045,
-visible on `/metrics` in 0.18.0).
+passthrough (#997) by #191. `rift_preface_failures_total{listener,kind}` (rift#1045) is now covered by
+`17-metrics.feature` (#192): it is present at 0 from startup, and a connection that closes before sending anything counts as `eof`.
 
 ### Never-2xx-on-failure sweep (#173, umbrella #115)
 
@@ -892,7 +917,7 @@ Verified green on the bump: all 14 Plane A features pass against 0.15.0 with no 
 | **`type` slug on every error-envelope entry** — `{"code","type","message"}`; six slugs copied verbatim from Mountebank's `errors.js`, the rest naming doors Mountebank has no equivalent for | #797 | **covered (#132)** — `13-error-envelope` asserts `type` **and** `code` on all 14 doors, each slug probed against a live 0.15.0: `script error`, `script timeout`, the four inject slugs (where `type` == `code`), `behavior error` (shared by the three strictBehaviors doors, so `type` is *coarser* than `code` there), `upstream failure`, `request too large`, `imposter disabled`, `bad data`. Asserting both per door is what pins the "additive, not a rewrite" promise — a release that repurposed `code` goes red here. This capability exists **because of this harness**: #797 was filed from the #118 work reporting that `code` was unbranchable, and shipped in the next release |
 | Field-level `equals`-on-body predicates indexed by a quamina automaton (default-on `quamina-matching` feature) | #767/#777/#779 | **behaviour-neutral** — a prefilter; anything it cannot express falls through to full evaluation, and matching results are unchanged. Worth an eventual differential check that a body-`equals` stub set matches identically with and without the feature, but nothing is unpinned today |
 | Per-core runtime topology serving imposter traffic (`--runtime per-core[=N]`, `--runtime-affinity`) | #744/#745 | **gap — opt-in, experimental.** Default work-stealing topology is unchanged, and macOS falls back to work-stealing with a warning, so this is Linux-only to exercise. Delete/drain semantics and the `RIFT_MAX_CONNECTIONS` cap are claimed identical across topologies — that equivalence is the assertable property |
-| `rift_accepted_connections_total{worker=…}` per-worker accept counters | #746 | **gap** — `09-gateway-https-metrics` already scrapes the metrics endpoint; add the counter's presence/labels under `--runtime per-core` |
+| `rift_accepted_connections_total{worker=…}` per-worker accept counters | #746 | **gap** — the per-worker skew needs `--runtime per-core`, which is Linux-only and experimental. #192 left it out of scope, and `17-metrics` covers the other accept/preface families |
 | Opt-in `jemalloc` allocator feature for the server binary | #717 | **n/a** — a build-time allocator choice in the engine's own release process; no wire-visible surface for this harness to assert |
 
 ## v0.13.2 → v0.14.0 new-capability coverage gaps (pin bump 0.13.1 → 0.14.0) — tracked by [#72](https://github.com/EtaCassiopeia/rift-conformance/issues/72)

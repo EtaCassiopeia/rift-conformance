@@ -227,6 +227,9 @@ final case class CurrentPort(port: Int)
   */
 final case class NamedPorts(ports: Map[String, Int])
 
+/** The `/metrics` scrape taken per listener (`metrics` or `admin`) before a feature-17 delta. */
+final case class MetricsSnapshots(byListener: Map[String, PromText])
+
 /** Admin URL of the feature-21 `@admin-isolated` sidecar engine. */
 final case class IsolatedAdmin(url: String)
 
@@ -2348,6 +2351,119 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
       }
       _ <- assertRepro(code == 200, s"POST $path -> $code (expected 200)")
     yield ()
+  }
+
+  // ── metrics (feature 17, #192) ───────────────────────────────────────────────────────────
+
+  private def listenerUrl(listener: String): ZIO[RiftHarness, Throwable, String] =
+    listener match
+      case "metrics" => ZIO.serviceWith[RiftHarness](_.metricsUrl)
+      case "admin" => ZIO.serviceWith[RiftHarness](_.adminUrl)
+      case other =>
+        ZIO.fail(new IllegalArgumentException(s"unknown listener '$other' (metrics|admin)"))
+
+  private def scrape(listener: String): ZIO[RiftHarness, Throwable, PromText] =
+    for
+      base <- listenerUrl(listener)
+      resp <- httpSend(s"$base/metrics", "GET", Map.empty, None)
+      _ <- ZIO
+        .fail(new RuntimeException(s"GET $base/metrics -> ${resp.status}: ${resp.body.take(200)}"))
+        .when(resp.status != 200)
+      parsed <- ZIO.fromEither(PromText.parse(resp.body)).mapError(new RuntimeException(_))
+    yield parsed
+
+  /** A selector with `{port}` filled from the scenario's current imposter. */
+  private def seriesOf(sel: String): IO[Throwable, PromText.Series] =
+    for
+      port <- currentPort.option
+      filled = port.fold(sel)(p => sel.replace("{port}", p.toString))
+      series <- ZIO.fromEither(PromText.selector(filled)).mapError(new IllegalArgumentException(_))
+    yield series
+
+  /** How far `sel` moved since the snapshot on `listener`, polled (100 ms apart, ~2 s) until `done`
+    * holds: the engine may record a beat after the response. A series absent before counts as 0 — a
+    * labelled counter is born on its first increment.
+    */
+  private def delta(listener: String, sel: String)(
+      done: Double => Boolean
+  ): ZIO[RiftHarness, Throwable, (PromText.Series, Double)] =
+    for
+      series <- seriesOf(sel)
+      snap <- Stage
+        .get[MetricsSnapshots]
+        .map(_.byListener.get(listener))
+        .orElseSucceed(None)
+        .someOrFail(new IllegalStateException(s"no snapshot of the '$listener' listener taken"))
+      before = snap.get(series).getOrElse(0.0)
+      d <- scrape(listener)
+        .map(_.get(series).getOrElse(0.0) - before)
+        .repeat(
+          Schedule.recurUntil[Double](done) <* Schedule.recurs(20) <* Schedule.spaced(100.millis)
+        )
+    yield (series, d)
+
+  When("the client snapshots the " / string / " listener") { (listener: String) =>
+    for
+      p <- scrape(listener)
+      m <- Stage.get[MetricsSnapshots].map(_.byListener).orElseSucceed(Map.empty)
+      _ <- Stage.put(MetricsSnapshots(m + (listener -> p)))
+    yield ()
+  }
+
+  Then("on the " / string / " listener " / string / " grew by " / int) {
+    (listener: String, sel: String, n: Int) =>
+      delta(listener, sel)(_ >= n).flatMap((s, d) =>
+        assertRepro(d == n, s"expected $s to grow by exactly $n, it grew by $d")
+      )
+  }
+
+  Then("on the " / string / " listener " / string / " grew by at least " / int) {
+    (listener: String, sel: String, n: Int) =>
+      delta(listener, sel)(_ >= n).flatMap((s, d) =>
+        assertRepro(d >= n, s"expected $s to grow by at least $n, it grew by $d")
+      )
+  }
+
+  Then("the metrics listener exports " / string) { (sel: String) =>
+    for
+      s <- seriesOf(sel)
+      p <- scrape("metrics")
+      _ <- assertRepro(p.get(s).isDefined, s"expected $s to be exported; it is absent")
+    yield ()
+  }
+
+  Then("the metrics listener reports " / string / " as " / int) { (sel: String, n: Int) =>
+    for
+      s <- seriesOf(sel)
+      v <- scrape("metrics").map(_.get(s))
+      _ <- assertRepro(v.contains(n.toDouble), s"expected $s = $n, got ${v.getOrElse("<absent>")}")
+    yield ()
+  }
+
+  Then("admin metric " / string / " equals the number of imposters listed by GET /imposters") {
+    (sel: String) =>
+      for
+        s <- seriesOf(sel)
+        v <- scrape("admin").map(_.get(s))
+        admin <- ZIO.serviceWith[RiftHarness](_.adminUrl)
+        resp <- httpSend(s"$admin/imposters", "GET", Map.empty, None)
+        listed <- parseAdminJson(resp.body).map(j => jsonAt(j, "imposters"))
+        n = listed match
+          case Some(Json.Arr(es)) => Some(es.length)
+          case _ => None
+        _ <- assertRepro(
+          n.isDefined && v.contains(n.get.toDouble),
+          s"expected $s to equal the GET /imposters count ${n.getOrElse("<no imposters array>")}, " +
+            s"got ${v.getOrElse("<absent>")}"
+        )
+      yield ()
+  }
+
+  // #1045: connect, then hang up before sending a byte.
+  When("a raw TCP connection to the current imposter closes without sending") {
+    currentImposterAccepts.flatMap((host, port, ok) =>
+      assertRepro(ok, s"connect to $host:$port was refused")
+    )
   }
 
   // ── match diagnostics (feature 18, #193) ─────────────────────────────────────────────────
