@@ -119,7 +119,9 @@ addCommandAlias("engineConformance", "testOnly samples.rift.*")
 // Enumerated explicitly rather than tag-filtered because 03-faults-transport shares `@transport`
 // with 09/10 yet MUST run. Includes 12-intercept (#53) with `--exclude-tags intercept-http` — the
 // embedded FFI binds start-intercept/add-rules/export-truststore but not the HTTP-only ca.pem +
-// rules-list/clear routes, so those two scenarios (tagged @intercept-http) are skipped here. The
+// rules-list/clear routes, so those two scenarios (tagged @intercept-http) are skipped here.
+// 11-reload's @front-door scenarios (rift#1160) need an engine spawned with `--front-door`, which
+// only external mode can do, so they are excluded too. The
 // zio-test specs run in a second step (the zio-bdd `--exclude-tags` arg is not theirs to parse).
 // 13-error-envelope (#118) is likewise absent: its doors (strictBehaviors shellTransform, the
 // `defaultForward` 502, the over-size-body cap) were only verified against the spawned engine, and
@@ -131,7 +133,7 @@ addCommandAlias(
     "samples.rift.FaultsTransport03Suite samples.rift.ScriptingBounds04Suite " +
     "samples.rift.Templating05Suite samples.rift.Behaviors06Suite samples.rift.SpacesFsm07Suite " +
     "samples.rift.AdminSurface08Suite samples.rift.Reload11Suite samples.rift.Intercept12Suite " +
-    "-- --exclude-tags intercept-http,intercept-caller-ca,intercept-runtime" +
+    "-- --exclude-tags intercept-http,intercept-caller-ca,intercept-runtime,front-door" +
     " ; testOnly samples.rift.RiftEmbeddedHarnessSpec samples.rift.RiftToolsParseSpec"
 )
 

@@ -42,12 +42,16 @@ object RiftConformanceSupport:
     */
   private val SendDeadlineMillis: Long = 30000
 
-  /** POST a large body over a raw socket, reading the response as soon as the server sends one. */
+  /** POST a large body over a raw socket, reading the response as soon as the server sends one.
+    * Also the one send that can set `Host` (`hostHeader`): the JDK `HttpClient` refuses it as a
+    * restricted header, and the front door (feature 11) routes on it.
+    */
   def sendOversize(
       url: String,
       method: String,
       headers: Map[String, String],
-      body: String
+      body: String,
+      hostHeader: Option[String] = None
   ): LastResponse =
     val uri = URI.create(url)
     // Plaintext only: this path speaks raw HTTP/1.1 on a bare socket, so an https URL would
@@ -66,7 +70,7 @@ object RiftConformanceSupport:
       val reserved = Set("host", "content-length", "connection")
       val head = new StringBuilder()
         .append(s"${method.toUpperCase} $path$query HTTP/1.1\r\n")
-        .append(s"Host: ${uri.getHost}:$port\r\n")
+        .append(s"Host: ${hostHeader.getOrElse(s"${uri.getHost}:$port")}\r\n")
         .append(s"Content-Length: ${bytes.length}\r\n")
         .append("Connection: close\r\n")
       // Framing headers are ours; a caller restating one would emit a duplicate line.
@@ -258,6 +262,9 @@ final case class ConcurrentBurst(
   * suite, hence the flag.
   */
 final case class ReloadActive(active: Boolean)
+
+/** The front-door port of this scenario's `--front-door` reload engine (feature 11, rift#1160). */
+final case class FrontDoorPort(port: Int)
 
 /** Shared Plane A step backbone. Mix into a `ZIOSteps[RiftHarness, S]` suite. Steps talk **directly
   * to the admin API and the imposter ports** — `MockControl` appears nowhere, which is what keeps
@@ -1929,15 +1936,118 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
     * asserts below can all read it the same way.
     */
   private def reload: ZIO[RiftHarness, Throwable, Unit] =
-    for
-      admin <- ZIO.serviceWith[RiftHarness](_.adminUrl)
-      resp <- httpSend(s"$admin/admin/reload", "POST", Map.empty, None)
-      _ <- assertRepro(
+    attemptReload.flatMap(resp =>
+      assertRepro(
         resp.status == 200,
         s"POST admin/reload -> ${resp.status} (expected 200): ${resp.body}"
       )
+    )
+
+  /** `POST {admin}/admin/reload` whatever its outcome, stashed as `lastResponse`. */
+  private def attemptReload: ZIO[RiftHarness, Throwable, LastResponse] =
+    for
+      admin <- ZIO.serviceWith[RiftHarness](_.adminUrl)
+      resp <- httpSend(s"$admin/admin/reload", "POST", Map.empty, None)
+      _ <- Stage.put(resp)
+    yield resp
+
+  /** The feature-11 `@front-door` config (rift#1160): two imposters answering `A` (4872) and `B`
+    * (4873) plus a `routes` block holding `routes` (already-rendered route objects).
+    */
+  private def frontDoorConfigJson(routes: String*): String =
+    """{"imposters":[""" +
+      """{"port":4872,"protocol":"http","stubs":[{"responses":[{"is":{"statusCode":200,"body":"A"}}]}]},""" +
+      """{"port":4873,"protocol":"http","stubs":[{"responses":[{"is":{"statusCode":200,"body":"B"}}]}]}""" +
+      s"""],"routes":{"routes":[${routes.mkString(",")}]}}"""
+
+  private def hostRoute(id: String, host: String, port: Int): String =
+    s"""{"id":"$id","match":{"host":"$host"},"target":{"port":$port}}"""
+
+  private def frontDoorPort: IO[Throwable, Int] =
+    Stage
+      .get[FrontDoorPort]
+      .mapError(_ => new IllegalStateException("no front-door engine started in this scenario"))
+      .map(_.port)
+
+  Given(
+    "the engine is started with the front door and a route from host " / string / " to port " / int
+  ) { (host: String, port: Int) =>
+    // Flag the revert BEFORE the swap: a start that fails half-way must still be reverted.
+    Stage.put(ReloadActive(true)) *>
+      ZIO
+        .serviceWithZIO[RiftHarness](
+          _.startReloadConfigWithFrontDoor(frontDoorConfigJson(hostRoute("r", host, port)))
+        )
+        .flatMap(p => Stage.put(FrontDoorPort(p)))
+  }
+
+  Given(
+    "the engine is started without the front door and a route from host " / string / " to port " / int
+  ) { (host: String, port: Int) =>
+    Stage.put(ReloadActive(true)) *>
+      ZIO.serviceWithZIO[RiftHarness](
+        _.startReloadConfig(frontDoorConfigJson(hostRoute("r", host, port)))
+      )
+  }
+
+  When("the reload config file routes host " / string / " to port " / int) {
+    (host: String, port: Int) =>
+      ZIO.serviceWithZIO[RiftHarness](
+        _.rewriteReloadConfig(frontDoorConfigJson(hostRoute("r", host, port)))
+      )
+  }
+
+  When("the reload config file declares two routes with the same id") {
+    ZIO.serviceWithZIO[RiftHarness](
+      _.rewriteReloadConfig(
+        frontDoorConfigJson(hostRoute("dup", "c.test", 4872), hostRoute("dup", "d.test", 4873))
+      )
+    )
+  }
+
+  When("the engine reload is attempted") {
+    attemptReload.unit
+  }
+
+  Then("the reload is refused naming " / string) { (reason: String) =>
+    lastResponse.flatMap(r =>
+      assertRepro(
+        r.status >= 400 && r.body.contains(reason),
+        s"expected the reload refused (status >= 400) naming '$reason', got ${r.status}: ${r.body}"
+      )
+    )
+  }
+
+  Then("the reload report warns about " / string) { (text: String) =>
+    for
+      r <- lastResponse
+      json <- parseAdminJson(r.body)
+      warnings = json match
+        case Json.Obj(fields) =>
+          fields.collectFirst { case ("warnings", Json.Arr(ws)) =>
+            ws.collect { case Json.Str(w) => w }.toList
+          }
+        case _ => None
+      _ <- assertRepro(
+        warnings.exists(_.exists(_.contains(text))),
+        s"expected a reload warning naming '$text', got ${warnings.getOrElse("<no warnings>")}"
+      )
+    yield ()
+  }
+
+  When(
+    "the client sends " / string / " " / string / " through the front door with host " / string
+  ) { (method: String, path: String, host: String) =>
+    for
+      port <- frontDoorPort
+      url = s"http://localhost:$port$path"
+      _ <- recordCurl(s"curl -s -i -X $method -H 'Host: $host' '$url'")
+      resp <- ZIO.attemptBlocking(
+        RiftConformanceSupport.sendOversize(url, method, Map.empty, "", Some(host))
+      )
       _ <- Stage.put(resp)
     yield ()
+  }
 
   /** The length of the named top-level array (`created`/`deleted`/`replaced`/`stubPatched`) in the
     * last reload change-report response.

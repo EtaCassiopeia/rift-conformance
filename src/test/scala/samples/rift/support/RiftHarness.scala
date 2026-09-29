@@ -123,6 +123,21 @@ trait RiftHarness:
     */
   def startReloadConfig(json: String): Task[Unit]
 
+  /** [[startReloadConfig]] with the engine also started with `--front-door` on a fresh port, which
+    * is returned (rift#1160, feature 11 `@front-door`). Paired with `revertEngine` the same way.
+    * External mode only: the other modes cannot pass the engine a CLI flag, so they fail and the
+    * scenarios are excluded there by tag.
+    */
+  def startReloadConfigWithFrontDoor(json: String): Task[Int] =
+    ZIO.fail(new UnsupportedOperationException("the front door is external-mode only"))
+
+  /** Overwrite the config file of the pending [[startReloadConfig]] engine, so a following `POST
+    * /admin/reload` picks up the edit. Fails if no reload engine is pending. External mode only,
+    * like [[startReloadConfigWithFrontDoor]].
+    */
+  def rewriteReloadConfig(json: String): Task[Unit] =
+    ZIO.fail(new UnsupportedOperationException("rewriting the reload config is external-mode only"))
+
   /** Revert to a plain engine (same ports) if `startReloadConfig` left one pending; a no-op
     * otherwise, so it is safe to call unconditionally from a cleanup hook.
     */
@@ -236,10 +251,28 @@ private final class RiftHarnessLive(
     }
 
   def withConfigFile(json: String): ZIO[Scope, Throwable, Unit] =
-    ZIO.acquireRelease(startConfigFileEngine(json))(path => revertToPlainEngine(path).orDie).unit
+    ZIO
+      .acquireRelease(startConfigFileEngine(json, None))(path => revertToPlainEngine(path).orDie)
+      .unit
 
   def startReloadConfig(json: String): Task[Unit] =
-    startConfigFileEngine(json).flatMap(path => pendingConfigRef.set(Some(path)))
+    startConfigFileEngine(json, None).flatMap(path => pendingConfigRef.set(Some(path)))
+
+  override def startReloadConfigWithFrontDoor(json: String): Task[Int] =
+    for
+      frontDoor <- RiftHarness.freePort
+      path <- startConfigFileEngine(json, Some(frontDoor))
+      _ <- pendingConfigRef.set(Some(path))
+      proc <- engineRef.get
+      _ <- RiftHarness.awaitTcpReady("localhost", frontDoor, proc)
+    yield frontDoor
+
+  override def rewriteReloadConfig(json: String): Task[Unit] =
+    pendingConfigRef.get.flatMap {
+      case Some(path) =>
+        ZIO.attemptBlocking(Files.write(path, json.getBytes(StandardCharsets.UTF_8))).unit
+      case None => ZIO.fail(new IllegalStateException("no reload config engine is pending"))
+    }
 
   def revertEngine: Task[Unit] =
     pendingConfigRef.get.flatMap {
@@ -251,7 +284,7 @@ private final class RiftHarnessLive(
     * to a temp file), await its admin API, and make it current. Returns the temp path so the caller
     * can hand it back to `revertToPlainEngine` later.
     */
-  private def startConfigFileEngine(json: String): Task[Path] =
+  private def startConfigFileEngine(json: String, frontDoor: Option[Int]): Task[Path] =
     for
       old <- engineRef.get
       _ <- RiftHarness.killProcess(old)
@@ -261,7 +294,14 @@ private final class RiftHarnessLive(
         Files.write(p, json.getBytes(StandardCharsets.UTF_8))
         p
       }
-      proc <- RiftHarness.rawSpawn(cfg, adminPort, metricsPort, Some(tmp), Some(interceptPort))
+      proc <- RiftHarness.rawSpawn(
+        cfg,
+        adminPort,
+        metricsPort,
+        Some(tmp),
+        Some(interceptPort),
+        frontDoor
+      )
       // Store BEFORE awaiting readiness so the layer finalizer reaps this process no matter what —
       // an engine that spawns but never becomes ready must not be orphaned. On a readiness failure
       // also force-kill it now so it doesn't hold the shared admin port for the rest of the run.
@@ -485,7 +525,8 @@ object RiftHarness:
       port: Int,
       metricsPort: Int,
       configFile: Option[Path],
-      interceptPort: Option[Int]
+      interceptPort: Option[Int],
+      frontDoorPort: Option[Int] = None
   ): Task[Process] =
     ZIO.attemptBlocking {
       val binary = cfg.buildDir.resolve("rift").toString
@@ -514,6 +555,7 @@ object RiftHarness:
       val args = baseArgs ++
         configFile.toList.flatMap(p => List("--configfile", p.toString)) ++
         interceptPort.toList.flatMap(p => List("--intercept-port", p.toString)) ++
+        frontDoorPort.toList.flatMap(p => List("--front-door", p.toString)) ++
         caArgs
       val pb = new ProcessBuilder(args*)
       pb.directory(cfg.corpusRoot.toFile)
@@ -544,9 +586,9 @@ object RiftHarness:
     }
 
   /** Bounded, blocking readiness probe that a plain TCP listener is accepting on `host:port` (the
-    * intercept listener, which speaks `CONNECT` rather than answering a GET). Watches the child: if
-    * the engine exits early it fails fast with the exit code. Same budget/spacing as
-    * [[awaitReady]].
+    * intercept listener, which speaks `CONNECT` rather than answering a GET, or the front door,
+    * which 404s an unrouted probe). Watches the child: if the engine exits early it fails fast with
+    * the exit code. Same budget/spacing as [[awaitReady]].
     */
   private[support] def awaitTcpReady(host: String, port: Int, proc: Process): IO[Throwable, Unit] =
     ZIO.attemptBlocking {
@@ -556,7 +598,7 @@ object RiftHarness:
       while !ready && java.lang.System.nanoTime < deadline do
         if !proc.isAlive then
           throw new RuntimeException(
-            s"rift exited early (code ${proc.exitValue()}) before intercept :$port came up"
+            s"rift exited early (code ${proc.exitValue()}) before listener :$port came up"
           )
         try
           val s = new Socket()
@@ -569,7 +611,7 @@ object RiftHarness:
             Thread.sleep(ReadinessSpacingMs)
       if !ready then
         throw new RuntimeException(
-          s"intercept listener not ready on $host:$port within ${ReadinessBudgetMs}ms",
+          s"listener not ready on $host:$port within ${ReadinessBudgetMs}ms",
           lastErr
         )
     }

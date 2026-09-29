@@ -12,8 +12,10 @@ import zio.bdd.core.step.ZIOSteps
   * exercises `RiftHarness#startReloadConfig`/`revertEngine` (#10), which swap the SHARED engine for
   * a `--configfile`-backed one and revert it back to plain afterward — `afterScenario` in
   * `RiftConformanceSupport` guarantees the revert runs even if an assertion fails mid-scenario, so
-  * every suite after this one still sees the ordinary shared engine on the same admin URL. Requires
-  * `RIFT_BUILD_DIR`.
+  * every suite after this one still sees the ordinary shared engine on the same admin URL. The
+  * `@front-door` scenarios (rift#1160) start that engine with `--front-door` and edit its config
+  * file between reloads (`startReloadConfigWithFrontDoor`/`rewriteReloadConfig`, external mode
+  * only). Requires `RIFT_BUILD_DIR`.
   */
 @Suite(
   featureDirs = Array("src/test/resources/features/rift/11-reload.feature"),

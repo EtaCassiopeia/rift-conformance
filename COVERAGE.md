@@ -269,6 +269,18 @@ Harness: `RiftHarness` now spawns the engine with a fresh `--metrics-port` and e
 > finalizer reaps whichever engine is current at run end. `conformance-reload.sh` retirement is
 > deferred to #11.
 
+**Front-door routes on reload (rift#1160, issue #153; `@front-door`, external-only).** The reload
+engine is started with `--front-door` on a free port (`RiftHarness.startReloadConfigWithFrontDoor`), and
+its config file is edited between reloads (`rewriteReloadConfig`). Front-door sends go over a raw
+socket so they can set `Host`, which the JDK `HttpClient` refuses. Excluded from `engineEmbedded`, and
+`engineContainer` does not run feature 11.
+
+| Engine contract | Plane A scenario |
+|---|---|
+| an edited `routes` block is re-applied: the new host routes, the old host gets a 404 with `x-rift-front-door: no-route` | `reload re-applies an edited front-door routes block` |
+| an invalid table (duplicate route id) refuses the reload, and the old routes keep serving | `an invalid route table refuses the reload and the old routes keep serving` (asserts status >= 400; 0.18.0 answers 500) |
+| a `routes` block without `--front-door` reloads with a `warnings` entry naming the flag | `a routes block without --front-door reloads with a warning naming the flag` |
+
 ## Phase 2 admin/topology/proxy/reload surface — COMPLETE ✅ (features 07–11 all green)
 
 ## Plane B — MockControl mock corpus (issue #13)
