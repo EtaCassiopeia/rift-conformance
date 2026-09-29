@@ -137,6 +137,8 @@ addCommandAlias("engineConformance", "testOnly samples.rift.*")
 // this list is an allowlist — enrolling an unverified suite would make the embedded job red for a
 // reason that has nothing to do with the envelope contract it exists to pin.
 // 14-behaviors-response-types (#154) was verified green on the embedded leg before being enrolled.
+// 19-flow-state-declarative (#194) likewise; its `@rift-debug-env` row spawns a `--debug` engine
+// (external only), so that tag is excluded here and in `engineContainer`.
 // FfiAdminParity75Spec (#75), FfiStubWarnings92Spec (#92), FfiVerifyParity94Spec (#94) and
 // FfiLongTail205Spec (#205) diff C-ABI calls against the admin HTTP API on one engine; they no-op
 // outside RIFT_MODE=embedded, so only this alias runs them.
@@ -155,8 +157,9 @@ addCommandAlias(
     "samples.rift.AdminSurface08Suite samples.rift.Reload11Suite samples.rift.Intercept12Suite " +
     "samples.rift.BehaviorsResponseTypes14Suite samples.rift.MatchDiagnostics18Suite " +
     "samples.rift.TlsTermination20Suite samples.rift.AdminRest21Suite " +
+    "samples.rift.FlowStateDeclarative19Suite " +
     "-- --exclude-tags intercept-http,intercept-caller-ca,intercept-runtime,intercept-auth,intercept-ws,front-door,upstream-trust," +
-    "admin-isolated,tls-flags" +
+    "admin-isolated,tls-flags,rift-debug-env" +
     " ; testOnly samples.rift.RiftEmbeddedHarnessSpec samples.rift.RiftToolsParseSpec" +
     " samples.rift.FfiAdminParity75Spec samples.rift.FfiStubWarnings92Spec" +
     " samples.rift.FfiVerifyParity94Spec samples.rift.FfiLongTail205Spec" +
@@ -184,7 +187,7 @@ addCommandAlias(
   "engineContainer",
   "; testOnly samples.rift.RiftContainerHarnessSpec samples.rift.RiftToolsParseSpec" +
     " ; testOnly samples.rift.ConsistencyGateSuite samples.rift.FaultsTransport03Suite " +
-    "samples.rift.Intercept12Suite -- --exclude-tags full-corpus-verify,intercept-caller-ca,intercept-runtime,intercept-auth,intercept-ws,upstream-trust,tls-flags"
+    "samples.rift.Intercept12Suite -- --exclude-tags full-corpus-verify,intercept-caller-ca,intercept-runtime,intercept-auth,intercept-ws,upstream-trust,tls-flags,rift-debug-env"
 )
 
 // `lintFeatures` — the dry-run step-matching gate (#142): loads the feature suites and checks every
