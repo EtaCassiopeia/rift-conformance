@@ -1,5 +1,6 @@
 package samples.rift
 
+import samples.rift.support.RiftPin
 import zio.*
 import zio.json.*
 import zio.test.*
@@ -20,9 +21,8 @@ import java.net.http.{HttpClient, HttpRequest, HttpResponse}
   */
 object FfiManifest91Spec extends ZIOSpecDefault:
 
-  // Default must track scripts/build-rift.sh's RIFT_VERSION default — this asserts the manifest of
-  // the same release the binary legs fetch, so a drifting default would verify the wrong release.
-  private val Version = sys.env.getOrElse("RIFT_VERSION", "0.18.1")
+  // The manifest of the same release the binary legs fetch (RiftPin reads build-rift.sh's pin).
+  private val Version = RiftPin.version
   private val ManifestUrl =
     s"https://github.com/achird-labs/rift/releases/download/v$Version/ffi-manifest.json"
 

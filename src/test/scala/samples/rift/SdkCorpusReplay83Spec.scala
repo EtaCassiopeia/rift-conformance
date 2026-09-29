@@ -1,6 +1,6 @@
 package samples.rift
 
-import samples.rift.support.{RiftTools, TestPorts}
+import samples.rift.support.{RiftPin, RiftTools, TestPorts}
 import zio.*
 import zio.json.*
 import zio.json.ast.Json
@@ -28,7 +28,9 @@ import scala.jdk.CollectionConverters.*
   */
 object SdkCorpusReplay83Spec extends ZIOSpecDefault:
 
-  private val Version = sys.env.getOrElse("RIFT_VERSION", "0.13.1")
+  // The pinned release (RiftPin: RIFT_VERSION, else scripts/build-rift.sh's default), so the corpus
+  // replayed is the one shipped with the engine under test.
+  private val Version = RiftPin.version
 
   private final case class Fixture(
       file: String,
