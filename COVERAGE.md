@@ -507,8 +507,8 @@ yet: `ConformanceFfi` wraps only the calls the harness uses today.
 ### Plane B on 1.5.0
 
 - **wiremock (`mockConformance`) is green**, fixing the #143 red: zio-bdd#338 makes `--exclude-tags`
-  drop a scenario that also carries a parameterized `@mock(...)` tag. The missing Plane B CI job in
-  #143 still stands.
+  drop a scenario that also carries a parameterized `@mock(...)` tag. #143 then added the
+  missing `plane-b` CI job (wiremock + rift-external).
 - `FixedPort25`: a pooled adapter (`Rift.connect`) now refuses an authored port outside its pool
   (zio-bdd#213/#303, documented). `Backends.pinnablePorts` exposes the rift-external pool, and the
   suite pins a free port from inside it.
