@@ -120,9 +120,8 @@ Feature: Admin surface — stub-by-id, enable/disable, savedRequests filtering, 
   # config — the same document `GET /imposters?replayable=true` lists — built from the LIVE stubs,
   # so a stub added after creation is exported too. Before 0.18.1 the route ignored `replayable`
   # and answered the detail view. Without the flag the detail view is unchanged; asserting both
-  # makes the field checks discriminating. @native-lag: the embedded natives (rift-java 0.3.2)
-  # still carry rift 0.18.0, so engineEmbedded excludes this until they carry >= 0.18.1.
-  @native-lag
+  # makes the field checks discriminating. Runs on every leg: the embedded natives carry 0.18.1
+  # since rift-java 0.3.3.
   Scenario: GET /imposters/{port}?replayable=true exports the live stubs without the detail fields
     Given a fresh imposter from fixture "admin/base"
     When the client sends admin "POST" "/imposters/{port}/stubs" with payload "admin/added-stub"
