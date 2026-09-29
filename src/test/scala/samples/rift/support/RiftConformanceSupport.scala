@@ -206,6 +206,14 @@ final case class TrackedPorts(ports: List[Int])
 /** The imposter subsequent request steps target (the last one posted). */
 final case class CurrentPort(port: Int)
 
+/** Scenario-local names for imposter ports (feature 21), so a listing view can be checked by name
+  * and an admin path can say `{name}`.
+  */
+final case class NamedPorts(ports: Map[String, Int])
+
+/** Admin URL of the feature-21 `@admin-isolated` sidecar engine. */
+final case class IsolatedAdmin(url: String)
+
 /** The key prefix of the scenario's Redis flow-store imposter (feature 15). */
 final case class RedisKeyPrefix(prefix: String)
 
@@ -350,6 +358,14 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
     ZIO
       .serviceWithZIO[RiftHarness](_.stopUpstreamTrustEngine)
       .tapError(e => ZIO.logWarning(s"upstream-trust engine teardown failed: ${e.getMessage}"))
+      .ignore
+  }
+
+  // Reap the feature-21 @admin-isolated engine (#200) if this scenario started one.
+  afterScenario {
+    ZIO
+      .serviceWithZIO[RiftHarness](_.stopIsolatedAdminEngine)
+      .tapError(e => ZIO.logWarning(s"isolated admin engine teardown failed: ${e.getMessage}"))
       .ignore
   }
 
@@ -1879,8 +1895,20 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
   When(
     "the client sends admin " / string / " " / string / " with payload " / string
   ) { (method: String, pathTemplate: String, payload: String) =>
+    ZIO.serviceWith[RiftHarness](_.adminUrl).flatMap(sendAdmin(_, method, pathTemplate, payload))
+  }
+
+  /** The body of the admin-send steps, against an explicit admin URL. Besides the three port
+    * placeholders it fills `{name}` for every imposter the scenario named (feature 21).
+    */
+  private def sendAdmin(
+      admin: String,
+      method: String,
+      pathTemplate: String,
+      payload: String
+  ): ZIO[RiftHarness, Throwable, Unit] =
     for
-      admin <- ZIO.serviceWith[RiftHarness](_.adminUrl)
+      named <- namedPorts
       body0 <-
         if payload == "-" then ZIO.none
         else loadResource(s"/rift-fixtures/$payload.json").asSome
@@ -1892,8 +1920,10 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
           freeProbePort.tap(p => track(p) *> Stage.put(CurrentPort(p))).asSome
         else ZIO.none
       fill = (s: String) =>
-        List("{port}" -> port, "{unknownPort}" -> unknown, "{newPort}" -> fresh).foldLeft(s) {
-          case (acc, (k, v)) => v.fold(acc)(p => acc.replace(k, p.toString))
+        val fixed = List("{port}" -> port, "{unknownPort}" -> unknown, "{newPort}" -> fresh)
+        val aliases = named.toList.map((n, p) => s"{$n}" -> Some(p))
+        (fixed ++ aliases).foldLeft(s) { case (acc, (k, v)) =>
+          v.fold(acc)(p => acc.replace(k, p.toString))
         }
       url = s"$admin${fill(pathTemplate)}"
       body = body0.map(fill)
@@ -1904,6 +1934,277 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
       resp <- httpSend(url, method, Map("Content-Type" -> "application/json"), body)
       _ <- Stage.put(resp)
     yield ()
+
+  // ── admin REST long tail (feature 21, #200) ──────────────────────────────────────────────
+
+  private def namedPorts: UIO[Map[String, Int]] =
+    Stage.get[NamedPorts].map(_.ports).orElseSucceed(Map.empty)
+
+  private def nameImposter(name: String, port: Int): UIO[Unit] =
+    namedPorts.flatMap(m => Stage.put(NamedPorts(m + (name -> port))))
+
+  private def namedPort(name: String): IO[Throwable, Int] =
+    namedPorts.flatMap(m =>
+      ZIO
+        .fromOption(m.get(name))
+        .orElseFail(
+          new IllegalStateException(s"no imposter named '$name' (have ${m.keys.mkString(", ")})")
+        )
+    )
+
+  private def names(csv: String): List[String] = csv.split(',').map(_.trim).toList
+
+  /** The value at a dotted path (`stubs.1.id`): a segment is an object key, or an array index. */
+  private def jsonAt(root: Json, path: String): Option[Json] =
+    path.split('.').foldLeft(Option(root)) {
+      case (Some(Json.Obj(fields)), seg) => fields.collectFirst { case (`seg`, v) => v }
+      case (Some(Json.Arr(elems)), seg) => seg.toIntOption.flatMap(elems.lift)
+      case _ => None
+    }
+
+  private def assertJsonAt(path: String, what: String)(ok: Json => Boolean): IO[Throwable, Unit] =
+    lastResponse.flatMap(r =>
+      parseAdminJson(r.body).flatMap { root =>
+        val v = jsonAt(root, path)
+        assertRepro(
+          v.exists(ok),
+          s"expected $what at '$path', got ${v.fold("<absent>")(_.toJson)} in: ${r.body}"
+        )
+      }
+    )
+
+  /** The `imposters` array of the last response, as the objects it holds. */
+  private def listedImposters: IO[Throwable, Chunk[Chunk[(String, Json)]]] =
+    lastResponseObject.flatMap(fields =>
+      ZIO
+        .fromOption(fields.collectFirst { case ("imposters", Json.Arr(es)) =>
+          es.collect { case Json.Obj(f) => f }
+        })
+        .orElseFail(new RuntimeException(s"no 'imposters' array in: ${fields.toMap.keys}"))
+    )
+
+  private def portOf(entry: Chunk[(String, Json)]): Option[Int] =
+    entry.collectFirst { case ("port", Json.Num(n)) => n.intValue }
+
+  private def listedImposter(name: String): IO[Throwable, Chunk[(String, Json)]] =
+    for
+      port <- namedPort(name)
+      listed <- listedImposters
+      entry <- ZIO
+        .fromOption(listed.find(portOf(_).contains(port)))
+        .orElseFail(
+          new RuntimeException(
+            s"imposter '$name' (port $port) not listed; got ports ${listed.flatMap(portOf).mkString(", ")}"
+          )
+        )
+    yield entry
+
+  private def postNamed(admin: String, name: String, fixture: String, port: Int) =
+    for
+      raw <- loadFixture(fixture).flatMap(rewriteFixtureJson)
+      json <- ZIO.fromEither(injectPort(raw, port)).mapError(new RuntimeException(_))
+      code <- postImposter(admin, json)
+      _ <- ZIO
+        .fail(new RuntimeException(s"POST $fixture on port $port returned $code, expected 201"))
+        .when(code != 201)
+      _ <- nameImposter(name, port)
+    yield ()
+
+  // #713: creating on the higher port FIRST is what makes an ascending listing a real claim rather
+  // than an echo of insertion order.
+  Given(
+    "imposters " / string / " then " / string / " from fixture " / string / " on descending ports"
+  ) { (first: String, second: String, fixture: String) =>
+    for
+      admin <- ZIO.serviceWith[RiftHarness](_.adminUrl)
+      a <- freeProbePort.tap(track)
+      b <- freeProbePort.tap(track)
+      _ <- postNamed(admin, first, fixture, math.max(a, b))
+      _ <- postNamed(admin, second, fixture, math.min(a, b))
+      _ <- Stage.put(CurrentPort(math.min(a, b)))
+    yield ()
+  }
+
+  Given("a fresh imposter " / string / " from fixture " / string) {
+    (name: String, fixture: String) =>
+      postImposterFromFixture(fixture).flatMap(nameImposter(name, _))
+  }
+
+  // Ports come from the same probe pool and are tracked like any other: the sidecar dies with its
+  // imposters, so the shared-engine cleanup of those ports is a 404 no-op.
+  Given(
+    "an isolated engine with imposters " / string / " from " / string / " and " / string /
+      " from " / string
+  ) { (n1: String, f1: String, n2: String, f2: String) =>
+    for
+      url <- ZIO.serviceWithZIO[RiftHarness](_.startIsolatedAdminEngine)
+      _ <- Stage.put(IsolatedAdmin(url))
+      p1 <- freeProbePort.tap(track)
+      _ <- postNamed(url, n1, f1, p1)
+      p2 <- freeProbePort.tap(track)
+      _ <- postNamed(url, n2, f2, p2)
+    yield ()
+  }
+
+  When("the client sends isolated admin " / string / " " / string / " with payload " / string) {
+    (method: String, path: String, payload: String) =>
+      Stage
+        .get[IsolatedAdmin]
+        .mapError(e => new IllegalStateException(s"no isolated engine started ($e)"))
+        .flatMap(iso => sendAdmin(iso.url, method, path, payload))
+  }
+
+  // Over the read-while-writing sender (#131): past the cap the engine answers and closes mid-upload.
+  When("the client posts " / int / " bytes to admin " / string) { (n: Int, path: String) =>
+    for
+      admin <- ZIO.serviceWith[RiftHarness](_.adminUrl)
+      _ <- recordCurl(
+        s"head -c $n /dev/zero | tr '\\0' a | curl -i -X POST $admin$path --data-binary @-"
+      )
+      resp <- ZIO.attemptBlocking(
+        RiftConformanceSupport.sendOversize(
+          s"$admin$path",
+          "POST",
+          Map("Content-Type" -> "application/json"),
+          "a" * n
+        )
+      )
+      _ <- Stage.put(resp)
+    yield ()
+  }
+
+  Then("the response JSON at " / string / " is a non-empty string") { (path: String) =>
+    assertJsonAt(path, "a non-empty string") {
+      case Json.Str(s) => s.nonEmpty
+      case _ => false
+    }
+  }
+
+  Then("the response JSON at " / string / " is the string " / string) { (path: String, s: String) =>
+    assertJsonAt(path, s"the string \"$s\"")(_ == Json.Str(s))
+  }
+
+  Then("the response JSON at " / string / " is the number " / int) { (path: String, n: Int) =>
+    assertJsonAt(path, s"the number $n") {
+      case Json.Num(x) => BigDecimal(x) == BigDecimal(n)
+      case _ => false
+    }
+  }
+
+  Then("the response JSON at " / string / " is an empty array") { (path: String) =>
+    assertJsonAt(path, "an empty array") {
+      case Json.Arr(es) => es.isEmpty
+      case _ => false
+    }
+  }
+
+  Then("the response JSON at " / string / " has " / int / " elements") { (path: String, n: Int) =>
+    assertJsonAt(path, s"an array of $n") {
+      case Json.Arr(es) => es.length == n
+      case _ => false
+    }
+  }
+
+  Then("the response body does not contain " / string) { (sub: String) =>
+    lastResponse.flatMap(r =>
+      assertRepro(!r.body.contains(sub), s"expected body without '$sub', got '${r.body}'")
+    )
+  }
+
+  Then("the imposter list shows " / string / " before " / string) { (a: String, b: String) =>
+    for
+      pa <- namedPort(a)
+      pb <- namedPort(b)
+      ports <- listedImposters.map(_.flatMap(portOf).toList)
+      (ia, ib) = (ports.indexOf(pa), ports.indexOf(pb))
+      _ <- assertRepro(
+        ia >= 0 && ib >= 0 && ia < ib,
+        s"expected '$a' ($pa) listed before '$b' ($pb), got ports ${ports.mkString(", ")}"
+      )
+    yield ()
+  }
+
+  Then("the listed imposters " / string / " all carry field " / string) {
+    (csv: String, field: String) =>
+      ZIO.foreachDiscard(names(csv))(n =>
+        listedImposter(n).flatMap(e =>
+          assertRepro(
+            e.exists(_._1 == field),
+            s"listed '$n' lacks '$field': ${Json.Obj(e).toJson}"
+          )
+        )
+      )
+  }
+
+  Then("the listed imposters " / string / " carry no field " / string) {
+    (csv: String, field: String) =>
+      ZIO.foreachDiscard(names(csv))(n =>
+        listedImposter(n).flatMap(e =>
+          assertRepro(
+            !e.exists(_._1 == field),
+            s"listed '$n' carries '$field': ${Json.Obj(e).toJson}"
+          )
+        )
+      )
+  }
+
+  Then("the listed imposter " / string / " has " / int / " stubs") { (name: String, n: Int) =>
+    listedImposter(name).flatMap { e =>
+      val stubs = e.collectFirst { case ("stubs", Json.Arr(s)) => s.length }
+      assertRepro(
+        stubs.contains(n),
+        s"expected '$name' to list $n stubs, got ${stubs
+            .fold("no stubs array")(_.toString)}: ${Json.Obj(e).toJson}"
+      )
+    }
+  }
+
+  Then("the listed imposter " / string / " does not contain " / string) {
+    (name: String, sub: String) =>
+      listedImposter(name).flatMap { e =>
+        val json = Json.Obj(e).toJson
+        assertRepro(!json.contains(sub), s"expected '$name' without '$sub', got $json")
+      }
+  }
+
+  Then("the response lists exactly the imposters " / string) { (csv: String) =>
+    for
+      expected <- ZIO.foreach(names(csv))(namedPort)
+      listed <- listedImposters.map(_.flatMap(portOf).toList)
+      _ <- assertRepro(
+        listed.sorted == expected.sorted,
+        s"expected exactly ports ${expected.sorted.mkString(", ")}, got ${listed.mkString(", ")}"
+      )
+    yield ()
+  }
+
+  /** One raw TCP connect to the current imposter: true if accepted, false if refused. */
+  private def currentImposterAccepts: ZIO[RiftHarness, Throwable, (String, Int, Boolean)] =
+    for
+      port <- currentPort
+      host <- ZIO.serviceWith[RiftHarness](_.hostFor(port))
+      accepted <- ZIO.attemptBlocking {
+        val s = new Socket()
+        try
+          s.connect(new InetSocketAddress(host, port), 2000)
+          true
+        catch case _: java.net.ConnectException => false
+        finally s.close()
+      }
+    yield (host, port, accepted)
+
+  // The positive control for the refusal below: the same raw connect, before the delete.
+  Then("a TCP connect to the current imposter is accepted") {
+    currentImposterAccepts.flatMap((host, port, ok) =>
+      assertRepro(ok, s"connect to $host:$port was refused before any delete")
+    )
+  }
+
+  // #596/#597: one connect attempt, no retry — the delete must already have unbound the listener.
+  Then("an immediate TCP connect to the current imposter is refused") {
+    currentImposterAccepts.flatMap((host, port, ok) =>
+      assertRepro(!ok, s"connect to $host:$port succeeded right after the delete")
+    )
   }
 
   // Flow-store backend parity (#174, feature 15): the SAME fixture posted with its

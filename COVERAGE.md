@@ -348,6 +348,31 @@ How the front door routes a request, and the gateway's error and passthrough edg
 
 Not covered: `RouteObserver`, which is only an SPI for Rust embedders. The rule that the gateway is not gated by `--api-key` belongs to the admin-auth issue, which spawns a keyed engine. The empty-`id` and single-imposter-document `routes` rejections are also not asserted, because the issue scoped the boot Outline to six rows.
 
+### `21-admin-rest.feature` ← rift `docs/api/index.md` admin REST long tail (issue #200) — DONE
+
+The admin routes that feature 08 (by-id GET, enable/disable, debug, savedRequests, verify, flow-state, `PUT /imposters`) and feature 13 (the 400/404 envelope sweep) leave out. Every literal was probed with curl against a standalone 0.18.1 engine first. The feature runs on the external and embedded legs. The two `@admin-isolated` scenarios send `DELETE /imposters`, which would wipe every other scenario's imposters, so they run on a raw-spawned sidecar engine (`RiftHarness#startIsolatedAdminEngine`, the `upstream-trust` recipe). Only external mode can spawn one, so `engineEmbedded` excludes the tag. Fixtures are under `admin-rest/`.
+
+| Engine contract | Plane A scenario |
+|---|---|
+| `GET /` → `_links.{imposters,config,logs}.href`; `GET /health` → `status: "ok"`; `GET /logs` → `logs: []`, `_links.self.href` `/logs?startIndex=0&endIndex=100` | `GET / links to imposters, config and logs` / `GET /health reports ok` / `GET /logs is always empty and echoes its default window` |
+| `GET /imposters` is in ascending port order (#713); entries carry `stubCount` and `recordRequests` | `GET /imposters lists in ascending port order with stubCount and recordRequests` (the higher port is created first) |
+| `?list=true` → short entries with no `stubCount` | `GET /imposters?list=true returns short entries without stubCount` |
+| `removeProxies` drops the proxy stub from the single and the all-imposters export | `removeProxies strips the proxy stub from the single and the all-imposters export` |
+| `DELETE /imposters/{port}` → `200`, `numberOfRequests: 0`, `requests: []`, listener already unbound (#597) | `DELETE /imposters/{port} returns a zero-count snapshot after the listener is gone` |
+| `POST …/stubs {stub,index}` inserts at the index; a duplicate `id` → `409 resource conflict` | `POST stubs with an index inserts there; a duplicate id is a 409 conflict` |
+| `PUT …/stubs/by-id/{id}` replaces in place (index kept, new body served); `DELETE` by id → `200`, then `GET` → `404` | `PUT by-id replaces a stub in place; DELETE by-id removes it` |
+| space `POST` takes a bare stub → `201 {space,stubs}`; both space `GET`s; `GET …/spaces/{id}` keys `space`/`stubs`/`scenarios`/`numberOfRequests` | `a space takes a bare stub and reports it on both space GETs` |
+| space `POST` refuses the `{stub:…}` envelope (message names it) and `{"foo":1}` with `400` (#932); `{"predicates":[]}` → `201` | `a space refuses an enveloped or non-stub body but takes an empty-predicates default` |
+| `GET …/scenarios?flowId=alice` → `flowId: "alice"`; `PUT …/scenarios/x/state {}` → `400` | `GET scenarios echoes flowId; PUT state without a state is a 400` |
+| admin body 64 MiB + 1 → `413 request too large`; exactly 64 MiB → `400 bad data` (#567) | `an admin body one byte over 64 MiB is a 413; exactly 64 MiB is not` |
+| `DELETE /imposters` → `200` listing every imposter, then `GET /imposters` → `[]` | `DELETE /imposters returns every imposter and leaves none` (`@admin-isolated`) |
+
+**Gaps pinned** (they assert the current behaviour and flip when the engine is fixed):
+- [achird-labs/rift#1230](https://github.com/achird-labs/rift/issues/1230): the doc says a space `POST` with `{}` is still accepted as a default. 0.18.1 refuses it with `400 bad data`. Scenario: `GAP rift#1230 — …`.
+- [achird-labs/rift#1229](https://github.com/achird-labs/rift/issues/1229): the `DELETE /imposters` body shows each imposter as it was created, so a stub added at runtime is missing (2 stubs, where `GET ?replayable=true` just before shows 3). Scenario: `GAP rift#1229 — …` (`@admin-isolated`).
+
+Out of scope: the data-directory delete-failure `503` (needs a read-only filesystem), `x-rift-scope` authorization (SPI), and `PUT /imposters` atomicity (#582, see the ledger row).
+
 ## Phase 2 admin/topology/proxy/reload surface — COMPLETE ✅ (features 07–11 all green)
 
 ## Plane B — MockControl mock corpus (issue #13)
@@ -779,9 +804,9 @@ the same 15 as 1.4.2 — `EmbeddedEngine` has no methods for them and `RiftFfi` 
 | **Declarative `intercept` block in `--configfile`** (`{host?,port?,ca?,rules[]}` beside `imposters`) | #655 | 0.14.0 | **covered (#113)** — `ConfigInterceptBlock113Spec` spawns engines from a config file with **no** `--intercept-*` flag (the shared harness always passes one, and block + flag is a hard startup error) and pins the declarative wiring: the listener is **bound** (asserted by connecting to it, not just by reading the admin JSON back) and both its rules — including a `forward` at an imposter declared in the **same** document — exist at boot with only READ calls made; a runtime `POST /intercept/rules` layers on top; `POST /admin/reload` returns `200` with a `warnings` entry stating the block was **NOT re-applied** and leaves the rules untouched (silence there would let an edited block look applied); and both startup-error doors fire — block + `--intercept-port` names both plus the `RIFT_INTERCEPT_*` env spelling, and a block outside the `{"imposters":[…]}` wrapper form names the fix rather than being silently ignored. The TLS-MITM **data** path stays covered imperatively by feature 12 |
 | `POST /intercept/rules` (+ `rules` on `POST /intercept`, + the `--configfile intercept` block) enforce `--allowInjection`; an `inject` predicate → `400`, atomic, sees through `not`/`or`/`and` | #657/#659 | 0.14.0 | **partial** — the `POST /intercept/rules` door is covered by `AllowInjectionMatrix116Spec` (#116: gated-`inject` rejection with a gate-on twin; a rule's injectable surface is its `predicates`, `inject` is not an action variant), and the `--configfile intercept` block door by `ConfigInterceptBlock113Spec` (#113: a block rule with an `inject` predicate aborts startup gate-off, boots gate-on). The nested `not`/`or` case is covered at the imposter door. **Still open:** the `rules` array on `POST /intercept` (start-and-seed in one call), and **atomicity** — a multi-rule body with one poisoned rule must install none |
 | Query-param **names** percent-decoded everywhere (`?first%20name` → `first name`) | #619 | 0.13.6 | **gap** — matching-semantics change; add a predicate keyed on a decoded query-param name |
-| `DELETE /imposters[/{port}]` awaits full teardown before returning (port no longer serves after DELETE) | #597 | 0.13.5 | **gap** — assert connection-refused immediately after DELETE |
-| `PUT /imposters` is atomic (no lossy delete-then-recreate on partial failure) | #582 | 0.13.3 | **gap** |
-| Intercept rule store capped 10k → `429`; admin body capped 64 MiB → `413` | #579/#567 | 0.13.3 | **gap** — net-new status codes |
+| `DELETE /imposters[/{port}]` awaits full teardown before returning (port no longer serves after DELETE) | #597 | 0.13.5 | **covered (#200)** — `21-admin-rest.feature` connects once, with no retry, right after the `200`, and asserts the connect is refused |
+| `PUT /imposters` is atomic (no lossy delete-then-recreate on partial failure) | #582 | 0.13.3 | **gap** — needs a deterministic mid-apply bind failure. Out of scope for #200 |
+| Intercept rule store capped 10k → `429`; admin body capped 64 MiB → `413` | #579/#567 | 0.13.3 | **partial** — the 64 MiB `413` is covered (#200, feature 21: 64 MiB + 1 → `413 request too large`, exactly 64 MiB → `400 bad data`). The intercept `429` is still a gap |
 | `flowState.ttlSeconds` ≤ 0 rejected `400` at create (was accepted) | — | 0.13.2 | **gap** — pin the reject |
 | Constant-time admin API-key comparison | #566 | 0.13.3 | not black-box assertable (timing) — no gap row |
 
