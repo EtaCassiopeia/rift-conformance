@@ -84,3 +84,103 @@ Feature: Proxy record/replay — proxyOnce, proxyTransparent, proxyAlways chains
     And the response body is "UP"
     And the response header "x-rift-generator-error" is "script-error"
     And the imposter on port 4819 still has 1 stubs after recording settles
+
+  # ── proxy options (rift docs/mountebank/proxy.md, #202) ─────────────────────────────────────────
+  # Each scenario proxies to a recording upstream imposter on a fresh pool port (`UPSTREAM_PORT` in
+  # the fixture), so the forwarded request can be read back from the upstream's journal.
+
+  # proxyAlways forwards every request and records one stub per unique request, inserted right after
+  # the proxy stub (so the newest sits first) and merging repeat responses into the existing stub.
+  Scenario: proxyAlways records one stub per unique request after the proxy, merging repeats
+    Given an upstream imposter from fixture "proxy/options/upstream"
+    And a fresh imposter from fixture "proxy/options/always" proxying to the upstream
+    When the client sends "GET" "/x"
+    Then the response status is 200
+    And the response body is "up"
+    And the response header "x-rift-proxy" is "true"
+    When the client sends "GET" "/x"
+    And the client sends "GET" "/y"
+    Then the upstream imposter has recorded 3 requests
+    When the client sends admin "GET" "/imposters/{port}" with payload "-"
+    Then the response JSON at "stubs" has 3 elements
+    And the response JSON at "stubs.0.responses.0.proxy.mode" is "\"proxyAlways\""
+    And the response JSON at "stubs.1.predicates.0.equals.path" is "\"/y\""
+    And the response JSON at "stubs.1.responses" has 1 elements
+    And the response JSON at "stubs.2.predicates.0.equals.path" is "\"/x\""
+    And the response JSON at "stubs.2.responses" has 2 elements
+
+  # The upstream waits 300 ms; the live response reports the measured latency and the recorded stub
+  # (proxyOnce records BEFORE the proxy, at index 0) carries it as a wait behavior.
+  Scenario: addWaitBehavior reports the upstream latency and records it as a wait
+    Given an upstream imposter from fixture "proxy/options/upstream"
+    And a fresh imposter from fixture "proxy/options/add-wait" proxying to the upstream
+    When the client sends "GET" "/slow"
+    Then the response status is 200
+    And the response body is "slow"
+    And the response header "x-rift-proxy" is "true"
+    And the response header "x-rift-proxy-latency" is a number at least 300
+    When the client sends admin "GET" "/imposters/{port}" with payload "-"
+    Then the response JSON at "stubs" has 2 elements
+    And the response JSON at "stubs.0.responses.0.behaviors.0.wait" is a number at least 300
+
+  Scenario: injectHeaders and pathRewrite shape the forwarded request
+    Given an upstream imposter from fixture "proxy/options/upstream"
+    And a fresh imposter from fixture "proxy/options/inject-rewrite" proxying to the upstream
+    When the client sends "GET" "/api/users"
+    Then the response status is 200
+    And the response header "x-rift-proxy" is "true"
+    And the upstream imposter's last recorded request has path "/users"
+    And the upstream imposter's last recorded request has header "X-Inj" with value "v"
+
+  # rift#1050 (a divergence from Mountebank, which would forward both): a case-variant repeat in a
+  # single-valued header object is refused at create.
+  Scenario: injectHeaders naming one header twice is refused
+    When the client posts the imposter fixture "proxy/options/inject-dup"
+    Then the response status is 400
+    And the error envelope type is "bad data"
+    And the error envelope message contains "header `x-a` is already given as `X-A`"
+
+  # Without predicateGenerators a proxyOnce proxy replays from its proxy store; clearing it sends the
+  # next request upstream again.
+  Scenario: DELETE savedProxyResponses clears a proxyOnce store so the upstream is reached again
+    Given an upstream imposter from fixture "proxy/options/upstream"
+    And a fresh imposter from fixture "proxy/options/once-store" proxying to the upstream
+    When the client sends "GET" "/a"
+    And the client sends "GET" "/a"
+    Then the upstream imposter has recorded 1 requests
+    When the client sends admin "DELETE" "/imposters/{port}/savedProxyResponses" with payload "-"
+    Then the response status is 200
+    When the client sends "GET" "/a"
+    Then the response body is "up"
+    And the upstream imposter has recorded 2 requests
+
+  # GAP (achird-labs/rift#1239): the route should also clear the stubs a proxy recorded through
+  # predicateGenerators (they carry `recordedFrom`), as the docs and Mountebank do. 0.18.1 keeps them,
+  # so the imposter stays at 2 stubs and replays without reaching the upstream. Pinned as current
+  # behaviour; flip to "1 elements" / "2 requests" when the engine is fixed.
+  @gap
+  Scenario: DELETE savedProxyResponses keeps a predicateGenerators-recorded stub (rift#1239)
+    Given an upstream imposter from fixture "proxy/options/upstream"
+    And a fresh imposter from fixture "proxy/options/once-pg" proxying to the upstream
+    When the client sends "GET" "/z"
+    Then the upstream imposter has recorded 1 requests
+    When the client sends admin "DELETE" "/imposters/{port}/savedProxyResponses" with payload "-"
+    Then the response status is 200
+    When the client sends admin "GET" "/imposters/{port}" with payload "-"
+    Then the response JSON at "stubs" has 2 elements
+    And the response JSON at "stubs.0.recordedFrom" is present
+    When the client sends "GET" "/z"
+    Then the response body is "up"
+    And the upstream imposter has recorded 1 requests
+
+  # The proxy TLS client fields are accepted and dropped on load: they do not read back.
+  Scenario: the proxy key/cert/passphrase/ciphers fields are accepted and not read back
+    Given an upstream imposter from fixture "proxy/options/upstream"
+    And a fresh imposter from fixture "proxy/options/key-cert" proxying to the upstream
+    When the client sends admin "GET" "/imposters/{port}?replayable=true" with payload "-"
+    Then the response status is 200
+    And the response JSON at "stubs.0.responses.0.proxy.to" is present
+    And the response JSON at "stubs.0.responses.0.proxy.key" is absent
+    And the response JSON at "stubs.0.responses.0.proxy.cert" is absent
+    And the response JSON at "stubs.0.responses.0.proxy.passphrase" is absent
+    And the response JSON at "stubs.0.responses.0.proxy.ciphers" is absent

@@ -118,8 +118,8 @@ addCommandAlias("engineGate", "testOnly samples.rift.ConsistencyGateSuite")
 addCommandAlias("engineConformance", "testOnly samples.rift.*")
 
 // Plane A embedded pass (issue #18, RIFT_MODE=embedded): the subset of suites the in-process FFM
-// oracle supports. Excludes 09-gateway-https-metrics and 10-proxy-record (the §3.1 `container`/
-// `external` surface — a separate metrics port and the record/replay proxy plane), and the
+// oracle supports. Excludes 09-gateway-https-metrics (the §3.1 `container`/`external` surface — a
+// separate metrics port), and the
 // external-only RiftHarnessSpec (which asserts on a spawned child in `ps`, absent by design here).
 // Enumerated explicitly rather than tag-filtered because 03-faults-transport shares `@transport`
 // with 09/10 yet MUST run. Includes 12-intercept (#53) with `--exclude-tags intercept-http` — the
@@ -137,6 +137,8 @@ addCommandAlias("engineConformance", "testOnly samples.rift.*")
 // this list is an allowlist — enrolling an unverified suite would make the embedded job red for a
 // reason that has nothing to do with the envelope contract it exists to pin.
 // 14-behaviors-response-types (#154) was verified green on the embedded leg before being enrolled.
+// 10-proxy-record (#202) proxies only to imposters on the same in-process engine, so it was
+// enrolled once verified green on the embedded leg (the old §3.1 "proxy plane" reason was stale).
 // 19-flow-state-declarative (#194) likewise; its `@rift-debug-env` row spawns a `--debug` engine
 // (external only), so that tag is excluded here and in `engineContainer`.
 // FfiAdminParity75Spec (#75), FfiStubWarnings92Spec (#92), FfiVerifyParity94Spec (#94) and
@@ -162,6 +164,7 @@ addCommandAlias(
     "samples.rift.BehaviorsResponseTypes14Suite samples.rift.Metrics17Suite " +
     "samples.rift.MatchDiagnostics18Suite samples.rift.TlsTermination20Suite " +
     "samples.rift.AdminRest21Suite samples.rift.FlowStateDeclarative19Suite " +
+    "samples.rift.ProxyRecord10Suite " +
     "-- --exclude-tags intercept-http,intercept-caller-ca,intercept-runtime,intercept-auth,intercept-ws,front-door,upstream-trust," +
     "admin-isolated,tls-flags,rift-debug-env,metrics-port,no-config-source" +
     " ; testOnly samples.rift.RiftEmbeddedHarnessSpec samples.rift.RiftToolsParseSpec" +

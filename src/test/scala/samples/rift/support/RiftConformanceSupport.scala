@@ -2809,6 +2809,61 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
     )
   }
 
+  // JSON-path reads the feature-21/08 family lacks (features 10/#202), on its `assertJsonAt`.
+  Then("the response JSON at " / string / " is a number at least " / int) {
+    (path: String, floor: Int) =>
+      assertJsonAt(path, s"a number >= $floor") {
+        case Json.Num(v) => v.compareTo(java.math.BigDecimal.valueOf(floor.toLong)) >= 0
+        case _ => false
+      }
+  }
+
+  Then("the response JSON at " / string / " is present") { (path: String) =>
+    assertJsonAt(path, "a value")(_ => true)
+  }
+
+  // The upstream's journal (it is posted with `recordRequests: true`): the request the proxy
+  // actually forwarded, after injectHeaders / pathRewrite (#202).
+  private def upstreamLastRequest: ZIO[RiftHarness, Throwable, Chunk[(String, Json)]] =
+    for
+      up <- upstreamPort
+      admin <- ZIO.serviceWith[RiftHarness](_.adminUrl)
+      resp <- httpSend(s"$admin/imposters/$up", "GET", Map.empty, None)
+      json <- parseAdminJson(resp.body)
+      last <- ZIO
+        .fromOption(RiftConformanceSupport.jsonAt(json, "requests").collect {
+          case Json.Arr(es) if es.nonEmpty => es.last
+        })
+        .orElseFail(new RuntimeException(s"upstream $up recorded no request: ${resp.body}"))
+      fields <- last match
+        case Json.Obj(fs) => ZIO.succeed(fs)
+        case other => ZIO.fail(new RuntimeException(s"recorded request is not an object: $other"))
+    yield fields
+
+  Then("the upstream imposter's last recorded request has path " / string) { (path: String) =>
+    upstreamLastRequest.flatMap { fs =>
+      val got = fs.collectFirst { case ("path", Json.Str(p)) => p }
+      assertRepro(got.contains(path), s"expected the forwarded path '$path', got $got")
+    }
+  }
+
+  Then(
+    "the upstream imposter's last recorded request has header " / string / " with value " / string
+  ) { (h: String, v: String) =>
+    upstreamLastRequest.flatMap { fs =>
+      val headers = fs.collectFirst { case ("headers", Json.Obj(hs)) => hs }.getOrElse(Chunk.empty)
+      val got = headers.collect {
+        case (k, Json.Str(x)) if k.equalsIgnoreCase(h) => List(x)
+        case (k, Json.Arr(xs)) if k.equalsIgnoreCase(h) =>
+          xs.collect { case Json.Str(x) => x }.toList
+      }.flatten
+      assertRepro(
+        got == List(v),
+        s"expected forwarded header $h = [$v], got $got (headers=$headers)"
+      )
+    }
+  }
+
   When("the client sends " / string / " " / string / " expecting a transport error") {
     (m: String, p: String) => sendExpectingTransportError(m, p)
   }
