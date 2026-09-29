@@ -86,6 +86,43 @@ jobs:
           # Explicit for clarity even though this now matches RiftHarnessConfig.DefaultCorpusRoot.
           RIFT_CORPUS_ROOT: ${{ github.workspace }}/corpus
 
+  # Flow-store backend parity (#174): feature 15 runs the same flow-state scenarios against an
+  # in-memory and a Redis-backed imposter on the released engine. The harness starts its own
+  # redis:7-alpine container (ubuntu-latest ships Docker), hence RIFT_IT=1. Follows RIFT_VERSION like
+  # the external leg, since the engine is the fetched binary.
+  plane-a-redis:
+    name: Plane A — flow-store parity (Redis)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up sbt
+        uses: sbt/setup-sbt@v1
+
+      - name: Install rift runtime deps (LuaJIT)
+        run: sudo apt-get update && sudo apt-get install -y libluajit-5.1-2
+
+      - name: Fetch released rift
+        run: |
+          out="$(scripts/build-rift.sh)" || { echo "build-rift.sh failed"; exit 1; }
+          eval "$out"
+          echo "RIFT_BUILD_DIR=$RIFT_BUILD_DIR" >> "$GITHUB_ENV"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RIFT_VERSION: ${{ inputs.rift_version }}
+
+      - name: Run flow-store parity (in-memory vs Redis)
+        run: sbt -batch engineRedis
+        env:
+          RIFT_MODE: external
+          RIFT_IT: "1"
+
   # Plane B (#143): the samples.mock.* MockControl corpus, which no job ran before — so a red
   # `mockConformance` sat on main unnoticed. No Docker, JDK 21. The embedded Plane B leg runs in
   # plane-a-embedded (it needs JDK 22+); the container leg's runner is still a stub.

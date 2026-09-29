@@ -206,6 +206,9 @@ final case class TrackedPorts(ports: List[Int])
 /** The imposter subsequent request steps target (the last one posted). */
 final case class CurrentPort(port: Int)
 
+/** The key prefix of the scenario's Redis flow-store imposter (feature 15). */
+final case class RedisKeyPrefix(prefix: String)
+
 /** Request headers/body staged for the next send. */
 final case class PendingRequest(
     headers: Map[String, String] = Map.empty,
@@ -643,6 +646,23 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
         finally s.close()
       }
       .orElseSucceed(false)
+
+  /** Merge `store` over the fixture's `_rift.flowState` (keeping e.g. its `ttlSeconds`). */
+  private def withFlowStore(raw: String, store: Json.Obj): Either[String, String] =
+    def obj(j: Option[Json]): Either[String, Json.Obj] = j match
+      case None => Right(Json.Obj())
+      case Some(o: Json.Obj) => Right(o)
+      case Some(other) => Left(s"expected a JSON object, got $other")
+    def merged(base: Json.Obj, over: Json.Obj): Json.Obj =
+      Json.Obj(base.fields.filterNot(f => over.fields.exists(_._1 == f._1)) ++ over.fields)
+    for
+      root <- raw.fromJson[Json].left.map(m => s"fixture JSON parse: $m").flatMap(j => obj(Some(j)))
+      rift <- obj(root.get("_rift"))
+      flow <- obj(rift.get("flowState"))
+    yield merged(
+      root,
+      Json.Obj("_rift" -> merged(rift, Json.Obj("flowState" -> merged(flow, store))))
+    ).toJson
 
   private def injectPort(raw: String, port: Int): Either[String, String] =
     raw.fromJson[Json].left.map(m => s"fixture JSON parse: $m").flatMap {
@@ -1839,6 +1859,51 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
       )
       resp <- httpSend(url, method, Map("Content-Type" -> "application/json"), body)
       _ <- Stage.put(resp)
+    yield ()
+  }
+
+  // Flow-store backend parity (#174, feature 15): the SAME fixture posted with its
+  // `_rift.flowState.backend` forced to `inmemory` or `redis`. A Redis imposter gets a key prefix of
+  // its own, so scenarios sharing the one container never read each other's state, and the prefix is
+  // staged for the step that proves the state really landed in Redis.
+  Given("a fresh " / string / " flow-store imposter from fixture " / string) {
+    (backend: String, name: String) =>
+      for
+        raw <- loadFixture(name).flatMap(rewriteFixtureJson)
+        store <- backend match
+          case "inmemory" => ZIO.succeed(Json.Obj("backend" -> Json.Str("inmemory")) -> None)
+          case "redis" =>
+            RedisFlowStore.url.map { url =>
+              val prefix = s"rc-${java.util.UUID.randomUUID().toString.take(8)}:"
+              Json.Obj(
+                "backend" -> Json.Str("redis"),
+                "redis" -> Json.Obj("url" -> Json.Str(url), "keyPrefix" -> Json.Str(prefix))
+              ) -> Some(prefix)
+            }
+          case other =>
+            ZIO.fail(new IllegalArgumentException(s"unknown flow-store backend '$other'"))
+        json <- ZIO.fromEither(withFlowStore(raw, store._1)).mapError(new RuntimeException(_))
+        admin <- ZIO.serviceWith[RiftHarness](_.adminUrl)
+        port <- postAtFreshPort(admin, json, s"fixture $name on $backend")
+        _ <- track(port) *> Stage.put(CurrentPort(port))
+        _ <- ZIO.foreachDiscard(store._2)(p => Stage.put(RedisKeyPrefix(p)))
+      yield ()
+  }
+
+  // Parity alone cannot tell a working Redis store from one that silently fell back to in-memory —
+  // both would answer identically. This reads the key straight out of the container.
+  Then("the Redis flow store holds key " / string / " for this imposter") { (suffix: String) =>
+    for
+      prefix <- Stage
+        .get[RedisKeyPrefix]
+        .mapError(e => new IllegalStateException(s"no Redis imposter posted yet ($e)"))
+      port <- currentPort
+      expected = s"${prefix.prefix}flow:$port:$suffix"
+      found <- RedisFlowStore.keys(s"${prefix.prefix}*")
+      _ <- assertRepro(
+        found.contains(expected),
+        s"expected Redis key '$expected', found ${found.mkString("[", ", ", "]")}"
+      )
     yield ()
   }
 
