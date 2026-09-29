@@ -124,6 +124,22 @@ Remaining behavioral features (this issue's scope, still open): `03-faults-trans
 | precedence tcp>error>latency (rift#277) | `fault precedence — tcp wins over error, after the latency delay` | `faults/faults` |
 | `probability: 0` no-op | `probability 0 disables a fault` | `faults/faults` |
 | top-level `fault` resets at the transport level (rift#309, fixed in rift 0.9.0) | `top-level fault resets the connection at the transport level (rift#309)` | `faults/faults` |
+| tcp aliases `reset`/`garbage` and `MALFORMED_RESPONSE_CHUNK`/`malformed` fail the request at the HTTP client (#196) | `tcp <alias> fails the request at the HTTP client` (Outline) | `faults/faults` |
+| `EMPTY_RESPONSE`/`empty` close with zero bytes (raw socket) | `tcp <kind> closes the connection with zero response bytes` (Outline) | `faults/faults` |
+| `MALFORMED_RESPONSE_CHUNK`/`malformed` write `HTTP/1.1 200` + `Transfer-Encoding: chunked`, then a bad chunk | `tcp <kind> writes a status line and then a malformed chunk` (Outline) | `faults/faults` |
+| rift#533 tcp object `{probability,type}`: p=1 fires, p=0 serves | `the tcp object form fires at probability 1 and never at probability 0` | `faults/faults` |
+| string form reads back as a string, object form as an object | `the tcp string form reads back as a string and the object form as an object` | `faults/faults` |
+| tcp object without `probability` → `400` | `a tcp object without a probability is refused` | `faults/tcp-object-no-probability` |
+| `latency.ms` overrides `minMs`/`maxMs` (≥ 300 ms) | `latency ms is a fixed delay that overrides minMs/maxMs` | `faults/faults` |
+| error fault → `x-rift-fault: error` | `an error fault carries x-rift-fault` | `faults/faults` |
+| rift#1050 error `headers` naming one header twice → `400` | `error fault headers naming one header twice are refused` | `faults/error-headers-dup` |
+| `wait {min,max}` (200 ≤ t ≤ 2000 ms); inverted → `400` `min 5 greater than max 1` | `a wait range delays the response within the range`, `an inverted wait range is refused naming both values` | `faults/faults`, `faults/wait-inverted` |
+| `wait {inject}` delays and reads back as `{"inject":…}` | `a wait {inject} function delays the response and reads back in the inject spelling` | `faults/faults` |
+| stub `delayRange` → per-response wait | `a stub-level delayRange becomes a per-response wait` | `faults/faults` |
+| `is` beats a top-level `fault`; top-level `fault` takes the aliases | `an is response beats a top-level fault on the same response`, `a top-level fault accepts the tcp aliases` | `faults/faults` |
+| tcp reset on HTTPS: handshake completes, then zero bytes | `a tcp reset on an HTTPS imposter resets after the TLS handshake` | `faults/https` |
+
+Out of scope (#196): probabilities strictly between 0 and 1, ALPN `http/1.1` under a tcp fault (the TLS/HTTP-2 issue), `tcp_fault_carrier`.
 
 Remaining: `04-scripting-bounds`, `05-templating`, `06-behaviors`. #7 closes when feature 06 lands — now shipped; see the 06 section below.
 
@@ -1042,7 +1058,7 @@ invariant, third instance (headers) landed earlier via #630.
 | `savedRequests?since=<index>` cursor (per-port monotonic journal indices) | #603/#607 | 0.13.6 | **covered (#122)** — record 3, then `?since=0` → 3, `?since=1` → the 2-item tail, `?since=99` (past the end) → an **empty array**, never an error or an object. Element counts are structural, not substring matches. This is also the endpoint rift#606 broke by serving `{}` where an array belongs — a shape bug a consumer only meets in its own decoder — so the array assertion guards that regression too | covered by `AdminEventsCursor122Spec` |
 | `rift_abi_version()` FFI symbol (SDKs gate on ABI, not marketing version) | #592 | 0.13.4 | **covered (#205)** | `FfiLongTail205Spec` asserts `rift_abi_version() == 2` |
 | Intercept CA: inline `caCertPem`/`caKeyPem` input + generate-and-return bootstrap mode | #594 | 0.13.4 | **covered (#190)** — `12-intercept` `@intercept-runtime`: `returnCaKey:true` → 201 with `caCertPem`+`caKeyPem`, `GET /intercept` carries neither, and a client trusting the returned PEM completes TLS; inline PEM → `GET /intercept/ca.pem` equals it; a 400 `bad data` Outline (returnCaKey + supplied CA, half pair, DNS `host`, unknown field) leaves the listener stopped. `InterceptStartupSpec` covers the `--intercept-ca-*-pem` flags (loaded; exclusive with the file pair) and the `--intercept-auth` startup errors | — |
-| Per-key flow-state TTL `ctx.state.ttl(key, seconds)`; probabilistic TCP faults `{probability,type}` | #535/#533 | 0.13.2 | gap | extend `04-scripting-bounds` / `03-faults-transport` |
+| Per-key flow-state TTL `ctx.state.ttl(key, seconds)`; probabilistic TCP faults `{probability,type}` | #535/#533 | 0.13.2 | gap (#535); **#533 covered (#196)** in `03-faults-transport` | extend `04-scripting-bounds` / `03-faults-transport` |
 
 Each row is independently `/fix-issue`-able; split into a child of #72 when picked up. Priority order
 (recurrence × black-box cheapness): (1) `POST /intercept/rules` allowInjection gate + the door-parity
