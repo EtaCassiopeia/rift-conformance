@@ -165,6 +165,7 @@ addCommandAlias(
     "samples.rift.MatchDiagnostics18Suite samples.rift.TlsTermination20Suite " +
     "samples.rift.AdminRest21Suite samples.rift.FlowStateDeclarative19Suite " +
     "samples.rift.ProxyRecord10Suite " +
+    "samples.rift.MountebankCompat22Suite " +
     "-- --exclude-tags intercept-http,intercept-caller-ca,intercept-runtime,intercept-auth,intercept-ws,front-door,upstream-trust," +
     "admin-isolated,tls-flags,rift-debug-env,metrics-port,no-config-source" +
     " ; testOnly samples.rift.RiftEmbeddedHarnessSpec samples.rift.RiftToolsParseSpec" +
@@ -190,11 +191,15 @@ addCommandAlias(
 // `;`-chain aborts at the first failure, so putting it first means a broken container fails there
 // with the crispest signal rather than as an opaque BDD "Container startup failed". The zio-test
 // specs are a separate step because the zio-bdd `--exclude-tags` arg is not theirs to parse.
+// 22-mountebank-compat (#203) runs here too, minus `@loopback-client` (a Docker-published port
+// rewrites the client address) and `@needs-data` (the container does not mount `corpus/data`).
 addCommandAlias(
   "engineContainer",
   "; testOnly samples.rift.RiftContainerHarnessSpec samples.rift.RiftToolsParseSpec" +
     " ; testOnly samples.rift.ConsistencyGateSuite samples.rift.FaultsTransport03Suite " +
-    "samples.rift.Intercept12Suite -- --exclude-tags full-corpus-verify,intercept-caller-ca,intercept-runtime,intercept-auth,intercept-ws,upstream-trust,tls-flags,rift-debug-env"
+    "samples.rift.Intercept12Suite samples.rift.MountebankCompat22Suite " +
+    "-- --exclude-tags full-corpus-verify,intercept-caller-ca,intercept-runtime,intercept-auth,intercept-ws,upstream-trust,tls-flags,rift-debug-env," +
+    "loopback-client,needs-data"
 )
 
 // `lintFeatures` — the dry-run step-matching gate (#142): loads the feature suites and checks every
