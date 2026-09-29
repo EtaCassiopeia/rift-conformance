@@ -171,3 +171,68 @@ Feature: Error-response envelope — the standard {"errors":[{code,message}]} co
     And the response body contains "Unknown fault"
     And the response is not a JSON error envelope
     And the response has no header "content-type"
+
+  # ── never-2xx-on-failure sweep (#173, umbrella #115) ─────────────────────────────────────────
+  # Every admin door that refuses a request must SAY so: a non-2xx status plus the envelope. This
+  # is the class behind rift#178/#181/#606/#611 — a failure answered 200/201 surfaces in the
+  # client's decoder (or never), with nothing server-side to correlate. Each row was probed with
+  # curl against 0.18.0 first; status and `type` are the observed literals. `{port}` is this
+  # scenario's imposter (admin/base, one stub at index 0), `{unknownPort}` a port with no imposter,
+  # `{newPort}` a fresh port for a create.
+  Scenario Outline: the admin door "<door>" refuses with <status> and the envelope
+    Given a fresh imposter from fixture "admin/base"
+    When the client sends admin "<method>" "<path>" with payload "<payload>"
+    Then the response status is <status>
+    And the response is a rift error envelope
+    And the error envelope code is "<status>"
+    And the error envelope type is "<type>"
+
+    Examples:
+      | door                                   | method | path                                      | payload                             | status | type             |
+      | delete an unknown imposter             | DELETE | /imposters/{unknownPort}                  | -                                   | 404    | no such resource |
+      | get an unknown imposter                | GET    | /imposters/{unknownPort}                  | -                                   | 404    | no such resource |
+      | create from non-JSON                   | POST   | /imposters                                | admin-doors/not-json                | 400    | bad data         |
+      | create on a port already in use        | POST   | /imposters                                | admin-doors/duplicate-port          | 400    | bad data         |
+      | create with an unknown protocol        | POST   | /imposters                                | admin-doors/bad-protocol            | 400    | bad data         |
+      | replace stubs with a non-array         | PUT    | /imposters/{port}/stubs                   | admin-doors/stubs-not-array         | 400    | bad data         |
+      | replace stubs with non-JSON            | PUT    | /imposters/{port}/stubs                   | admin-doors/not-json                | 400    | bad data         |
+      | replace stubs on an unknown imposter   | PUT    | /imposters/{unknownPort}/stubs            | admin-doors/stubs-empty             | 404    | no such resource |
+      | add a stub to an unknown imposter      | POST   | /imposters/{unknownPort}/stubs            | admin-doors/stub-envelope           | 404    | no such resource |
+      | add a stub without its envelope        | POST   | /imposters/{port}/stubs                   | admin-doors/bare-stub               | 400    | bad data         |
+      | add a stub at an out-of-range index    | POST   | /imposters/{port}/stubs                   | admin-doors/stub-index-out-of-range | 400    | bad data         |
+      | get an unknown stub index              | GET    | /imposters/{port}/stubs/7                 | -                                   | 404    | no such resource |
+      | replace an unknown stub index          | PUT    | /imposters/{port}/stubs/7                 | admin-doors/bare-stub               | 404    | no such resource |
+      | replace a stub with non-JSON           | PUT    | /imposters/{port}/stubs/0                 | admin-doors/not-json                | 400    | bad data         |
+      | delete an unknown stub index           | DELETE | /imposters/{port}/stubs/7                 | -                                   | 404    | no such resource |
+      | clear requests of an unknown imposter  | DELETE | /imposters/{unknownPort}/savedRequests    | -                                   | 404    | no such resource |
+      | clear requests with a bad match clause | DELETE | /imposters/{port}/savedRequests?match=bad | -                                   | 400    | bad data         |
+      | verify with non-JSON                   | POST   | /imposters/{port}/verify                  | admin-doors/not-json                | 400    | bad data         |
+      | get an unknown flow-state key          | GET    | /imposters/{port}/flow-state/f/missing    | -                                   | 404    | no such resource |
+
+  # @gap rift#1220 (a rift#181 regression): a MALFORMED jsonpath/xpath selector is accepted with 201
+  # instead of refused, and the failed extraction is compared as the empty string — so an
+  # `equals body ""` stub matches EVERY request. Pinned as current behavior; when the fix lands the
+  # create answers 400 "bad data" and this flips into the outline above.
+  @gap
+  Scenario Outline: GAP rift#1220 — a malformed <kind> selector is accepted and matches any request
+    When the client sends admin "POST" "/imposters" with payload "admin-doors/bad-<kind>"
+    Then the response status is 201
+    When the request body is "{\"a\":1}"
+    And the client sends "POST" "/anything"
+    Then the response body is "MATCHED"
+
+    Examples:
+      | kind     |
+      | jsonpath |
+      | xpath    |
+
+  # @gap rift#1221: an invalid `matches` regex is accepted with 201; the stub silently never
+  # matches, so the request falls through to the empty default response.
+  @gap
+  Scenario: GAP rift#1221 — an invalid matches regex is accepted and the stub never matches
+    When the client sends admin "POST" "/imposters" with payload "admin-doors/bad-regex"
+    Then the response status is 201
+    When the client sends "GET" "/anything"
+    Then the response status is 200
+    And the response body is ""
+

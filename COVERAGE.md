@@ -616,6 +616,26 @@ These are already tracked by open issues filed as the releases shipped:
 Not yet tracked: `rift_preface_failures_total{listener,kind}` (rift#1045, visible on `/metrics` in
 0.18.0), graceful `SIGTERM` shutdown (#1155), and WebSocket upgrade through the intercept tunnel (#997).
 
+### Never-2xx-on-failure sweep (#173, umbrella #115)
+
+The class behind rift#178/#181/#606/#611: an admin door that refuses a request must answer non-2xx
+with the `{"errors":[{"code","type","message"}]}` envelope and `Content-Type: application/json`.
+`13-error-envelope` now carries a 19-row Scenario Outline, one row per admin failure door probed
+with curl against 0.18.0 (status and `type` are the observed literals): unknown imposter on
+`GET`/`DELETE` `/imposters/{port}`, `PUT`/`POST .../stubs`, `DELETE .../savedRequests` → `404 "no
+such resource"`; unknown stub index on `GET`/`PUT`/`DELETE .../stubs/{i}` → `404`; non-JSON on
+`POST /imposters`, `PUT .../stubs`, `PUT .../stubs/{i}`, `POST .../verify`, a duplicate port, an
+unknown protocol, a `stubs` non-array, a bare stub without its `{"stub":…}` envelope, an
+out-of-range insert index, and a bad `savedRequests?match=` clause → `400 "bad data"`; an unknown
+flow-state key → `404`. The step (`the client sends admin … with payload …`) reads raw bodies from
+`rift-fixtures/admin-doors/`. `PUT /imposters` is left to `08-admin-surface` (it swaps the whole
+set, so a regression there would wipe other scenarios' imposters).
+
+| Door still answering 2xx for a failure | rift | Coverage status |
+|---|---|---|
+| A **malformed `jsonpath`/`xpath` selector** is accepted (`201`), and the failed extraction is compared as `""`, so an `equals body ""` stub matches every request — a rift#181 regression | [#1220](https://github.com/achird-labs/rift/issues/1220) | **`@gap`** — pinned in `13-error-envelope` (201 + `MATCHED` for any body); flips to a row of the outline (`400 "bad data"`) on fix |
+| An **invalid `matches` regex** is accepted (`201`); the stub silently never matches | [#1221](https://github.com/achird-labs/rift/issues/1221) | **`@gap`** — pinned in `13-error-envelope` (201 + the empty default response); flips to `400` on fix |
+
 ## v0.15.0 new-capability coverage gaps (pin bump 0.14.0 → 0.15.0) — tracked by [#72](https://github.com/EtaCassiopeia/rift-conformance/issues/72)
 
 Verified green on the bump: all 14 Plane A features pass against 0.15.0 with no conforming change.
