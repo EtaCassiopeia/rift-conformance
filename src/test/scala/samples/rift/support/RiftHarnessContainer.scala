@@ -3,6 +3,7 @@ package samples.rift.support
 import com.dimafeng.testcontainers.GenericContainer
 import com.github.dockerjava.api.command.CreateContainerCmd
 import com.github.dockerjava.api.model.{ExposedPort, Ports}
+import org.testcontainers.containers.BindMode
 import org.testcontainers.containers.wait.strategy.Wait
 import zio.*
 
@@ -67,12 +68,17 @@ object RiftHarnessContainer:
   // The opt-in intercept / TLS-MITM listener (feature 12): started with `--intercept-port` and
   // published 1:1 so a JDK CONNECT-proxy client can reach it at its declared port (#51).
   private val InterceptPort = 8443
+  // The separate Prometheus listener (`--metrics-port`), published 1:1 so feature 17's
+  // `@metrics-port` scenarios read it as they do in external mode (#206). Not rift's default 9090:
+  // any host engine started without `--metrics-port` holds that, and on macOS a host listener
+  // shadows Docker's forward on localhost, so the steps would silently read the wrong engine.
+  private val MetricsPort = 4790
 
-  // Container ports published 1:1 to the host (see the class doc). 2525 admin; 8443 intercept; 4500–
-  // 4599 covers the corpus imposters (declared 4501–4521) with margin; 4800–4899 covers the fixed
-  // Plane A fixtures (4800–4819) and the dynamic probe pool (4820–4899).
+  // Container ports published 1:1 to the host (see the class doc). 2525 admin; 8443 intercept; 4790
+  // metrics; 4500–4599 covers the corpus imposters (declared 4501–4521) with margin; 4800–4899
+  // covers the fixed Plane A fixtures (4800–4819) and the dynamic probe pool (4820–4899).
   private val PublishedPorts: List[Int] =
-    AdminPort :: InterceptPort :: ((4500 to 4599) ++ (4800 to 4899)).toList
+    AdminPort :: InterceptPort :: MetricsPort :: ((4500 to 4599) ++ (4800 to 4899)).toList
 
   // Default tracks build-rift.sh's pinned rift 0.13.1, so the containerised engine and the host
   // rift-lint/rift-verify tools (from RIFT_BUILD_DIR) are one released build. Override with RIFT_IMAGE.
@@ -94,20 +100,24 @@ object RiftHarnessContainer:
   def acquire(cfg: RiftHarnessConfig): ZIO[Scope, Throwable, RiftHarness] =
     for
       image <- envOr("RIFT_IMAGE", DefaultImage)
-      container <- ZIO.attemptBlocking(obtain(image))
+      container <- ZIO.attemptBlocking(obtain(image, cfg.corpusRoot))
       host = container.host
       adminUrl = s"http://$host:${container.mappedPort(AdminPort)}"
       info <- RiftBuildInfo.fromBuildDir(cfg.buildDir, engineVersion = None)
     yield RiftHarnessContainerLive(
       adminUrl,
-      adminUrl,
+      s"http://$host:${container.mappedPort(MetricsPort)}",
       host,
       container.mappedPort(InterceptPort),
       info,
       RiftTools.fromBuildDir(cfg.buildDir)
     )
 
-  private def obtain(image: String): GenericContainer =
+  // The image's workdir: a relative config path such as the `lookup` behavior's `data/products.csv`
+  // resolves against it, as it resolves against the corpus root (the engine's cwd) in external mode.
+  private val ImageWorkdir = "/data"
+
+  private def obtain(image: String, corpusRoot: java.nio.file.Path): GenericContainer =
     lock.synchronized {
       if shared != null then shared
       else
@@ -119,7 +129,9 @@ object RiftHarnessContainer:
             AdminPort.toString,
             "--allow-injection",
             "--intercept-port",
-            InterceptPort.toString
+            InterceptPort.toString,
+            "--metrics-port",
+            MetricsPort.toString
           ),
           waitStrategy = Wait.forHttp("/imposters").forPort(AdminPort)
         )
@@ -130,6 +142,13 @@ object RiftHarnessContainer:
           cmd.getHostConfig.withPortBindings(bindings)
           ()
         }
+        // Mount the corpus's data files read-only at `<workdir>/data`, so `data/…` paths in fixtures
+        // (lookup CSVs) resolve inside the container exactly as they do for the external engine (#206).
+        gc.container.withFileSystemBind(
+          corpusRoot.resolve("data").toAbsolutePath.normalize.toString,
+          s"$ImageWorkdir/data",
+          BindMode.READ_ONLY
+        )
         gc.start()
         val hook = new Thread(() =>
           try gc.stop()

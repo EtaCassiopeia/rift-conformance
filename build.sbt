@@ -117,89 +117,115 @@ addCommandAlias("engineGate", "testOnly samples.rift.ConsistencyGateSuite")
 // scripts/conformance-engine.sh and scripts/run-all.sh's "engine (Plane A)" layer invoke.
 addCommandAlias("engineConformance", "testOnly samples.rift.*")
 
-// Plane A embedded pass (issue #18, RIFT_MODE=embedded): the subset of suites the in-process FFM
-// oracle supports. Excludes 09-gateway-https-metrics (the §3.1 `container`/`external` surface — a
-// separate metrics port), and the
-// external-only RiftHarnessSpec (which asserts on a spawned child in `ps`, absent by design here).
-// Enumerated explicitly rather than tag-filtered because 03-faults-transport shares `@transport`
-// with 09/10 yet MUST run. Includes 12-intercept (#53) with `--exclude-tags intercept-http` — the
-// embedded FFI binds start-intercept/add-rules/export-truststore but not the HTTP-only ca.pem +
-// rules-list/clear routes, so those two scenarios (tagged @intercept-http) are skipped here.
-// 11-reload's @front-door scenarios (rift#1160) need an engine spawned with `--front-door`, which
-// only external mode can do, so they are excluded too. `upstream-trust` (feature 09, rift#974) spawns
-// a second engine the same way; 09 is in neither the embedded nor the container list, but the tag is
-// excluded from both so enrolling 09 later cannot pull it in. `intercept-auth` (feature 12, #190)
-// likewise spawns its own `--intercept-auth` engine, and `intercept-ws` (#191) its own intercept +
-// `--upstream-ca-file` engine, so both aliases exclude them. The
-// zio-test specs run in a second step (the zio-bdd `--exclude-tags` arg is not theirs to parse).
-// 13-error-envelope (#118) is likewise absent: its doors (strictBehaviors shellTransform, the
-// `defaultForward` 502, the over-size-body cap) were only verified against the spawned engine, and
-// this list is an allowlist — enrolling an unverified suite would make the embedded job red for a
-// reason that has nothing to do with the envelope contract it exists to pin.
-// 14-behaviors-response-types (#154) was verified green on the embedded leg before being enrolled.
-// 10-proxy-record (#202) proxies only to imposters on the same in-process engine, so it was
-// enrolled once verified green on the embedded leg (the old §3.1 "proxy plane" reason was stale).
-// 19-flow-state-declarative (#194) likewise; its `@rift-debug-env` row spawns a `--debug` engine
-// (external only), so that tag is excluded here and in `engineContainer`.
-// FfiAdminParity75Spec (#75), FfiStubWarnings92Spec (#92), FfiVerifyParity94Spec (#94) and
-// FfiLongTail205Spec (#205) diff C-ABI calls against the admin HTTP API on one engine; they no-op
-// outside RIFT_MODE=embedded, so only this alias runs them.
-// AdminEventsCursor122Spec (#122, #201) runs here too: the in-process harness serves the same
-// /events + savedRequests admin HTTP, and the embedded natives carry 0.18.1 since rift-java 0.3.3.
-// 17-metrics (#192) runs here minus `@metrics-port`: the embedded harness has no separate Prometheus
-// listener (DESIGN §3.1), so only its admin GET /metrics scenarios apply.
-// 18-match-diagnostics (#193) runs here too: it needs only the admin HTTP and the data plane.
-// 21-admin-rest (#200) runs here too, minus `@admin-isolated`: its DELETE /imposters scenarios need a
-// second, raw-spawned engine (the recipe `upstream-trust` uses), which only external mode can start.
-// 20-tls-and-http2 (#197) runs here minus `@tls-flags`, whose scenarios start an engine with TLS CLI
-// flags or env vars; the container alias excludes the tag too, in case 20 is ever enrolled there.
-// 11-reload's `@no-config-source` (#199) asserts the reply of an engine with no config source; the
-// embedded harness always reloads from a config file, so it is excluded here.
-addCommandAlias(
-  "engineEmbedded",
-  "; testOnly samples.rift.ConsistencyGateSuite samples.rift.CoreServing02Suite " +
-    "samples.rift.FaultsTransport03Suite samples.rift.ScriptingBounds04Suite " +
-    "samples.rift.Templating05Suite samples.rift.Behaviors06Suite samples.rift.SpacesFsm07Suite " +
-    "samples.rift.AdminSurface08Suite samples.rift.Reload11Suite samples.rift.Intercept12Suite " +
-    "samples.rift.BehaviorsResponseTypes14Suite samples.rift.Metrics17Suite " +
-    "samples.rift.MatchDiagnostics18Suite samples.rift.TlsTermination20Suite " +
-    "samples.rift.AdminRest21Suite samples.rift.FlowStateDeclarative19Suite " +
-    "samples.rift.ProxyRecord10Suite " +
-    "samples.rift.MountebankCompat22Suite " +
-    "-- --exclude-tags intercept-http,intercept-caller-ca,intercept-runtime,intercept-auth,intercept-ws,front-door,upstream-trust," +
-    "admin-isolated,tls-flags,rift-debug-env,metrics-port,no-config-source" +
-    " ; testOnly samples.rift.RiftEmbeddedHarnessSpec samples.rift.RiftToolsParseSpec" +
-    " samples.rift.FfiAdminParity75Spec samples.rift.FfiStubWarnings92Spec" +
-    " samples.rift.FfiVerifyParity94Spec samples.rift.FfiLongTail205Spec" +
-    " samples.rift.AdminEventsCursor122Spec"
+// ── Plane A mode legs (#18 embedded, #12 container, #206 enrolment) ─────────────────────────────
+// One engine, three deliveries: the binary (external, `engineConformance` above), the rift-java
+// natives (embedded) and the `zainalpour/rift-proxy` image (container). Every Plane A feature runs
+// in every mode that can run it; a scenario a mode's harness cannot drive carries a tag that mode's
+// alias excludes (below, one line of reason per tag). The BDD suites are enumerated rather than
+// globbed so each mode's scope stays explicit; the zio-test specs run in a separate `testOnly` step
+// because zio-bdd's `--exclude-tags` arg is not theirs to parse.
+//
+// Features in no mode leg besides external, and why:
+//   09-gateway-https-metrics — HTTPS/mTLS client to the imposter plus the metrics listener: embedded
+//     has no metrics listener (DESIGN §3.1); container revisits it with the TLS work.
+//   16-front-door — every scenario spawns its own `--front-door` engine (`@front-door`).
+//   15-flow-store-redis — lives in samples.redis (`engineRedis`), external + Docker only.
+// 11-reload runs embedded only: the container harness has no config file to reload (withConfigFile
+// is unsupported by design).
+val planeAEveryModeSuites: Seq[String] = Seq(
+  "ConsistencyGateSuite", // 01
+  "RiftSmokeSuite", // 00
+  "CoreServing02Suite",
+  "FaultsTransport03Suite",
+  "ScriptingBounds04Suite",
+  "Templating05Suite",
+  "Behaviors06Suite",
+  "SpacesFsm07Suite",
+  "AdminSurface08Suite",
+  "ProxyRecord10Suite",
+  "Intercept12Suite",
+  "ErrorEnvelope13Suite",
+  "BehaviorsResponseTypes14Suite",
+  "Metrics17Suite",
+  "MatchDiagnostics18Suite",
+  "FlowStateDeclarative19Suite",
+  "TlsTermination20Suite",
+  "AdminRest21Suite",
+  "MountebankCompat22Suite"
 )
 
-// Plane A container pass (issue #12, RIFT_MODE=container): the acceptance subset the Docker-run
-// engine is scoped to — feature 01 (gate) + 03 (faults-transport) + 12 (intercept/TLS-MITM, #51 —
-// the container publishes an `--intercept-port` 1:1) — plus the container harness acceptance spec.
-// Docker/RIFT_IT-gated by scripts/conformance-engine.sh. Excludes 02/04–11: the image-run engine is
-// only asserted for the gate + transport + intercept surfaces (DESIGN §3.1). The full-corpus SERVE
-// scenario (@full-corpus) now runs in container: its historical blocker — published images lacking
-// the `lua` feature the corpus exercised — is void (rift 0.12.0 removed Lua #451; 05-scripting is
-// rhai + JS, both built-in), and a green RIFT_IT run against the v0.13.1 image confirmed it (#71);
-// the container leg tracks RIFT_VERSION (now the 0.15.0 image), re-verified in CI on the bump.
-// `--exclude-tags full-corpus-verify` drops ONLY the rift-verify scenario: `rift-verify
-// --verify-dynamic` spins up ephemeral imposters on dynamic high ports that bind inside the
-// container's network namespace and are unreachable from the host-side tool over the 1:1
-// published-port topology — a standing container-mode constraint, not a lua/image gap (#71). The
-// container harness spec runs FIRST as the "does the container start + serve admin" smoke test — a
-// `;`-chain aborts at the first failure, so putting it first means a broken container fails there
-// with the crispest signal rather than as an opaque BDD "Container startup failed". The zio-test
-// specs are a separate step because the zio-bdd `--exclude-tags` arg is not theirs to parse.
-// 22-mountebank-compat (#203) runs here too, minus `@loopback-client` (a Docker-published port
-// rewrites the client address) and `@needs-data` (the container does not mount `corpus/data`).
+// Tags whose scenarios start a dedicated engine with CLI flags or env vars — only external mode can
+// spawn one: intercept-caller-ca / intercept-runtime / intercept-auth / intercept-ws (feature 12),
+// upstream-trust (09), front-door (11, 16), admin-isolated (21, a second raw-spawned engine),
+// tls-flags (20), rift-debug-env (05, 19: a `--debug` engine).
+val dedicatedEngineTags: Seq[String] = Seq(
+  "intercept-caller-ca",
+  "intercept-runtime",
+  "intercept-auth",
+  "intercept-ws",
+  "upstream-trust",
+  "front-door",
+  "admin-isolated",
+  "tls-flags",
+  "rift-debug-env"
+)
+
+def planeATestOnly(classes: Seq[String]): String =
+  "testOnly " + classes.map("samples.rift." + _).mkString(" ")
+def planeABddStep(suites: Seq[String], excludeTags: Seq[String]): String =
+  planeATestOnly(suites) + " -- --exclude-tags " + excludeTags.mkString(",")
+
+// Plane A embedded pass (RIFT_MODE=embedded, JDK 22+): the in-process FFM engine. Extra exclusions:
+//   intercept-http   — the FFI binds start-intercept/add-rules/export-truststore, not the HTTP-only
+//                      ca.pem + rules-list/clear routes (#53).
+//   metrics-port     — no separate Prometheus listener in-process (DESIGN §3.1); 17's admin
+//                      GET /metrics scenarios still run.
+//   no-config-source — the embedded harness always reloads from a config file (11, #199).
+// Specs: the embedded harness acceptance spec, the FFI parity specs (#75/#92/#94/#205: C-ABI calls
+// diffed against the admin HTTP API; no-ops outside embedded) and AdminEventsCursor122Spec (#122,
+// #201: /events on a fresh in-process engine per case). RiftHarnessSpec is external-only (it asserts
+// on a spawned child in `ps`).
+addCommandAlias(
+  "engineEmbedded",
+  "; " + planeABddStep(
+    planeAEveryModeSuites :+ "Reload11Suite",
+    dedicatedEngineTags ++ Seq("intercept-http", "metrics-port", "no-config-source")
+  ) + " ; " + planeATestOnly(
+    Seq(
+      "RiftEmbeddedHarnessSpec",
+      "RiftToolsParseSpec",
+      "FfiAdminParity75Spec",
+      "FfiStubWarnings92Spec",
+      "FfiVerifyParity94Spec",
+      "FfiLongTail205Spec",
+      "AdminEventsCursor122Spec"
+    )
+  )
+)
+
+// Plane A container pass (RIFT_MODE=container, RIFT_IT=1 + Docker): the image-run engine behind
+// ports published 1:1 (admin 2525, intercept 8443, metrics 4790, imposters 4500–4599 + 4800–4899)
+// with `corpus/data` mounted at the image workdir. The harness spec runs FIRST as the "does the
+// container start + serve admin" smoke: a `;`-chain aborts at the first failure, so a broken
+// container fails there with the crispest signal. Extra exclusions:
+//   full-corpus-verify — `rift-verify --verify-dynamic` binds ephemeral high ports inside the
+//                        container that the host-side tool cannot reach (#71).
+//   loopback-client    — predicates on client address 127.0.0.1, which Docker's forward rewrites (22).
+//   connect-refused    — asserts a raw TCP connect is refused; a published port always accepts (08, 21).
+//   host-port          — the engine auto-assigns a port (≥49152) outside the published pool (08).
+// AdminEventsCursor122Spec needs a fresh engine per case, which the one shared container is not.
 addCommandAlias(
   "engineContainer",
-  "; testOnly samples.rift.RiftContainerHarnessSpec samples.rift.RiftToolsParseSpec" +
-    " ; testOnly samples.rift.ConsistencyGateSuite samples.rift.FaultsTransport03Suite " +
-    "samples.rift.Intercept12Suite samples.rift.MountebankCompat22Suite " +
-    "-- --exclude-tags full-corpus-verify,intercept-caller-ca,intercept-runtime,intercept-auth,intercept-ws,upstream-trust,tls-flags,rift-debug-env," +
-    "loopback-client,needs-data"
+  "; " + planeATestOnly(Seq("RiftContainerHarnessSpec", "RiftToolsParseSpec")) + " ; " +
+    planeABddStep(
+      planeAEveryModeSuites,
+      dedicatedEngineTags ++ Seq(
+        "full-corpus-verify",
+        "loopback-client",
+        "connect-refused",
+        "host-port"
+      )
+    )
 )
 
 // `lintFeatures` — the dry-run step-matching gate (#142): loads the feature suites and checks every

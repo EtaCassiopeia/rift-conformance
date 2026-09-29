@@ -221,9 +221,9 @@ jobs:
 
   # Same Plane A oracle, run in a Docker container on a published image (#12): proves the transport
   # surface across the container boundary. ubuntu-latest ships a working Docker daemon, so this leg
-  # opts in with RIFT_IT=1. Runs feature 01 (gate, minus the @full-corpus lua scenarios the published
-  # image can't serve) + 03 (transport faults). The released rift is still fetched for the host
-  # lint/verify tools + BUILD_INFO.
+  # opts in with RIFT_IT=1. Runs every feature the container harness can drive (all but 09, 11, 15,
+  # 16 — see COVERAGE.md's feature × mode matrix, #206). The released rift is still fetched for the
+  # host lint/verify tools + BUILD_INFO.
   plane-a-container:
     name: Plane A — engine conformance (container)
     runs-on: ubuntu-latest

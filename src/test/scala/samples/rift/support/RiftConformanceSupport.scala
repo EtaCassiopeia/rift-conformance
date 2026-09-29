@@ -770,6 +770,12 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
       from(ProbePortLo, ProbePortHi - ProbePortLo + 1)
     }
 
+  /** A fresh probe-pool port, tracked so the scenario's cleanup deletes whatever lands on it — for
+    * suites that build their own imposters (feature 20). Unlike [[TestPorts]], the pool is
+    * published by the container harness, so the imposter stays reachable in every mode (#206).
+    */
+  protected def trackedProbePort: ZIO[RiftHarness, Throwable, Int] = freeProbePort.tap(track)
+
   private def postImposter(adminUrl: String, json: String): IO[Throwable, Int] =
     ZIO.attemptBlocking {
       val req = HttpRequest

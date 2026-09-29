@@ -144,7 +144,8 @@ and on manual `workflow_dispatch`:
   (`sbt mockConformance`), then `MOCK_BACKEND=rift-external` against the same released rift.
 - **plane-a-embedded** — the same Plane A oracle in-process over Panama FFM, on JDK 25
   (`RIFT_MODE=embedded`), plus the Plane B corpus on `MOCK_BACKEND=embedded`.
-- **plane-a-container** — the container subset against the published image (`RIFT_IT=1`).
+- **plane-a-container** — the same Plane A oracle against the published image (`RIFT_IT=1`):
+  every feature the container harness can drive (COVERAGE.md's feature × mode matrix).
 - **plane-a-redis** — `sbt engineRedis` (`RIFT_IT=1`): feature 15's flow-state scenarios against an
   in-memory and a Redis-backed imposter on the released engine.
 

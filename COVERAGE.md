@@ -42,9 +42,9 @@ offending files on failure (its RED path is verified: a corrupted corpus file tu
 that file).
 
 - **Embedded Plane A (#18)** — `RIFT_MODE=embedded` runs the same suites against the engine
-  **in-process** over Panama FFM (`rift_serve_admin`, zero process spawn, JDK 22+): features 01–08 +
-  11-reload all green (`sbt engineEmbedded`), the corpus lint/verify gate included. 09/10
-  (metrics/proxy-record) stay `external`/`container` (see DESIGN §3.1). Verified via
+  **in-process** over Panama FFM (`rift_serve_admin`, zero process spawn, JDK 22+): every feature
+  but 09, 15 and 16 (`sbt engineEmbedded`), the corpus lint/verify gate included — see the
+  [feature × mode matrix](#plane-a-feature--mode-matrix-206). Verified via
   `RiftEmbeddedHarnessSpec` (real admin URL + zero `--allow-injection` child) and the runner's `ps`
   sweep.
 
@@ -87,6 +87,66 @@ that file).
 
 `consistency-gate.sh` is **NOT deleted** here — this checkpoint only establishes parity. Its
 retirement (with `conformance-reload.sh`) is **#11**, which will cite this row.
+
+## Plane A feature × mode matrix (#206)
+
+The same rift 0.18.1 engine ships three ways — the binary (`external`, `engineConformance`), the
+rift-java 0.3.3 natives (`embedded`, `engineEmbedded`, JDK 22+) and the `zainalpour/rift-proxy:v0.18.1`
+image (`container`, `engineContainer`, `RIFT_IT=1` + Docker). Each feature runs in every mode that can
+drive it; a scenario a mode's harness cannot drive carries a tag that mode's alias excludes. ✔ = the
+whole feature runs; ✔ − `@tag` = runs minus those rows; ✖ = not enrolled, with the reason.
+
+| Feature | external | embedded | container |
+|---|:---:|:---:|:---:|
+| 00 smoke | ✔ | ✔ | ✔ |
+| 01 consistency gate | ✔ | ✔ | ✔ − `@full-corpus-verify` |
+| 02 core serving | ✔ | ✔ | ✔ |
+| 03 faults/transport | ✔ | ✔ | ✔ |
+| 04 scripting bounds | ✔ | ✔ | ✔ |
+| 05 templating | ✔ | ✔ − `@rift-debug-env` | ✔ − `@rift-debug-env` |
+| 06 behaviors | ✔ | ✔ | ✔ |
+| 07 spaces/FSM | ✔ | ✔ | ✔ |
+| 08 admin surface | ✔ | ✔ | ✔ − `@connect-refused`, `@host-port` |
+| 09 gateway/HTTPS/metrics | ✔ | ✖ no metrics listener in-process (DESIGN §3.1) | ✖ HTTPS/mTLS client to published ports — revisit with the TLS work |
+| 10 proxy-record | ✔ | ✔ | ✔ |
+| 11 reload | ✔ | ✔ − `@front-door`, `@no-config-source` | ✖ no config file to reload (`withConfigFile` unsupported by design) |
+| 12 intercept | ✔ | ✔ − `@intercept-http` + dedicated-engine tags | ✔ − dedicated-engine tags |
+| 13 error envelope | ✔ | ✔ | ✔ |
+| 14 behaviors on response types | ✔ | ✔ | ✔ |
+| 15 flow-store Redis | ✔ (`engineRedis`) | ✖ needs the external engine + a Redis container | ✖ same |
+| 16 front door | ✔ | ✖ every scenario spawns its own `--front-door` engine | ✖ same |
+| 17 metrics | ✔ | ✔ − `@metrics-port` | ✔ |
+| 18 match diagnostics | ✔ | ✔ | ✔ |
+| 19 flow state (declarative) | ✔ | ✔ − `@rift-debug-env` | ✔ − `@rift-debug-env` |
+| 20 TLS + HTTP/2 | ✔ | ✔ − `@tls-flags` | ✔ − `@tls-flags` |
+| 21 admin REST | ✔ | ✔ − `@admin-isolated` | ✔ − `@admin-isolated`, `@connect-refused` |
+| 22 Mountebank compat | ✔ | ✔ | ✔ − `@loopback-client` |
+
+Exclusion tags and their one-line reasons:
+
+- **Dedicated-engine tags** (`@intercept-caller-ca`, `@intercept-runtime`, `@intercept-auth`,
+  `@intercept-ws`, `@upstream-trust`, `@front-door`, `@admin-isolated`, `@tls-flags`,
+  `@rift-debug-env`): the scenario starts its own engine with CLI flags or env vars, which only
+  external mode can spawn.
+- `@intercept-http` (embedded): the FFI binds start-intercept/add-rules/export-truststore, not the
+  HTTP-only `ca.pem` and rules-list/clear routes.
+- `@metrics-port` (embedded): no separate Prometheus listener in-process. The container publishes
+  `--metrics-port 4790` 1:1 (not 9090: a host engine left on rift's default would shadow Docker's
+  forward on `localhost`).
+- `@no-config-source` (embedded): the embedded harness always reloads from a config file.
+- `@full-corpus-verify` (container): `rift-verify --verify-dynamic` binds ephemeral high ports inside
+  the container, unreachable from the host tool (#71).
+- `@loopback-client` (container): Docker's forward rewrites the client address away from 127.0.0.1.
+- `@connect-refused` (container, #206): asserts a raw TCP connect is refused; a Docker-published port
+  always accepts the connect.
+- `@host-port` (container, #206): the engine auto-assigns a port ≥ 49152, outside the published pool.
+
+Container enrolment (#206) needed three harness changes and surfaced no engine or image findings:
+`corpus/data` is mounted read-only at the image workdir so `lookup` rows resolve `data/…`; a metrics
+listener is published; and feature 20 draws imposter ports from the published probe pool
+(`trackedProbePort`) instead of `TestPorts`. Embedded enrolment of 00 and 13 was green as-is.
+`AdminEventsCursor122Spec` runs external + embedded only — it needs a fresh engine per case, which
+the one shared container is not; the other engine-spawning specs are external-only by construction.
 
 ## Plane A behavioral port audit (§5 · 1:1 shell-assert → scenario)
 
@@ -328,7 +388,7 @@ the three mTLS scenarios fail: every client gets HTTP 200.
 ### `20-tls-and-http2.feature` ← rift docs/features/tls.md (#197, rift#977/#1029)
 
 Suite `TlsTermination20Suite`. Its HTTPS clients trust only the test CA, so a completed handshake
-proves the fixture chain was served. Untagged rows run on the shared engine, external + embedded;
+proves the fixture chain was served. Untagged rows run on the shared engine in every mode (container since #206, on probe-pool ports);
 `@tls-flags` rows each start a dedicated engine (`RiftHarness.startTlsFlagEngine`, external only).
 
 | Engine contract | Asserted |
@@ -373,7 +433,7 @@ Out of scope, per the issue: TLS session resumption, `SSL_CERT_FILE`/`SSL_CERT_D
 > (silently ignored) — the one genuine mountebank-compat divergence, a config-shape gap rather than
 > a capture bug.
 
-Feature 10 runs on the embedded leg too since #202: every proxy target is another imposter in the
+Feature 10 runs on the embedded leg since #202 and the container leg since #206: every proxy target is another imposter in the
 same engine, so nothing in it needs the spawned process. Out of scope (#202): excluding `wait` from
 the `addWaitBehavior` latency, an HTTPS upstream with a client certificate, `ProxyStoreError::Refused`.
 
@@ -422,7 +482,7 @@ socket so they can set `Host`, which the JDK `HttpClient` refuses. Excluded from
 
 ### `14-behaviors-response-types.feature` ← rift#1184 (rift#1192, rift#1194; issue #154) — DONE
 
-`_behaviors` and `repeat` on inject, proxy and fault responses. This is kept out of `06-behaviors`, which covers `is` responses. The feature runs on both the external and the embedded legs. Fixtures are under `behaviors-response-types/`. The proxy upstream is another imposter in the same engine: the fixture's `UPSTREAM_PORT` placeholder is filled in when the proxy imposter is posted.
+`_behaviors` and `repeat` on inject, proxy and fault responses. This is kept out of `06-behaviors`, which covers `is` responses. The feature runs on all three legs. Fixtures are under `behaviors-response-types/`. The proxy upstream is another imposter in the same engine: the fixture's `UPSTREAM_PORT` placeholder is filled in when the proxy imposter is posted.
 
 | Engine contract | Plane A scenario |
 |---|---|
@@ -465,7 +525,7 @@ Not covered: `RouteObserver`, which is only an SPI for Rust embedders. The rule 
 
 ### `17-metrics.feature` ← rift docs/features/metrics.md (#999/#1045; issue #192) — DONE
 
-The Prometheus families on `--metrics-port` and the admin `GET /metrics`. Exposition is parsed by `support/PromText`, which keys each series by exact name and label set, so a `_created` sibling is never summed in (the #1123 lesson). `PromTextSpec` pins the parser offline. Every assertion is a **delta** keyed by the scenario's own imposter (`rule_id`/`port`). A counter absent before the snapshot counts as 0, and the after-read is polled for up to about 2 s. The `@metrics-port` scenarios read the separate listener, which the embedded harness does not have, so `engineEmbedded` excludes them. The two admin `/metrics` scenarios run on both legs. Fixtures are under `metrics/`.
+The Prometheus families on `--metrics-port` and the admin `GET /metrics`. Exposition is parsed by `support/PromText`, which keys each series by exact name and label set, so a `_created` sibling is never summed in (the #1123 lesson). `PromTextSpec` pins the parser offline. Every assertion is a **delta** keyed by the scenario's own imposter (`rule_id`/`port`). A counter absent before the snapshot counts as 0, and the after-read is polled for up to about 2 s. The `@metrics-port` scenarios read the separate listener, which the embedded harness does not have, so `engineEmbedded` excludes them; the container publishes one (`--metrics-port 4790`, #206) and runs them. The two admin `/metrics` scenarios run on every leg. Fixtures are under `metrics/`.
 
 | Engine contract | Plane A scenario |
 |---|---|
@@ -490,7 +550,7 @@ Not covered:
 
 ### `18-match-diagnostics.feature` ← rift docs/features/stub-analysis.md, debug-mode.md, docs/api/index.md § Why a request did not match (issue #193) — DONE
 
-These are the three surfaces that explain why a stub did or did not answer. The feature runs on the external and embedded legs, using only the admin HTTP API and the data plane. Fixtures are under `diagnostics/`. Every literal was probed with curl against a standalone 0.18.1 engine first.
+These are the three surfaces that explain why a stub did or did not answer. The feature runs on all three legs, using only the admin HTTP API and the data plane. Fixtures are under `diagnostics/`. Every literal was probed with curl against a standalone 0.18.1 engine first.
 
 | Engine contract | Plane A scenario |
 |---|---|
@@ -519,7 +579,7 @@ Not asserted:
 
 ### `21-admin-rest.feature` ← rift `docs/api/index.md` admin REST long tail (issue #200) — DONE
 
-The admin routes that feature 08 (by-id GET, enable/disable, debug, savedRequests, verify, flow-state, `PUT /imposters`) and feature 13 (the 400/404 envelope sweep) leave out. Every literal was probed with curl against a standalone 0.18.1 engine first. The feature runs on the external and embedded legs. The two `@admin-isolated` scenarios send `DELETE /imposters`, which would wipe every other scenario's imposters, so they run on a raw-spawned sidecar engine (`RiftHarness#startIsolatedAdminEngine`, the `upstream-trust` recipe). Only external mode can spawn one, so `engineEmbedded` excludes the tag. Fixtures are under `admin-rest/`.
+The admin routes that feature 08 (by-id GET, enable/disable, debug, savedRequests, verify, flow-state, `PUT /imposters`) and feature 13 (the 400/404 envelope sweep) leave out. Every literal was probed with curl against a standalone 0.18.1 engine first. The feature runs on all three legs (container minus `@connect-refused`). The two `@admin-isolated` scenarios send `DELETE /imposters`, which would wipe every other scenario's imposters, so they run on a raw-spawned sidecar engine (`RiftHarness#startIsolatedAdminEngine`, the `upstream-trust` recipe). Only external mode can spawn one, so `engineEmbedded` and `engineContainer` exclude the tag. Fixtures are under `admin-rest/`.
 
 | Engine contract | Plane A scenario |
 |---|---|
@@ -544,7 +604,7 @@ Out of scope: the data-directory delete-failure `503` (needs a read-only filesys
 
 ### `19-flow-state-declarative.feature` ← rift docs/features/flow-state.md (rift#969, #530; issue #194) — DONE
 
-Declarative flow state on the default in-memory store. Runs on the external and embedded legs; the
+Declarative flow state on the default in-memory store. Runs on all three legs; the
 `@rift-debug-env` row spawns a scenario-local engine with `--debug` (`rawSpawn` `extraArgs`), so it is
 external-only and excluded in `engineEmbedded`/`engineContainer`. Fixtures are under `stateops/`;
 the main one keys its flow on `X-Flow`. Flow-state values are read back through the admin route and
@@ -577,7 +637,8 @@ too: [achird-labs/rift#1240](https://github.com/achird-labs/rift/issues/1240), p
 
 Mountebank-compatible surface the corpus loads but never asserts. Runs on the external, embedded and
 container legs; the container leg excludes `@loopback-client` (the Docker-published port rewrites the
-client address) and `@needs-data` (the container does not mount `corpus/data`). `@shell` rows need
+client address). The lookup rows read `corpus/data`, which the container mounts at its workdir since
+#206. `@shell` rows need
 `sh` in the engine's environment. Fixtures `mbcompat/*`; lookup CSVs `corpus/data/mbcompat-*.csv`.
 
 | Engine contract | Plane A scenario |
@@ -598,8 +659,8 @@ client address) and `@needs-data` (the container does not mount `corpus/data`). 
 | `${request.body}`, `${request.pathParams.id}` | `${request.body} interpolates …`, `${request.pathParams.x} interpolates …` |
 | `[is A, inject B]` cycles A, B, A; the inject turn has `x-rift-inject: true` | `a mixed is/inject response cycle alternates, and the inject turn is marked` |
 | `copy` xpath; `copy` regex + `ignoreCase` → first capture group | `copy using xpath`, `copy using regex with ignoreCase yields the first capture group` |
-| `lookup` with `delimiter:";"` | `lookup honours a csv delimiter` (`@needs-data`) |
-| **gap** [achird-labs/rift#1240](https://github.com/achird-labs/rift/issues/1240): a lookup key `index` is ignored | `a lookup key index is ignored (rift#1240)` (`@needs-data @gap`) |
+| `lookup` with `delimiter:";"` | `lookup honours a csv delimiter` |
+| **gap** [achird-labs/rift#1240](https://github.com/achird-labs/rift/issues/1240): a lookup key `index` is ignored | `a lookup key index is ignored (rift#1240)` (`@gap`) |
 | `shellTransform` sees `MB_REQUEST`; `exit 3` → original body + `x-rift-shelltransform-error` | `shellTransform receives the request in MB_REQUEST`, `a failing shellTransform …` (`@shell`) |
 | `decorate` sees a string `response.body` | `decorate receives a string response.body` |
 

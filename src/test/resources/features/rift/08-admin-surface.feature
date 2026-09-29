@@ -92,6 +92,8 @@ Feature: Admin surface — stub-by-id, enable/disable, savedRequests filtering, 
     When the client deletes flow-state "k1" in flow "f1"
     Then flow-state "k1" in flow "f1" is absent
 
+  # @connect-refused: asserts a raw TCP connect is refused; a Docker-published port always accepts (container excludes it).
+  @connect-refused
   Scenario: a valid PUT /imposters atomically swaps the whole imposter set
     Given a fresh verbatim imposter from fixture "admin/pre-existing"
     When the client sends "GET" "/old"
@@ -103,6 +105,8 @@ Feature: Admin surface — stub-by-id, enable/disable, savedRequests filtering, 
     Then the response status is 200
     And the response body is "swapped"
 
+  # @connect-refused: asserts a raw TCP connect is refused; a Docker-published port always accepts (container excludes it).
+  @connect-refused
   Scenario: an invalid PUT /imposters batch is rejected and the previous set is untouched
     Given a fresh verbatim imposter from fixture "admin/pre-existing"
     When the client sends "GET" "/old"
@@ -204,6 +208,8 @@ Feature: Admin surface — stub-by-id, enable/disable, savedRequests filtering, 
 
   # docs/configuration/cli.md: an omitted, `null` or `0` port is assigned the first free port at or
   # above 49152, and the response carries it (#199). A batch creates its declared ports first.
+  # @host-port: the engine auto-assigns a port outside the container's published pool (container excludes it).
+  @host-port
   Scenario: POST /imposters without a port assigns one at or above 49152 and serves on it
     When the client creates a port-less imposter from fixture "admin/auto-port"
     Then the assigned port is at least 49152
@@ -211,6 +217,8 @@ Feature: Admin surface — stub-by-id, enable/disable, savedRequests filtering, 
     Then the response status is 200
     And the response body is "auto"
 
+  # @host-port: the engine auto-assigns a port outside the container's published pool (container excludes it).
+  @host-port
   Scenario: PUT /imposters keeps an explicit port and auto-assigns the port-less imposter
     When the client replaces all imposters with port-less batch fixture "admin/auto-port-batch"
     Then the assigned port is at least 49152

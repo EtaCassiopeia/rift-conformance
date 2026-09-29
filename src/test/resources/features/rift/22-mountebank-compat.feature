@@ -4,8 +4,8 @@ Feature: Mountebank compatibility — predicates, imposter options and response 
   # rift docs/mountebank/{predicates,imposters,responses,behaviors}.md (#203). The corpus LOADS most of
   # these but its `_verify` asserts none of them; each row here pins one literally. Runs on every
   # leg. Tags: `@loopback-client` rows match the client address 127.0.0.1, which a Docker-published
-  # port rewrites (excluded in container); `@needs-data` rows read a CSV under `corpus/data`, which
-  # the container does not mount (excluded in container); `@shell` rows need `sh` in the engine's
+  # port rewrites (excluded in container). The lookup rows read a CSV under `corpus/data`, which every
+  # mode reaches (the container mounts it at its workdir, #206); `@shell` rows need `sh` in the engine's
   # environment (the debian-slim image has it).
 
   # ── predicates ─────────────────────────────────────────────────────────────────────────────────
@@ -196,7 +196,6 @@ Feature: Mountebank compatibility — predicates, imposter options and response 
     When the client sends "GET" "/copy-regex/77"
     Then the response body is "v=77"
 
-  @needs-data
   Scenario: lookup honours a csv delimiter
     Given a fresh imposter from fixture "mbcompat/behaviors"
     When the client sends "GET" "/lookup/cd"
@@ -204,7 +203,7 @@ Feature: Mountebank compatibility — predicates, imposter options and response 
 
   # GAP (achird-labs/rift#1240): Mountebank's lookup key `index: 2` keys the row on the second group
   # (`cd` → "second"); 0.18.1 ignores `index` and keys on the first (`ab` → "first").
-  @needs-data @gap
+  @gap
   Scenario: a lookup key index is ignored (rift#1240)
     Given a fresh imposter from fixture "mbcompat/behaviors"
     When the client sends "GET" "/lookup-index/ab-cd"
