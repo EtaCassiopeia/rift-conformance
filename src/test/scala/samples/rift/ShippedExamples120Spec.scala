@@ -29,9 +29,11 @@ import scala.jdk.CollectionConverters.*
   * ships no `examples/`, and vendoring keeps this spec hermetic. `scripts/sync-rift-examples.sh
   * --check` is what catches a stale copy at pin-bump time.
   *
-  * Four of the six examples declare port 4545, so they cannot be co-loaded. One engine serves all
-  * of them: load → drive → `DELETE /imposters/{port}` → next. Rewriting the ports would have been
-  * easier but would stop the oracle from replaying the examples *as shipped*.
+  * Up to v0.18.0 four of the six examples declare port 4545, so they cannot be co-loaded. One
+  * engine serves all of them: load → drive → `DELETE /imposters/{port}` → next. Each example is
+  * served on the port its own document declares (read from the file, not hardcoded here), so a pin
+  * bump that re-vendors examples with new ports (rift#1218 moves three off 4545) needs no code
+  * change here. Rewriting the ports would stop the oracle from replaying the examples *as shipped*.
   *
   * Self-gating on `RIFT_BUILD_DIR` like the other tool gates. External-leg only (spawns a real
   * engine + `rift-lint`): absent from the enumerated `engineEmbedded`/`engineContainer` aliases,
@@ -58,7 +60,7 @@ object ShippedExamples120Spec extends ZIOSpecDefault:
       expectNoMatch: Boolean = false
   )
 
-  private final case class Example(file: String, port: Int, drives: List[Drive])
+  private final case class Example(file: String, drives: List[Drive])
 
   private val Json_ = Map("Content-Type" -> "application/json")
 
@@ -69,7 +71,6 @@ object ShippedExamples120Spec extends ZIOSpecDefault:
   private val examples = List(
     Example(
       "basic-api.json",
-      4545,
       List(
         // Plain-text "OK", not a JSON envelope — and unique among this document's four bodies.
         Drive("GET", "/health", 200, "OK"),
@@ -86,7 +87,6 @@ object ShippedExamples120Spec extends ZIOSpecDefault:
     ),
     Example(
       "error-testing.json",
-      4545,
       List(
         Drive("GET", "/success", 200, "\"ok\""),
         Drive("GET", "/error/400", 400, "INVALID_INPUT"),
@@ -102,7 +102,6 @@ object ShippedExamples120Spec extends ZIOSpecDefault:
     ),
     Example(
       "authentication-api.json",
-      4547,
       List(
         Drive(
           "POST",
@@ -136,7 +135,6 @@ object ShippedExamples120Spec extends ZIOSpecDefault:
     ),
     Example(
       "feature-flags-api.json",
-      4546,
       List(
         // Matched on the per-flag `description`, NOT the flag id: the collection stub below returns
         // a body containing every flag id, so asserting "DARK_MODE" would still pass if path
@@ -149,7 +147,6 @@ object ShippedExamples120Spec extends ZIOSpecDefault:
     ),
     Example(
       "task-management-api.json",
-      4545,
       List(
         // `"count":3`, not just `"count"` — the filtered stub also carries a count field.
         Drive("GET", "/tasks", 200, "\"count\":3"),
@@ -176,7 +173,6 @@ object ShippedExamples120Spec extends ZIOSpecDefault:
     ),
     Example(
       "latency-testing.json",
-      4545,
       List(
         Drive("GET", "/slow-100ms", 200, "100ms delay", minMillis = 100),
         Drive("GET", "/slow-500ms", 200, "500ms delay", minMillis = 500),
@@ -257,6 +253,21 @@ object ShippedExamples120Spec extends ZIOSpecDefault:
       )
       .mapError(new RuntimeException(_))
 
+  /** The port the example document itself declares. Every shipped example pins one; a document
+    * without it would be auto-assigned a port the drives could not know, so that is a failure.
+    */
+  private def declaredPort(file: String, imposter: String): Task[Int] =
+    ZIO
+      .fromEither(
+        imposter
+          .fromJson[Json]
+          .flatMap(_.get(JsonCursor.field("port").isNumber))
+          .map(_.value.intValue)
+          .left
+          .map(e => s"$file: no numeric top-level port in its imposter ($e)")
+      )
+      .mapError(new RuntimeException(_))
+
   private def adminPost(adminPort: Int, body: String): Task[Int] =
     ZIO.attemptBlocking {
       val req = HttpRequest
@@ -327,29 +338,30 @@ object ShippedExamples120Spec extends ZIOSpecDefault:
     for
       raw <- readExample(ex.file)
       imposter <- imposterOf(raw)
+      port <- declaredPort(ex.file, imposter)
       created <- adminPost(adminPort, imposter)
       ports <- registeredPorts(adminPort)
       // `onError` only — a drive that throws (connection reset, the 25s HTTP timeout) still frees
-      // the port, or the next example sharing 4545 fails to bind and buries the real cause. On the
+      // the port, or the next example declaring the same port fails to bind and buries the real cause. On the
       // success path this does not run, so the explicit delete below is the one whose status counts.
       answers <- ZIO
-        .foreach(ex.drives)(d => drive(ex.port, d).map(d -> _))
-        .onError(_ => adminDelete(adminPort, ex.port).ignore)
-      deleted <- adminDelete(adminPort, ex.port)
+        .foreach(ex.drives)(d => drive(port, d).map(d -> _))
+        .onError(_ => adminDelete(adminPort, port).ignore)
+      deleted <- adminDelete(adminPort, port)
     yield
       val loadFailures =
-        // A failed DELETE is reported here rather than discarded: four examples share port 4545, so
+        // A failed DELETE is reported here rather than discarded: examples may share a port, so
         // otherwise it resurfaces as a bogus "create returned 400" against the *next* example.
         Option
           .when(deleted != 200 && deleted != 204)(
-            s"${ex.file}: DELETE /imposters/${ex.port} returned $deleted"
+            s"${ex.file}: DELETE /imposters/${port} returned $deleted"
           )
           .toList ++
           Option
             .when(created != 201)(s"${ex.file}: create returned $created, expected 201")
             .toList ++
-          Option.when(!ports.contains(ex.port))(
-            s"${ex.file}: port ${ex.port} not registered (got $ports)"
+          Option.when(!ports.contains(port))(
+            s"${ex.file}: port ${port} not registered (got $ports)"
           )
       val driveFailures = answers.flatMap { (d, a) =>
         val where = s"${ex.file} ${d.method} ${d.path}"
@@ -425,7 +437,8 @@ object ShippedExamples120Spec extends ZIOSpecDefault:
           // One lint run PER FILE: each example is a standalone config, loaded alone, and four of
           // them share port 4545 by design. Since rift 0.18.0 (#1094) a directory run reports E002
           // for a port shared across its files, so linting the folder as one run flags a conflict
-          // no real user of these examples can hit.
+          // no real user of these examples can hit. rift#1218 gives each example its own port; once
+          // the pin carries it, lint the directory as one run again (#160).
           val tools = RiftTools.fromBuildDir(bd)
           exampleFilesOnDisk.flatMap { onDisk =>
             ZIO.foreach(onDisk.toList.sorted)(f => tools.riftLint(examplesDir.resolve(f))).map {
