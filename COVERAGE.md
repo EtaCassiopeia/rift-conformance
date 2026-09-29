@@ -222,7 +222,7 @@ is discharged by this feature.
 |----------------------|------------------|---------|
 | stub by-id GET (+ 404 for unknown id, + content check) | `a stub is retrievable by its explicit id; an unknown id 404s` | `admin/base` |
 | enable/disable → 503/200 | `disabling an imposter 503s the data plane; enabling it restores 200` | `admin/base` |
-| X-Rift-Debug introspection | `X-Rift-Debug returns diagnostics instead of the normal stub response` | `admin/base` |
+| X-Rift-Debug introspection (coarse smoke; the full report shape is in feature 18) | `X-Rift-Debug returns diagnostics instead of the normal stub response` | `admin/base` |
 | ?match= header filter + stacked AND-semantics | `savedRequests ?match= filters by header, and stacked match= clauses AND together` | `admin/base` |
 | targeted savedRequests delete keeps non-matching | `a targeted savedRequests delete removes only the matching requests` | `admin/base` |
 | flow-state KV lifecycle + 404 + cross-flow isolation (rift#190) | `flow-state KV full lifecycle — set, get, delete, then 404` (+ f2 isolation) | `admin/base` |
@@ -362,6 +362,35 @@ How the front door routes a request, and the gateway's error and passthrough edg
 | gateway: non-numeric port → 400 `bad data`; unknown port → 404 `no such resource` | `a non-numeric gateway port is a 400 bad data` / `a gateway port with no imposter is a 404 no such resource` |
 
 Not covered: `RouteObserver`, which is only an SPI for Rust embedders. The rule that the gateway is not gated by `--api-key` belongs to the admin-auth issue, which spawns a keyed engine. The empty-`id` and single-imposter-document `routes` rejections are also not asserted, because the issue scoped the boot Outline to six rows.
+
+### `18-match-diagnostics.feature` ← rift docs/features/stub-analysis.md, debug-mode.md, docs/api/index.md § Why a request did not match (issue #193) — DONE
+
+These are the three surfaces that explain why a stub did or did not answer. The feature runs on the external and embedded legs, using only the admin HTTP API and the data plane. Fixtures are under `diagnostics/`. Every literal was probed with curl against a standalone 0.18.1 engine first.
+
+| Engine contract | Plane A scenario |
+|---|---|
+| `_rift.warnings[]` carries each warning type with its exact `stubIndex`/`shadowedByIndex`/`stubId`: `duplicate_id` (1, 0, `x`), `exact_duplicate` (1, 0), `potentially_shadowed` (1, 0), `catch_all` (1), `catch_all_not_last` (0, "will shadow 1 stub"), `config_key_ignored` for imposter-level `recordMatches` (no `stubIndex`) and for `_rift` on a proxy response (0), and `state_ops_never_runs` for `stateOps` on a script-only `_rift` response (0) | Outline `stub analysis flags <type> (<case>)`, one fixture per row |
+| no warnings and no flowState → no `_rift` key | `an imposter with nothing to warn about and no flowState carries no _rift key` |
+| capped at 100, then a `truncated` entry ("… suppressed (showing first 100)") | `warnings are capped at 100 with a truncated entry` (102 identical stubs) |
+| recomputed after `POST …/stubs` and after `DELETE …/stubs/by-id` | `the analysis is recomputed after a stub is added and after it is deleted` |
+| `X-Rift-Debug: 1`: `debug`, `request` (without the debug header), `imposter.stubCount`, and `matchResult` with `stubIndex`, `stubId`, and `responsePreview{responseType,statusCode,bodyPreview}` | `a matched debug request reports the stub and a response preview` |
+| a miss → `matched:false`, `reason` "No stub predicates matched the request", `allStubs` lists every stub; the header name is case-insensitive and `TRUE` counts | `an unmatched debug request says why and lists every stub` |
+| no stubs → "No stubs configured for this imposter" | `a debug request on an imposter with no stubs says so` |
+| `yes` takes the normal path | `X-Rift-Debug values other than true/1 take the normal path` |
+| the preview does not advance response cycling | `the debug preview does not advance response cycling` |
+| journal `matchOutcome` on a hit: `matched`, `stubIndex`, `stubId` | `a hit is journaled with matched, stubIndex and stubId` |
+| on a miss: `tried[]` in visit order: `failedPredicate` with `predicateIndex: 1`, then `skippedScenarioState`, then `skippedSpace`; a stub the candidate index ruled out is not listed | `a miss is journaled with every visited stub and why it fell out` |
+| a debug request has no `matchOutcome` | `a debug request is journaled without a matchOutcome` |
+
+`state_ops_never_runs` needs a response with no `is` body. On 0.18.1, `stateOps` on an `is` response raises nothing, and a `_rift` on a proxy or inject response raises `config_key_ignored` instead. The row therefore uses the script-only `_rift` form described in the doc.
+
+A `failedPredicate` entry needs the stub to survive the candidate index. The stub's second predicate is therefore a header `equals`, not a method, because an index-pruned stub is never visited.
+
+Not asserted:
+- `status`/`latencyMs` on a debug-path journal entry. achird-labs/rift#1227 (open) says they are recorded, while the doc says they are absent.
+- The pairwise shadow check being skipped above 200 stubs.
+- The debug `500`.
+- The predicate-inject `504` (feature 04 owns that family).
 
 ### `21-admin-rest.feature` ← rift `docs/api/index.md` admin REST long tail (issue #200) — DONE
 

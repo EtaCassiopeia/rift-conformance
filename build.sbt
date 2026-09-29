@@ -142,6 +142,7 @@ addCommandAlias("engineConformance", "testOnly samples.rift.*")
 // outside RIFT_MODE=embedded, so only this alias runs them.
 // AdminEventsCursor122Spec (#122, #201) runs here too: the in-process harness serves the same
 // /events + savedRequests admin HTTP, and the embedded natives carry 0.18.1 since rift-java 0.3.3.
+// 18-match-diagnostics (#193) runs here too: it needs only the admin HTTP and the data plane.
 // 21-admin-rest (#200) runs here too, minus `@admin-isolated`: its DELETE /imposters scenarios need a
 // second, raw-spawned engine (the recipe `upstream-trust` uses), which only external mode can start.
 addCommandAlias(
@@ -150,7 +151,8 @@ addCommandAlias(
     "samples.rift.FaultsTransport03Suite samples.rift.ScriptingBounds04Suite " +
     "samples.rift.Templating05Suite samples.rift.Behaviors06Suite samples.rift.SpacesFsm07Suite " +
     "samples.rift.AdminSurface08Suite samples.rift.Reload11Suite samples.rift.Intercept12Suite " +
-    "samples.rift.BehaviorsResponseTypes14Suite samples.rift.AdminRest21Suite " +
+    "samples.rift.BehaviorsResponseTypes14Suite samples.rift.MatchDiagnostics18Suite " +
+    "samples.rift.AdminRest21Suite " +
     "-- --exclude-tags intercept-http,intercept-caller-ca,intercept-runtime,intercept-auth,intercept-ws,front-door,upstream-trust," +
     "admin-isolated" +
     " ; testOnly samples.rift.RiftEmbeddedHarnessSpec samples.rift.RiftToolsParseSpec" +
