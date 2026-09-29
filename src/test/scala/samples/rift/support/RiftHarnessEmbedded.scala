@@ -79,6 +79,11 @@ private final class RiftHarnessEmbeddedLive(
       case false => ZIO.unit // nothing pending — safe to call unconditionally from a cleanup hook
     }
 
+  /** Rewrite the config file WITHOUT reloading, so a feature-11 scenario drives the reload itself
+    * and can assert its report (#199).
+    */
+  override def rewriteReloadConfig(json: String): Task[Unit] = writeConfig(json)
+
   private def writeConfig(json: String): Task[Unit] =
     ZIO.attemptBlocking(Files.write(reloadConfigFile, json.getBytes(StandardCharsets.UTF_8))).unit
 

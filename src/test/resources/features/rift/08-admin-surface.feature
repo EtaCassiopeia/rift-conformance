@@ -201,3 +201,21 @@ Feature: Admin surface — stub-by-id, enable/disable, savedRequests filtering, 
     And the response JSON at "0.headers.X-M.1" is the string "b"
     And the response JSON at "1._mode" is the string "binary"
     And the response JSON at "1.body" is the string "//4="
+
+  # docs/configuration/cli.md: an omitted, `null` or `0` port is assigned the first free port at or
+  # above 49152, and the response carries it (#199). A batch creates its declared ports first.
+  Scenario: POST /imposters without a port assigns one at or above 49152 and serves on it
+    When the client creates a port-less imposter from fixture "admin/auto-port"
+    Then the assigned port is at least 49152
+    When the client sends "GET" "/auto"
+    Then the response status is 200
+    And the response body is "auto"
+
+  Scenario: PUT /imposters keeps an explicit port and auto-assigns the port-less imposter
+    When the client replaces all imposters with port-less batch fixture "admin/auto-port-batch"
+    Then the assigned port is at least 49152
+    When the client sends "GET" "/auto"
+    Then the response body is "auto"
+    When the client sends "GET" "/explicit" to port 4829
+    Then the response status is 200
+    And the response body is "explicit"

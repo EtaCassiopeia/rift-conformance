@@ -49,3 +49,62 @@ Feature: Incremental reload (rift#316) — POST /admin/reload reconciles toward 
     Given the engine is started without the front door and a route from host "a.test" to port 4872
     When the engine reloads its configuration
     Then the reload report warns about "--front-door"
+
+  # docs/features/hot-reload.md: a reload classifies every imposter. An added one is `created`, a
+  # removed one `deleted`, an imposter-level change (here `name`) `replaced` with fresh state, and a
+  # change to one stub out of four `stubPatched`, which keeps the recorded requests and the `repeat`
+  # position of the unchanged stubs. The four fields are port arrays.
+  Scenario: a reload reports created, deleted, replaced and stubPatched, and keeps patched state
+    Given the engine is started with the reload fixture "reload/diff-before"
+    When the client sends "GET" "/x" to port 4875
+    And the client sends "GET" "/a" to port 4876
+    And the client sends "GET" "/cycle" to port 4876
+    Then the response body is "r1"
+    And imposter 4875 has recorded 1 requests
+    And imposter 4876 has recorded 2 requests
+    When the reload config file is rewritten to fixture "reload/diff-after"
+    And the engine reloads its configuration
+    Then the reload report created port 4877
+    And the reload report deleted port 4874
+    And the reload report replaced port 4875
+    And the reload report stubPatched port 4876
+    And the reload report message is "Reloaded 3 imposter(s)"
+    And imposter 4875 has recorded 0 requests
+    And imposter 4876 has recorded 2 requests
+    When the client sends "GET" "/cycle" to port 4876
+    Then the response body is "r2"
+    When the client sends "GET" "/b" to port 4876
+    Then the response body is "B-patched"
+    When the client sends "GET" "/x" to port 4877
+    Then the response body is "added"
+    And the imposter on port 4874 no longer serves
+
+  # A stub's key is its explicit `id`, so reordering keyed stubs is a patch, not a replace.
+  Scenario: reordering stubs with explicit ids is a stub patch that keeps the recorded requests
+    Given the engine is started with the reload fixture "reload/ids-before"
+    When the client sends "GET" "/a" to port 4878
+    And the client sends "GET" "/b" to port 4878
+    Then imposter 4878 has recorded 2 requests
+    When the reload config file is rewritten to fixture "reload/ids-after"
+    And the engine reloads its configuration
+    Then the reload report stubPatched port 4878
+    And the reload report replaced 0 imposters
+    And the reload report created 0 imposters
+    And the reload report deleted 0 imposters
+    And imposter 4878 has recorded 2 requests
+
+  Scenario: an unparseable config refuses the reload with a 500 and the old imposters keep serving
+    Given the engine is started with the reload config file
+    When the reload config file is rewritten to invalid JSON
+    And the engine reload is attempted
+    Then the response status is 500
+    And the reload is refused naming "Reload failed (imposters unchanged)"
+    When the client sends "GET" "/a" to port 4870
+    Then the response body is "A"
+
+  # The shared engine has no config source (external mode). The embedded harness always reloads
+  # from a config file, so @no-config-source is excluded there.
+  @no-config-source
+  Scenario: a reload with no config source reports that there is nothing to reload
+    When the engine reloads its configuration
+    Then the reload report message is "No config source configured; nothing to reload"
