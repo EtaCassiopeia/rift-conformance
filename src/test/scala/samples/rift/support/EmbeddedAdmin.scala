@@ -34,6 +34,24 @@ trait EmbeddedFfi:
   def resetScenarios(port: Int, flowId: String): Unit
   def stubWarnings(port: Int): String
   def verify(port: Int, bodyJson: String): String
+  // The C-ABI long tail (#205): per-space plane, flow state, whole-set reconcile, ABI identity,
+  // and the rest of the intercept control plane.
+  def spaceAddStub(port: Int, flowId: String, stubJson: String): Unit
+  def spaceListStubs(port: Int, flowId: String): String
+  def spaceDelete(port: Int, flowId: String): Unit
+  def spaceRecorded(port: Int, flowId: String): String
+  def flowStateGet(port: Int, flowId: String, key: String): String
+  def flowStatePut(port: Int, flowId: String, key: String, valueJson: String): Unit
+  def flowStateDelete(port: Int, flowId: String, key: String): Unit
+  def applyConfig(json: String): String
+  def abiVersion(): Int
+  def interceptListRules(): String
+  def stopIntercept(): Unit
+
+  /** `rift_last_error` read on the calling thread right after a failed call, optionally with a
+    * successful call in between; `null` when no error is set.
+    */
+  def lastErrorAfterFailure(thenSucceed: Boolean): String
   def stop(): Unit
 
 /** Starts the in-process engine with its real admin API for the Plane A `RiftHarness` embedded mode
@@ -156,6 +174,57 @@ object EmbeddedAdmin:
     def verify(port: Int, body: Json): Task[Json] =
       ZIO.attemptBlocking(ffi.verify(port, body.toJson)).flatMap(parseJson)
 
+    // ── C-ABI long tail (#205) ──
+
+    /** `rift_serve_admin` with raw options — fails with `rift_last_error` on a refusal. */
+    def serveAdmin(options: Json): Task[Json] =
+      ZIO.attemptBlocking(ffi.serveAdmin(options.toJson)).flatMap(parseJson)
+
+    def buildInfo: Task[Json] = ZIO.attemptBlocking(ffi.buildInfo()).flatMap(parseJson)
+
+    def abiVersion: Task[Int] = ZIO.attemptBlocking(ffi.abiVersion())
+
+    def lastErrorAfterFailure(thenSucceed: Boolean): Task[Option[String]] =
+      ZIO.attemptBlocking(Option(ffi.lastErrorAfterFailure(thenSucceed)))
+
+    def spaceAddStub(port: Int, space: String, stub: Json): Task[Unit] =
+      ZIO.attemptBlocking(ffi.spaceAddStub(port, space, stub.toJson))
+
+    /** `rift_space_add_stub` with a raw body, for feeding it something that is not a stub. */
+    def spaceAddStubRaw(port: Int, space: String, body: String): Task[Unit] =
+      ZIO.attemptBlocking(ffi.spaceAddStub(port, space, body))
+
+    def spaceListStubs(port: Int, space: String): Task[Json] =
+      ZIO.attemptBlocking(ffi.spaceListStubs(port, space)).flatMap(parseJson)
+
+    def spaceDelete(port: Int, space: String): Task[Unit] =
+      ZIO.attemptBlocking(ffi.spaceDelete(port, space))
+
+    def spaceRecorded(port: Int, space: String): Task[Json] =
+      ZIO.attemptBlocking(ffi.spaceRecorded(port, space)).flatMap(parseJson)
+
+    def flowStateGet(port: Int, flowId: String, key: String): Task[Json] =
+      ZIO.attemptBlocking(ffi.flowStateGet(port, flowId, key)).flatMap(parseJson)
+
+    def flowStatePut(port: Int, flowId: String, key: String, value: Json): Task[Unit] =
+      ZIO.attemptBlocking(ffi.flowStatePut(port, flowId, key, value.toJson))
+
+    def flowStateDelete(port: Int, flowId: String, key: String): Task[Unit] =
+      ZIO.attemptBlocking(ffi.flowStateDelete(port, flowId, key))
+
+    /** `rift_apply_config` — reconciles the whole imposter set; yields the apply report. */
+    def applyConfig(config: Json): Task[Json] =
+      ZIO.attemptBlocking(ffi.applyConfig(config.toJson)).flatMap(parseJson)
+
+    /** `rift_start_intercept` with raw options; yields the whole response object. */
+    def startInterceptWith(options: Json): Task[Json] =
+      ZIO.attemptBlocking(ffi.startIntercept(options.toJson)).flatMap(parseJson)
+
+    def interceptListRules: Task[Json] =
+      ZIO.attemptBlocking(ffi.interceptListRules()).flatMap(parseJson)
+
+    def stopIntercept: Task[Unit] = ZIO.attemptBlocking(ffi.stopIntercept())
+
   /** How `rift_get_stub`/`rift_update_stub`/`rift_delete_stub` address a stub. */
   enum StubRef:
     case ByIndex(index: Int)
@@ -207,6 +276,12 @@ object EmbeddedAdmin:
         .flatMap(_.get("commit"))
         .collect { case Json.Str(c) if c.nonEmpty => c }
     yield Admin(adminUrl, URI.create(adminUrl).getPort, commit, version, new Handle(ffi))
+
+  /** A fresh engine handle with no admin plane served yet, stopped when the scope closes — for
+    * driving `rift_serve_admin` options directly (#205).
+    */
+  def bare: ZIO[Scope, Throwable, Handle] =
+    ZIO.acquireRelease(open)(f => ZIO.attemptBlocking(f.stop()).orDie).map(new Handle(_))
 
   private def open: Task[EmbeddedFfi] =
     ZIO.attemptBlocking(
