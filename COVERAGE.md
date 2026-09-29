@@ -556,7 +556,13 @@ intercept list/clear/`ca_pem`. The binding gap of **#96** is therefore gone, and
 
 These are already tracked by open issues filed as the releases shipped:
 
-- intercept serve-rule non-string body: #148
+- intercept serve-rule non-string body: #148 — **covered**. In `12-intercept`, an object `body` is
+  served as compact `{"featureX":"ON"}` with a matching `content-length`, byte-identical to the
+  escaped-string form (external, embedded, container). `GET /intercept/rules` lists it as an object
+  (`@intercept-http`). The `--configfile` `intercept` block door is one more
+  `ConfigInterceptBlock113Spec` case: it boots, lists the body as an object, and serves it compact.
+  The `statusCode`-string and multi-value `headers` widening from the scope-extension comment are
+  outside the design decision and not covered here.
 - outbound `--upstream-ca-file` and imposter `mutualAuth`: #149
 - intercept tunnel 413 and decoded chunked bodies: #150 — **covered**: `12-intercept` `@intercept-raw`
   (a raw `CONNECT` + TLS client, `RawHttpConnection`): over-cap body → `413` with the forward target

@@ -4,22 +4,21 @@ import samples.rift.support.{
   LastResponse,
   RawHttpConnection,
   RawRead,
+  RawResponse,
   RiftConformanceSupport,
   RiftHarness,
   RiftState
 }
 import zio.*
 import zio.json.*
-import zio.json.ast.Json
+import zio.json.ast.{Json, JsonCursor}
 import zio.bdd.core.Assertions
 import zio.bdd.core.Suite
 import zio.bdd.core.step.{Stage, ZIOSteps}
 
-import java.io.ByteArrayInputStream
 import java.net.http.{HttpClient, HttpRequest, HttpResponse}
 import java.net.{InetSocketAddress, ProxySelector, URI}
-import java.security.{KeyStore, SecureRandom}
-import javax.net.ssl.{SSLContext, TrustManagerFactory}
+import javax.net.ssl.SSLContext
 import scala.jdk.CollectionConverters.*
 
 /** Feature 12 — the intercept / TLS-MITM forward-proxy (rift 0.10.0 admin API + 0.11.0 FFI). The
@@ -138,15 +137,7 @@ object Intercept12Suite
     * seam (`interceptTruststore`), which is HTTP for external/container and FFI for embedded.
     */
   private def sslFromTruststore(bytes: Array[Byte]): IO[Throwable, SSLContext] =
-    ZIO.attemptBlocking {
-      val ks = KeyStore.getInstance("PKCS12")
-      ks.load(new ByteArrayInputStream(bytes), TrustPassword.toCharArray)
-      val tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm)
-      tmf.init(ks)
-      val ctx = SSLContext.getInstance("TLS")
-      ctx.init(null, tmf.getTrustManagers, new SecureRandom())
-      ctx
-    }
+    ZIO.attemptBlocking(RawHttpConnection.sslTrusting(bytes, TrustPassword))
 
   /** Issue an HTTPS GET to `host``path` THROUGH the intercept listener (as an HTTP proxy: the JDK
     * client sends `CONNECT host:443`, which rift intercepts and TLS-MITMs). No DNS for `host` is
@@ -230,10 +221,54 @@ object Intercept12Suite
       conn <- tunnelTo(host)
       read <- ZIO.attemptBlocking(conn.exchange(request))
       _ <- read match
-        case RawRead.Response(r) => Stage.put(r.toLastResponse)
+        case RawRead.Response(r) => Stage.put(r.toLastResponse) *> Stage.put(r)
         case RawRead.Closed =>
           ZIO.fail(new RuntimeException(s"the intercept tunnel to $host closed without answering"))
     yield ()
+
+  private def lastRawResponse: IO[Throwable, RawResponse] =
+    Stage
+      .get[RawResponse]
+      .mapError(e => new IllegalStateException(s"no raw tunnel response yet ($e)"))
+
+  /** The `serve.body` of the listed intercept rule for `host`, from `GET /intercept/rules`. */
+  private def listedServeBody(adminUrl: String, host: String): IO[Throwable, Option[Json]] =
+    ZIO.attemptBlocking {
+      val req = HttpRequest.newBuilder(URI.create(s"$adminUrl/intercept/rules")).GET().build()
+      val resp = http.send(req, HttpResponse.BodyHandlers.ofString())
+      if resp.statusCode != 200 then
+        throw new RuntimeException(s"GET /intercept/rules -> ${resp.statusCode}: ${resp.body}")
+      resp.body.fromJson[Json] match
+        case Left(e) => throw new RuntimeException(s"GET /intercept/rules is not JSON ($e)")
+        case Right(json) =>
+          json.asArray.toList.flatten
+            .find(_.get(JsonCursor.field("host")).toOption.contains(Json.Str(host)))
+            .flatMap(
+              _.get(
+                JsonCursor.field("action").isObject.field("serve").isObject.field("body")
+              ).toOption
+            )
+    }
+
+  /** A serve rule for `host``path` whose body is the one-field object `{key: value}` — as a JSON
+    * object, or as that object already rendered to an escaped JSON string (the pre-rift#933 form).
+    */
+  private def objectBodyRule(
+      host: String,
+      path: String,
+      key: String,
+      value: String,
+      asString: Boolean
+  ) =
+    val obj = Json.Obj(key -> Json.Str(value))
+    val body = if asString then Json.Str(obj.toJson) else obj
+    Json
+      .Obj(
+        "host" -> Json.Str(host),
+        "predicates" -> Json.Arr(Json.Obj("equals" -> Json.Obj("path" -> Json.Str(path)))),
+        "action" -> Json.Obj("serve" -> Json.Obj("statusCode" -> Json.Num(200), "body" -> body))
+      )
+      .toJson
 
   // ── steps ─────────────────────────────────────────────────────────────────────────────────
 
@@ -412,6 +447,70 @@ object Intercept12Suite
         s"expected the listener to close after the refusal, but it sent another response: $read"
       )
     yield ()
+  }
+
+  Given(
+    "an intercept rule for host " / string / " path " / string / " serves the object body with " / string / " set to " / string
+  ) { (host: String, path: String, key: String, value: String) =>
+    ZIO.serviceWithZIO[RiftHarness](
+      _.interceptAddRule(objectBodyRule(host, path, key, value, asString = false))
+    )
+  }
+
+  Given(
+    "an intercept rule for host " / string / " path " / string / " serves the escaped-string body with " / string / " set to " / string
+  ) { (host: String, path: String, key: String, value: String) =>
+    ZIO.serviceWithZIO[RiftHarness](
+      _.interceptAddRule(objectBodyRule(host, path, key, value, asString = true))
+    )
+  }
+
+  Then("the response body is the compact JSON object with " / string / " set to " / string) {
+    (key: String, value: String) =>
+      val expected = Json.Obj(key -> Json.Str(value)).toJson // zio-json renders compact
+      lastRawResponse.flatMap(r =>
+        assertRepro(r.bodyText == expected, s"expected body '$expected', got '${r.bodyText}'")
+      )
+  }
+
+  Then("the response content-length matches its body") {
+    lastRawResponse.flatMap { r =>
+      val declared = r.headers.collect { case ("content-length", v) => v }
+      assertRepro(
+        declared == List(r.body.length.toString),
+        s"content-length $declared does not frame the ${r.body.length}-byte body"
+      )
+    }
+  }
+
+  Then(
+    "the response body is byte-identical to a raw HTTPS GET to " / string / " " / string / " through the intercept tunnel"
+  ) { (host: String, path: String) =>
+    for
+      first <- lastRawResponse
+      _ <- rawExchange(host, RawHttpConnection.request("GET", host, path))
+      second <- lastRawResponse
+      same = java.util.Arrays.equals(first.body, second.body)
+      _ <- assertRepro(
+        same && second.status == first.status,
+        s"expected identical bodies, got ${first.status} '${first.bodyText}' vs " +
+          s"${second.status} '${second.bodyText}'"
+      )
+    yield ()
+  }
+
+  Then(
+    "the intercept rule for host " / string / " lists its serve body as a JSON object with " / string / " set to " / string
+  ) { (host: String, key: String, value: String) =>
+    ZIO.serviceWithZIO[RiftHarness](h =>
+      listedServeBody(h.adminUrl, host).flatMap(body =>
+        assertRepro(
+          body.contains(Json.Obj(key -> Json.Str(value))),
+          s"expected GET /intercept/rules to list the $host serve body as the object " +
+            s"{$key: $value}, got $body"
+        )
+      )
+    )
   }
 
   Then("the current imposter has recorded " / int / " requests") { (n: Int) =>
