@@ -571,7 +571,41 @@ asserted by JSON type (`the number 42` vs the string `"007"`).
 Out of scope: Redis-specific parity for `set`/`clearFlow` (feature 15 is the place for it) and the
 64-lost-race CAS give-up. The dataset fixture's `key` omits Mountebank's `index`: rift's `LookupKey`
 has no such field, so a carried `index` is dropped from the export (the executed `lookup` ignores it
-too; followed up under #203).
+too: [achird-labs/rift#1240](https://github.com/achird-labs/rift/issues/1240), pinned in feature 22).
+
+### `22-mountebank-compat.feature` ← rift docs/mountebank/*.md (issue #203) — DONE
+
+Mountebank-compatible surface the corpus loads but never asserts. Runs on the external, embedded and
+container legs; the container leg excludes `@loopback-client` (the Docker-published port rewrites the
+client address) and `@needs-data` (the container does not mount `corpus/data`). `@shell` rows need
+`sh` in the engine's environment. Fixtures `mbcompat/*`; lookup CSVs `corpus/data/mbcompat-*.csv`.
+
+| Engine contract | Plane A scenario |
+|---|---|
+| `keyCaseSensitive:true` → `?q=v` misses, `?Q=v` hits; default → `?q=v` hits | `keyCaseSensitive makes query names case-sensitive; by default they are not` |
+| `form` predicate on a form-encoded body | `a form predicate matches an application/x-www-form-urlencoded body` |
+| `requestFrom` / `ip` carry `127.0.0.1` | `the <field> request field carries the client address` (`@loopback-client`) |
+| `xpath` with an `ns` map; `jsonpath` without `$` | `an xpath selector resolves a namespace prefix through ns`, `a jsonpath selector without the leading $ is root-relative` |
+| `deepEquals` negative (extra query field); `exists:false`; `or`; nested `and`/`or`/`not` | `deepEquals refuses …`, `exists false matches only when the header is absent`, `or matches either branch; nested and/or/not compose` |
+| legacy `inject` predicate `function(request, logger)` | `the legacy inject predicate form function(request, logger) matches` |
+| `defaultResponse` on a miss → `404 nf` + `x-rift-default-response`; no default → `200` empty + `x-rift-no-match` | `a miss is served the defaultResponse …`, `without a defaultResponse a miss is 200, empty, and marked x-rift-no-match` |
+| `allowCORS` headers and the `OPTIONS` preflight | `allowCORS adds the allow headers and answers a preflight` |
+| `recordRequests:false` → empty `savedRequests` | `recordRequests false keeps the journal empty after traffic` |
+| `name`/`serviceName`/`serviceInfo` round-trip (replayable export; the detail view shows only `name`) | `name, serviceName and serviceInfo round-trip through the replayable export` |
+| flat `{statusCode:"204"}`; `is` beats flat fields; object body → `application/json` | `a flat response with a string statusCode …`, `an is wins over the flat fields …`, `an object body without a Content-Type …` |
+| rift#1085 number digits (`0.1`, `7e23`) | `a JSON body keeps its number digits` |
+| **gap** [achird-labs/rift#1241](https://github.com/achird-labs/rift/issues/1241): an object body's keys are served sorted (MB keeps declaration order) | `an object body is served with its keys sorted (rift#1241)` (`@gap`) |
+| `${request.body}`, `${request.pathParams.id}` | `${request.body} interpolates …`, `${request.pathParams.x} interpolates …` |
+| `[is A, inject B]` cycles A, B, A; the inject turn has `x-rift-inject: true` | `a mixed is/inject response cycle alternates, and the inject turn is marked` |
+| `copy` xpath; `copy` regex + `ignoreCase` → first capture group | `copy using xpath`, `copy using regex with ignoreCase yields the first capture group` |
+| `lookup` with `delimiter:";"` | `lookup honours a csv delimiter` (`@needs-data`) |
+| **gap** [achird-labs/rift#1240](https://github.com/achird-labs/rift/issues/1240): a lookup key `index` is ignored | `a lookup key index is ignored (rift#1240)` (`@needs-data @gap`) |
+| `shellTransform` sees `MB_REQUEST`; `exit 3` → original body + `x-rift-shelltransform-error` | `shellTransform receives the request in MB_REQUEST`, `a failing shellTransform …` (`@shell`) |
+| `decorate` sees a string `response.body` | `decorate receives a string response.body` |
+
+Out of scope (#203): the `tcp`/`smtp` protocols (feature 13's `bad protocol` row) and `recordMatches`
+(rift#1228). Observed, not filed: the replayable export spells the flag `allowCors` (Rift accepts both
+spellings on create).
 
 ## Phase 2 admin/topology/proxy/reload surface — COMPLETE ✅ (features 07–11 all green)
 
