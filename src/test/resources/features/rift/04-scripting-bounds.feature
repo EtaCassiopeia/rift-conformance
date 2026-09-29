@@ -175,3 +175,86 @@ Feature: Scripting engines and runaway bounds
     Then the response body is "EXPIRED"
     When the client sends "GET" "/exists"
     Then the response body is "false"
+
+  # ── the Script API ctx / result surface (rift docs/features/scripting.md, #195) ───────────────
+
+  # A map body is JSON-serialised with Content-Type: application/json; `.header()` chains, and every
+  # script response names its engine.
+  Scenario: http() with a map body serialises JSON and chains a header
+    Given a fresh imposter from fixture "scripting/ctx-surface"
+    When the client sends "GET" "/http-map"
+    Then the response status is 201
+    And the response body is "{\"a\":1}"
+    And the response header "content-type" is "application/json"
+    And the response header "X-S" is "v"
+    And the response header "x-rift-script" is "rhai"
+
+  Scenario: delay(ms) answers 200 with an x-rift-latency-ms header
+    Given a fresh imposter from fixture "scripting/ctx-surface"
+    When the client sends "GET" "/delay"
+    Then the response status is 200
+    And the response header "x-rift-latency-ms" is a number at least 50
+
+  Scenario: ctx.flowId is the flow resolved from flowIdSource
+    Given a fresh imposter from fixture "scripting/ctx-surface"
+    When the request header "X-Flow" is "flow-7"
+    And the client sends "GET" "/flow-id"
+    Then the response body is "flow-7"
+
+  Scenario: ctx.stub exposes the stub's id, scenario name and scenario state
+    Given a fresh imposter from fixture "scripting/ctx-surface"
+    When the client sends "GET" "/stub"
+    Then the response body is "ctx-stub|checkout|Started"
+
+  Scenario: ctx.store.flow(id) writes another flow's state
+    Given a fresh imposter from fixture "scripting/ctx-surface"
+    When the request header "X-Flow" is "me"
+    And the client sends "GET" "/cross-get"
+    Then the response body is "none"
+    When the client sends "GET" "/cross-set"
+    And the client sends "GET" "/cross-get"
+    Then the response body is "none"
+    When the request header "X-Flow" is "other"
+    And the client sends "GET" "/cross-get"
+    Then the response body is "99"
+
+  Scenario Outline: ctx.request.json parses a JSON body and is unit otherwise (<case>)
+    Given a fresh imposter from fixture "scripting/ctx-surface"
+    When the request body is "<body>"
+    And the client sends "POST" "/json"
+    Then the response body is "<result>"
+
+    Examples:
+      | case     | body      | result |
+      | JSON     | {\"a\":7} | 7      |
+      | not JSON | not json  | unit   |
+
+  Scenario: ctx.request.header(name) is case-insensitive
+    Given a fresh imposter from fixture "scripting/ctx-surface"
+    When the request header "X-Mixed" is "yes"
+    And the client sends "GET" "/header"
+    Then the response body is "yes"
+
+  Scenario: a javascript _rift.script respond(ctx) serves and names its engine
+    Given a fresh imposter from fixture "scripting/ctx-surface"
+    When the client sends "GET" "/js"
+    Then the response body is "js"
+    And the response header "x-rift-script" is "javascript"
+
+  # rift#1159 (fixed in 0.18.0): an engine-less script under `defaultEngine: javascript` used to be
+  # compiled as rhai. The JS-only syntax (arrow function, template literal) proves which engine ran,
+  # and the resolved engine is written back into the imposter.
+  Scenario: scriptEngine.defaultEngine javascript runs an engine-less script as JS and writes it back
+    Given a fresh imposter from fixture "scripting/default-engine-js"
+    When the client sends "GET" "/default-engine"
+    Then the response status is 200
+    And the response body is "js4"
+    And the response header "x-rift-script" is "javascript"
+    When the client sends admin "GET" "/imposters/{port}" with payload "-"
+    Then the response JSON at "stubs.0.responses.0._rift.script.engine" is "\"javascript\""
+
+  Scenario: the removed lua engine is refused naming its replacement
+    When the client posts the imposter fixture "scripting/engine-lua"
+    Then the response status is 400
+    And the error envelope message contains "Lua scripting engine was removed"
+    And the error envelope message contains "use engine \"rhai\" or \"javascript\""
