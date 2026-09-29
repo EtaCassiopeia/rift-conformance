@@ -49,7 +49,7 @@ object RiftConformanceSupport:
   def sendOversize(
       url: String,
       method: String,
-      headers: Map[String, String],
+      headers: Iterable[(String, String)],
       body: String,
       hostHeader: Option[String] = None
   ): LastResponse =
@@ -2507,13 +2507,164 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
   When(
     "the client sends " / string / " " / string / " through the front door with host " / string
   ) { (method: String, path: String, host: String) =>
+    sendThroughFrontDoor(method, path, host, Nil)
+  }
+
+  // ── front door (feature 16) ──────────────────────────────────────────────────────────────
+
+  /** Send over a raw socket (the only send that can set `Host`) to this scenario's front door.
+    * `headers` is ordered and may repeat a name — the headers clause compares the first value only.
+    */
+  private def sendThroughFrontDoor(
+      method: String,
+      path: String,
+      host: String,
+      headers: List[(String, String)]
+  ): IO[Throwable, Unit] =
     for
       port <- frontDoorPort
       url = s"http://localhost:$port$path"
-      _ <- recordCurl(s"curl -s -i -X $method -H 'Host: $host' '$url'")
+      hs = headers.map((k, v) => s"-H '$k: $v' ").mkString
+      _ <- recordCurl(s"curl -s -i -X $method -H 'Host: $host' $hs'$url'")
       resp <- ZIO.attemptBlocking(
-        RiftConformanceSupport.sendOversize(url, method, Map.empty, "", Some(host))
+        RiftConformanceSupport.sendOversize(url, method, headers, "", Some(host))
       )
+      _ <- Stage.put(resp)
+    yield ()
+
+  /** `"x-t: a; x-t: b"` → `List(x-t -> a, x-t -> b)`, order kept. */
+  private def parseHeaderList(spec: String): IO[Throwable, List[(String, String)]] =
+    ZIO.foreach(spec.split(";").toList.map(_.trim).filter(_.nonEmpty)) { h =>
+      h.split(":", 2) match
+        case Array(k, v) => ZIO.succeed(k.trim -> v.trim)
+        case _ => ZIO.fail(new IllegalArgumentException(s"header '$h' is not 'name: value'"))
+    }
+
+  Given("the engine is started with the front door and routes fixture " / string) {
+    (name: String) =>
+      // Flag the revert BEFORE the swap: a start that fails half-way must still be reverted.
+      Stage.put(ReloadActive(true)) *>
+        loadFixture(name)
+          .flatMap(json => ZIO.serviceWithZIO[RiftHarness](_.startReloadConfigWithFrontDoor(json)))
+          .flatMap(p => Stage.put(FrontDoorPort(p)))
+  }
+
+  When(
+    "the client sends " / string / " " / string / " through the front door with host " / string /
+      " and headers " / string
+  ) { (method: String, path: String, host: String, spec: String) =>
+    parseHeaderList(spec).flatMap(sendThroughFrontDoor(method, path, host, _))
+  }
+
+  Then("the front door answered " / string) { (outcome: String) =>
+    lastResponse.flatMap { r =>
+      val marker = r.headers.get("x-rift-front-door").toList.flatten
+      if outcome == "no-route" then
+        assertRepro(
+          r.status == 404 && marker == List("no-route"),
+          s"expected 404 + x-rift-front-door: no-route, got ${r.status} marker=$marker: ${r.body}"
+        )
+      else
+        assertRepro(
+          r.status == 200 && r.body == outcome && marker.isEmpty,
+          s"expected 200 '$outcome' from a routed imposter, got ${r.status} marker=$marker: ${r.body}"
+        )
+    }
+  }
+
+  /** The last entry of `GET /imposters/{port}`'s `requests` array. */
+  private def lastRecordedRequest(port: Int): ZIO[RiftHarness, Throwable, Chunk[(String, Json)]] =
+    for
+      admin <- ZIO.serviceWith[RiftHarness](_.adminUrl)
+      resp <- httpSend(s"$admin/imposters/$port", "GET", Map.empty, None)
+      json <- parseAdminJson(resp.body)
+      last = json match
+        case Json.Obj(fields) =>
+          fields
+            .collectFirst { case ("requests", Json.Arr(rs)) => rs.lastOption }
+            .flatten
+            .collect { case Json.Obj(r) => r }
+        case _ => None
+      req <- ZIO
+        .fromOption(last)
+        .orElseFail(new RuntimeException(s"imposter $port recorded no request: ${resp.body}"))
+    yield req
+
+  private def stringField(obj: Chunk[(String, Json)], name: String): Option[String] =
+    obj.collectFirst { case (`name`, Json.Str(v)) => v }
+
+  private def objField(obj: Chunk[(String, Json)], name: String): Chunk[(String, Json)] =
+    obj.collectFirst { case (`name`, Json.Obj(v)) => v }.getOrElse(Chunk.empty)
+
+  Then(
+    "imposter " / int / " last recorded path " / string / " with query " / string / " equal to " /
+      string
+  ) { (port: Int, path: String, key: String, value: String) =>
+    lastRecordedRequest(port).flatMap { req =>
+      val gotPath = stringField(req, "path")
+      val gotValue = stringField(objField(req, "query"), key)
+      assertRepro(
+        gotPath.contains(path) && gotValue.contains(value),
+        s"expected imposter $port to record path '$path' with query $key=$value, " +
+          s"got path=$gotPath query.$key=$gotValue"
+      )
+    }
+  }
+
+  Then("imposter " / int / " last recorded header " / string / " equal to " / string) {
+    (port: Int, header: String, value: String) =>
+      lastRecordedRequest(port).flatMap { req =>
+        val got = objField(req, "headers").collectFirst {
+          case (k, Json.Str(v)) if k.equalsIgnoreCase(header) => v
+        }
+        assertRepro(
+          got.contains(value),
+          s"expected imposter $port to record header $header: $value, got $got"
+        )
+      }
+  }
+
+  When("an engine is booted with the front door and routes fixture " / string) { (name: String) =>
+    loadFixture(name)
+      .flatMap(json => ZIO.serviceWithZIO[RiftHarness](_.bootFrontDoorEngine(json)))
+      .flatMap(Stage.put(_))
+  }
+
+  Then("the engine refused to boot with output naming " / string / " and " / string) {
+    (route: String, rule: String) =>
+      Stage
+        .get[EngineBoot]
+        .mapError(_ => new IllegalStateException("no engine boot attempted in this scenario"))
+        .flatMap { boot =>
+          assertRepro(
+            boot.exitCode.exists(_ != 0) && boot.output.contains(route) &&
+              boot.output.contains(rule),
+            s"expected the boot to fail naming [$route] and [$rule], got exit=${boot.exitCode}:\n" +
+              boot.output.linesIterator.toList.takeRight(5).mkString("\n")
+          )
+        }
+  }
+
+  When("the client sends " / string / " " / string / " to the admin port") {
+    (method: String, path: String) =>
+      for
+        admin <- ZIO.serviceWith[RiftHarness](_.adminUrl)
+        url = s"$admin$path"
+        _ <- recordCurl(s"curl -s -i -X $method '$url'")
+        resp <- httpSend(url, method, Map.empty, None)
+        _ <- Stage.put(resp)
+      yield ()
+  }
+
+  When(
+    "the client sends " / string / " " / string / " via the gateway to a port with no imposter"
+  ) { (method: String, path: String) =>
+    for
+      h <- ZIO.service[RiftHarness]
+      port <- h.freshImposterPort(ProbePortLo, ProbePortHi)
+      url = s"${h.adminUrl}/__rift/$port$path"
+      _ <- recordCurl(s"curl -s -i -X $method '$url'")
+      resp <- httpSend(url, method, Map.empty, None)
       _ <- Stage.put(resp)
     yield ()
   }

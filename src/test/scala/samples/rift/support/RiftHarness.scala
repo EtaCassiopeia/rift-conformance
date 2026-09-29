@@ -145,6 +145,15 @@ trait RiftHarness:
   def startReloadConfigWithFrontDoor(json: String): Task[Int] =
     ZIO.fail(new UnsupportedOperationException("the front door is external-mode only"))
 
+  /** Boot a throwaway engine with `--front-door` and `json` as its `--configfile`, on fresh ports,
+    * and wait for it to exit — for asserting that an invalid `routes` table fails the boot (feature
+    * 16). The shared engine is untouched. An engine still running after the readiness budget is
+    * killed and reported with `exitCode = None` (it booted). External mode only, like
+    * [[startReloadConfigWithFrontDoor]].
+    */
+  def bootFrontDoorEngine(json: String): Task[EngineBoot] =
+    ZIO.fail(new UnsupportedOperationException("the front door is external-mode only"))
+
   /** Overwrite the config file of the pending [[startReloadConfig]] engine, so a following `POST
     * /admin/reload` picks up the edit. Fails if no reload engine is pending. External mode only,
     * like [[startReloadConfigWithFrontDoor]].
@@ -156,6 +165,11 @@ trait RiftHarness:
     * otherwise, so it is safe to call unconditionally from a cleanup hook.
     */
   def revertEngine: Task[Unit]
+
+/** How a [[RiftHarness.bootFrontDoorEngine]] boot ended: the exit code (`None` = it was still
+  * running, i.e. it booted, and was killed) and everything it wrote to stdout/stderr.
+  */
+final case class EngineBoot(exitCode: Option[Int], output: String)
 
 final case class RiftHarnessConfig(
     mode: RiftMode,
@@ -302,6 +316,35 @@ private final class RiftHarnessLive(
       _ <- RiftHarness.awaitTcpReady("localhost", frontDoor, proc)
     yield frontDoor
 
+  override def bootFrontDoorEngine(json: String): Task[EngineBoot] =
+    ZIO.acquireReleaseWith(
+      ZIO.attemptBlocking {
+        val conf = Files.createTempFile("rift-boot-", ".json")
+        val log = Files.createTempFile("rift-boot-", ".log")
+        Files.write(conf, json.getBytes(StandardCharsets.UTF_8))
+        (conf, log)
+      }
+    )((conf, log) =>
+      ZIO.attemptBlocking { Files.deleteIfExists(conf); Files.deleteIfExists(log) }.ignore
+    ) { (conf, log) =>
+      for
+        port <- RiftHarness.freePort
+        metricsPort <- RiftHarness.freePort
+        frontDoor <- RiftHarness.freePort
+        exit <- ZIO.acquireReleaseWith(
+          RiftHarness
+            .rawSpawn(cfg, port, metricsPort, Some(conf), None, Some(frontDoor), None, Some(log))
+        )(proc => RiftHarness.killProcess(proc).orDie)(proc =>
+          ZIO.attemptBlockingInterrupt(
+            Option.when(proc.waitFor(RiftHarness.ReadinessBudgetMs, TimeUnit.MILLISECONDS))(
+              proc.exitValue()
+            )
+          )
+        )
+        output <- ZIO.attemptBlocking(new String(Files.readAllBytes(log), StandardCharsets.UTF_8))
+      yield EngineBoot(exit, output)
+    }
+
   override def rewriteReloadConfig(json: String): Task[Unit] =
     pendingConfigRef.get.flatMap {
       case Some(path) =>
@@ -365,7 +408,7 @@ private final class RiftHarnessLive(
     yield ()
 
 object RiftHarness:
-  private val ReadinessBudgetMs = 15000L
+  private[support] val ReadinessBudgetMs = 15000L
   private val ReadinessSpacingMs = 100L
   private val httpTimeout = JDuration.ofSeconds(2)
   private[support] val client = HttpClient.newHttpClient()
@@ -558,13 +601,18 @@ object RiftHarness:
       configFile: Option[Path],
       interceptPort: Option[Int],
       frontDoorPort: Option[Int] = None,
-      upstreamCaFile: Option[Path] = None
+      upstreamCaFile: Option[Path] = None,
+      logTo: Option[Path] = None
   ): Task[Process] =
     ZIO.attemptBlocking {
       val binary = cfg.buildDir.resolve("rift").toString
-      // --nologfile: don't drop an mb.log into the corpus repo (cwd); capture output to a temp file.
-      val logFile = Files.createTempFile(s"rift-engine-$port-", ".log").toFile
-      logFile.deleteOnExit()
+      // --nologfile: don't drop an mb.log into the corpus repo (cwd); capture output to a temp file
+      // (or to `logTo`, when the caller wants to read it back).
+      val logFile = logTo.map(_.toFile).getOrElse {
+        val f = Files.createTempFile(s"rift-engine-$port-", ".log").toFile
+        f.deleteOnExit()
+        f
+      }
       val baseArgs = List(
         binary,
         "--port",

@@ -325,6 +325,29 @@ socket so they can set `Host`, which the JDK `HttpClient` refuses. Excluded from
 
 Not covered: excluding `wait` from `addWaitBehavior`'s recorded latency. It is timing-sensitive, and the engine test covers it. The fault-repeat scenario sends `POST`, because the JDK client retries an idempotent `GET` once after a reset, which would consume two repeat slots per step. On rift 0.17.0, 11 of the 13 scenarios fail. The throwing-inject and no-`W017` scenarios pass there too, so they are regression guards.
 
+### `16-front-door.feature` ← rift docs/features/front-door.md + gateway.md (issue #187) — DONE
+
+How the front door routes a request, and the gateway's error and passthrough edges. Feature 11 covers only the reload of a routes table. Each `@front-door` scenario swaps in a `--configfile` engine started with `--front-door` (`startReloadConfigWithFrontDoor`, reverted in `afterScenario`). The tables are the wrappers under `rift-fixtures/front-door/`, with imposter 4872 answering `A` and 4873 answering `B`. Boot validation spawns a throwaway engine, waits for it to exit, and reads its output (`RiftHarness.bootFrontDoorEngine`). `@front-door` is external-only: it is excluded from `engineEmbedded` by tag, and the suite is in no container list. The four untagged gateway scenarios run on the shared engine. Enrolling them in the embedded leg is left to #206.
+
+| Engine contract | Plane A scenario |
+|---|---|
+| `*.pay.test` matches `api.pay.test` and `API.PAY.TEST:8080`, but not `pay.test` or `evilpay.test` (404 + `x-rift-front-door: no-route`) | `a wildcard host matches a real subdomain only, case-insensitively, ignoring :port` (Outline, 4 rows) |
+| `path_prefix` is segment-aligned: `/api/v1` and `/api/v1/users` match, `/api/v1x` does not | `path_prefix matches on segment boundaries` |
+| a `headers` clause: name case-insensitive, value byte-exact, first value only (`x-t: a` then `x-t: b` against `b` → no-route) | `a headers clause matches the name case-insensitively and the first value byte-exactly` |
+| `method` compared case-insensitively (`post` in the table matches `POST`) | `a method clause is compared case-insensitively` |
+| order: exact host beats a wildcard at equal priority; a higher `priority` beats specificity; otherwise the lowest `id` wins | `evaluation order is priority, then specificity, then lowest id` |
+| `enabled: false` never matches, even at a higher priority | `a disabled route is skipped even at a higher priority` |
+| `strip_prefix` records the stripped path and keeps the query | `strip_prefix removes the matched prefix and keeps the query string` |
+| `set_host` is the `Host` the imposter records | `set_host rewrites the Host the imposter records` |
+| a matched route whose port has no imposter → 404 without the marker | `a matched route whose imposter is missing is a 404 without the no-route marker` |
+| an unmatched `/__rift/{port}/…` falls back to the gateway | `an unmatched request falls back to the gateway's /__rift/{port} addressing` |
+| boot fails (non-zero exit, message names the route id and the rule) on a duplicate id, identical enabled matches, `strip_prefix` without `path_prefix`, a bad wildcard, a `path_prefix` without `/`, a bad method | `an invalid route table fails the boot, naming the route and the rule` (Outline, 6 rows) |
+| gateway: `/__rift/{port}` with no path → `/` | `/__rift/{port} with no trailing path dispatches to /` |
+| gateway: the query string reaches a `query` predicate | `the gateway passes the query string through to the imposter's predicates` |
+| gateway: non-numeric port → 400 `bad data`; unknown port → 404 `no such resource` | `a non-numeric gateway port is a 400 bad data` / `a gateway port with no imposter is a 404 no such resource` |
+
+Not covered: `RouteObserver`, which is only an SPI for Rust embedders. The rule that the gateway is not gated by `--api-key` belongs to the admin-auth issue, which spawns a keyed engine. The empty-`id` and single-imposter-document `routes` rejections are also not asserted, because the issue scoped the boot Outline to six rows.
+
 ## Phase 2 admin/topology/proxy/reload surface — COMPLETE ✅ (features 07–11 all green)
 
 ## Plane B — MockControl mock corpus (issue #13)
@@ -650,6 +673,7 @@ These are already tracked by open issues filed as the releases shipped:
   delivers both values, in order, to the imposter (read back from its recorded request). External,
   embedded and container.
 - reload re-applying front-door routes: #153
+- front-door request routing and gateway error edges: #187 — **covered** by `16-front-door` (external; gateway rows untagged)
 - behaviors on proxy/inject responses: #154
 - repeated copy behaviors: #155
 - the ordered behaviors program: #156
