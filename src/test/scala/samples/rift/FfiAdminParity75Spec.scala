@@ -21,8 +21,9 @@ import zio.test.*
   *     URLs); the C-ABI has no admin URL and omits them, so `_links` is stripped before comparing;
   *   - the HTTP list summary adds `stubCount`/`recordRequests` to the FFI's documented keys;
   *   - the default scenario flow is keyed by the imposter's own port, so twins differ in `flowId`;
-  *   - `GET /imposters/{port}?replayable=true` ignores `replayable` (rift#1219), so the FFI
-  *     replayable view is compared with the list route's entry and the single route is pinned.
+  *   - `GET /imposters/{port}?replayable=true` ignores `replayable` in the natives this leg runs
+  *     (rift 0.18.0; rift#1219, fixed in 0.18.1), so the FFI replayable view is compared with the
+  *     list route's entry and the single route is pinned.
   *
   * Self-gating: a no-op pass unless `RIFT_MODE=embedded` AND a `librift_ffi` resolves for this JVM
   * (JDK 22+), mirroring [[AllowInjectionGate82Spec]]. Cases run sequentially on the shared engine;
@@ -138,7 +139,9 @@ object FfiAdminParity75Spec extends ZIOSpecDefault:
           byPort(httpListReplay).get(port).contains(norm(ffiReplay)),
           stubIds(field(ffiReplay, "stubs")) == Chunk(Some("a"), Some("b")),
           !fieldNames(ffiReplay).contains("requests"),
-          // @gap rift#1219: flip to `== norm(ffiReplay)` once the single route honours replayable.
+          // @gap rift#1219: fixed in rift 0.18.1 (asserted on the external leg in feature 08), but
+          // the embedded natives (rift-java 0.3.2) still carry 0.18.0. Flip to
+          // `== norm(ffiReplay)` once rift-java ships natives carrying rift >= 0.18.1.
           fieldNames(httpSingleReplay).contains("requests")
         )
       }

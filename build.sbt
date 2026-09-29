@@ -13,9 +13,12 @@ val zioBddVersion = "1.5.1"
 //
 // ONE ENGINE VERSION: riftJavaVersion MUST equal the `rift-java-core` that zio-bdd-rift pulls in
 // (via rift-scala-zio 0.3.0) — the embedded engine and the core meet across the FFI boundary. The
-// rift-java 0.3.2 natives embed rift 0.18.0, the same release scripts/build-rift.sh fetches for
-// the binary legs (external + container Plane A, rift-external Plane B), so the embedded leg no
-// longer lags. Bump RIFT_VERSION, zioBddVersion and riftJavaVersion together.
+// rift-java 0.3.2 natives embed rift 0.18.0, while scripts/build-rift.sh fetches rift 0.18.1 for
+// the binary legs (external + container Plane A, rift-external Plane B). The split is patch-level
+// and ABI-unchanged (both releases' ffi-manifest.json declare `abi: v2` with identical symbols);
+// 0.18.1's fixes that need an 0.18.1 engine are tagged `@native-lag` and excluded from
+// engineEmbedded until rift-java ships natives carrying >= 0.18.1. Bump RIFT_VERSION, zioBddVersion
+// and riftJavaVersion together whenever the natives allow it.
 //
 // rift-java's `RiftFfi` binds the whole C-ABI (v2 admin symbols, `rift_verify`,
 // `rift_stub_warnings`, intercept list/clear/ca-pem), so the binding gap of #96 is gone; what the
@@ -130,6 +133,8 @@ addCommandAlias("engineConformance", "testOnly samples.rift.*")
 // this list is an allowlist — enrolling an unverified suite would make the embedded job red for a
 // reason that has nothing to do with the envelope contract it exists to pin.
 // 14-behaviors-response-types (#154) was verified green on the embedded leg before being enrolled.
+// `native-lag` marks scenarios asserting a fix newer than the embedded natives' rift (currently
+// rift#1219, fixed in 0.18.1 while the natives carry 0.18.0); drop the exclusion on the bump.
 // FfiAdminParity75Spec (#75), FfiStubWarnings92Spec (#92) and FfiVerifyParity94Spec (#94) diff
 // C-ABI calls against the admin HTTP API on one engine; they no-op outside RIFT_MODE=embedded, so
 // only this alias runs them.
@@ -140,7 +145,7 @@ addCommandAlias(
     "samples.rift.Templating05Suite samples.rift.Behaviors06Suite samples.rift.SpacesFsm07Suite " +
     "samples.rift.AdminSurface08Suite samples.rift.Reload11Suite samples.rift.Intercept12Suite " +
     "samples.rift.BehaviorsResponseTypes14Suite " +
-    "-- --exclude-tags intercept-http,intercept-caller-ca,intercept-runtime,front-door,upstream-trust" +
+    "-- --exclude-tags intercept-http,intercept-caller-ca,intercept-runtime,front-door,upstream-trust,native-lag" +
     " ; testOnly samples.rift.RiftEmbeddedHarnessSpec samples.rift.RiftToolsParseSpec" +
     " samples.rift.FfiAdminParity75Spec samples.rift.FfiStubWarnings92Spec" +
     " samples.rift.FfiVerifyParity94Spec"

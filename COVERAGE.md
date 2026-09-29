@@ -532,6 +532,24 @@ entry point is panic-guarded across the C ABI ([rift#484/#487](https://github.co
 fallback now clamps/caps like the Boa path ([rift#490/#504](https://github.com/achird-labs/rift/pull/504),
 `--no-default-features` only).
 
+## Pin bump 0.18.0 → 0.18.1 (2026-09-29) — closes #160
+
+A fixes-only release. Everything that moved is asserted rather than just re-run:
+
+| rift 0.18.1 fix | Coverage |
+|---|---|
+| rift#1217/#1218: `error-testing`, `latency-testing` and `task-management-api` move off 4545 to 4548/4549/4550 | Examples re-synced (PROVENANCE.md at v0.18.1). `ShippedExamples120Spec` lints `corpus/rift-examples/` in **one** directory run again (the per-file loop was the #1217 workaround), so the cross-file `E002` port check is exercised |
+| rift#1220 malformed `jsonpath`/`xpath` selector, rift#1221 invalid `matches` regex → `400 "bad data"` at every door | The two `@gap` pins in `13-error-envelope` flipped to a 7-row outline (see the never-2xx sweep below) |
+| rift#1219 `GET /imposters/{port}?replayable=true` honours `replayable`, exported from the live stubs | `08-admin-surface` "GET /imposters/{port}?replayable=true exports the live stubs …": a stub added after creation is exported; no `requests`/`numberOfRequests`/`_links`; the detail view is unchanged without the flag. Tagged `@native-lag` (see below) |
+
+**Engine-version split is back, patch-level.** The binary legs run 0.18.1; the embedded leg's
+rift-java 0.3.2 natives still carry 0.18.0. Both releases' `ffi-manifest.json` declare `abi: v2`
+with the same symbol list, so nothing in the binding moved. The one 0.18.1 fix visible through the
+embedded leg (#1219) stays pinned there: `engineEmbedded` excludes `@native-lag`, and
+`FfiAdminParity75Spec` keeps its `@gap rift#1219`. Flipping both is tracked by
+[#182](https://github.com/EtaCassiopeia/rift-conformance/issues/182), blocked on a rift-java natives
+release carrying ≥ 0.18.1.
+
 ## Pin bump 0.15.0 → 0.18.0 + zio-bdd 1.4.4 → 1.5.0 (2026-09-28) — closes #146, #145, #140
 
 The pin moved three releases (0.16.0, 0.17.0, 0.18.0). The first run against 0.18.0 was red: 7 Plane A
@@ -631,10 +649,10 @@ flow-state key → `404`. The step (`the client sends admin … with payload …
 `rift-fixtures/admin-doors/`. `PUT /imposters` is left to `08-admin-surface` (it swaps the whole
 set, so a regression there would wipe other scenarios' imposters).
 
-| Door still answering 2xx for a failure | rift | Coverage status |
+| Door that answered 2xx for a failure (up to 0.18.0) | rift | Coverage status |
 |---|---|---|
-| A **malformed `jsonpath`/`xpath` selector** is accepted (`201`), and the failed extraction is compared as `""`, so an `equals body ""` stub matches every request — a rift#181 regression | [#1220](https://github.com/achird-labs/rift/issues/1220) | **`@gap`** — pinned in `13-error-envelope` (201 + `MATCHED` for any body); flips to a row of the outline (`400 "bad data"`) on fix |
-| An **invalid `matches` regex** is accepted (`201`); the stub silently never matches | [#1221](https://github.com/achird-labs/rift/issues/1221) | **`@gap`** — pinned in `13-error-envelope` (201 + the empty default response); flips to `400` on fix |
+| A **malformed `jsonpath`/`xpath` selector** was accepted (`201`), and the failed extraction compared as `""`, so an `equals body ""` stub matched every request — a rift#181 regression | [#1220](https://github.com/achird-labs/rift/issues/1220) | **fixed & verified in 0.18.1** — `13-error-envelope` outline "a malformed … is refused": `400 "bad data"`, message names the selector, on create (`jsonpath`, `xpath`, a `jsonpath` nested under `not`) and on `PUT …/stubs` (`xpath`) |
+| An **invalid `matches` regex** was accepted (`201`); the stub silently never matched | [#1221](https://github.com/achird-labs/rift/issues/1221) | **fixed & verified in 0.18.1** — same outline: `400 "bad data"`, message names the regex, on create (top-level and nested under `and`) and on `POST …/stubs` (a keyed `query.q` value) |
 
 ### Flow-store backend parity, in-memory vs Redis (#174, umbrella #115)
 

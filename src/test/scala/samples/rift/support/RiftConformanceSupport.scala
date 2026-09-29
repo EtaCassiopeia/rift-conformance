@@ -1699,6 +1699,50 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
     )
   }
 
+  // Admin views (rift#1219): the replayable export vs the detail view differ by which top-level
+  // fields they carry, so these assert on the parsed object, not on body substrings (a stub's own
+  // body could contain "requests").
+  private def lastResponseObject: ZIO[Any, Throwable, Chunk[(String, Json)]] =
+    lastResponse.flatMap(r =>
+      parseAdminJson(r.body).flatMap {
+        case Json.Obj(fields) => ZIO.succeed(fields)
+        case _ => ZIO.fail(new RuntimeException(s"response is not a JSON object: ${r.body}"))
+      }
+    )
+
+  Then("the response JSON has top-level field " / string) { (field: String) =>
+    lastResponseObject.flatMap(fields =>
+      assertRepro(
+        fields.exists(_._1 == field),
+        s"expected top-level field '$field', got ${fields.map(_._1).mkString(", ")}"
+      )
+    )
+  }
+
+  Then("the response JSON has no top-level field " / string) { (field: String) =>
+    lastResponseObject.flatMap(fields =>
+      assertRepro(
+        !fields.exists(_._1 == field),
+        s"expected no top-level field '$field', got ${fields.map(_._1).mkString(", ")}"
+      )
+    )
+  }
+
+  Then("the response JSON has " / int / " stubs and none carries " / string) {
+    (n: Int, field: String) =>
+      lastResponseObject.flatMap { fields =>
+        val stubs = fields.collectFirst { case ("stubs", Json.Arr(elems)) => elems }
+        val carrying = stubs.toList.flatten.count {
+          case Json.Obj(sf) => sf.exists(_._1 == field)
+          case _ => false
+        }
+        assertRepro(
+          stubs.exists(_.length == n) && carrying == 0,
+          s"expected $n stubs with no '$field', got ${stubs.map(_.length)} stubs, $carrying carrying it"
+        )
+      }
+  }
+
   Then("the response header " / string / " is " / string) { (h: String, v: String) =>
     lastResponse.flatMap { r =>
       val got = r.headers.get(h.toLowerCase).map(_.mkString(","))
