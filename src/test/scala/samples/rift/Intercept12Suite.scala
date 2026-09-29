@@ -66,7 +66,7 @@ object Intercept12Suite
           // block the sidecar reap that follows.
           deleteRules(h.adminUrl)
             .tapError(e => ZIO.logWarning(s"intercept rules cleanup failed: ${e.getMessage}"))
-            .ignore *> h.stopRuntimeInterceptEngine
+            .ignore *> h.stopRuntimeInterceptEngine.ensuring(h.stopInterceptAuthEngine.ignoreLogged)
         )
         .tapError(e => ZIO.logWarning(s"intercept sidecar cleanup failed: ${e.getMessage}"))
         .ignore
@@ -105,32 +105,136 @@ object Intercept12Suite
   private def jsonEscape(s: String): String =
     s.replace("\\", "\\\\").replace("\"", "\\\"")
 
+  /** `method path` against the admin API at `admin`, with an optional JSON body. */
+  private def adminSend(
+      admin: String,
+      method: String,
+      path: String,
+      body: Option[String] = None
+  ): IO[Throwable, LastResponse] =
+    ZIO.attemptBlocking {
+      val publisher =
+        body.map(HttpRequest.BodyPublishers.ofString).getOrElse(HttpRequest.BodyPublishers.noBody)
+      val req = HttpRequest
+        .newBuilder(URI.create(s"$admin$path"))
+        .header("Content-Type", "application/json")
+        .method(method, publisher)
+        .build()
+      val r = http.send(req, HttpResponse.BodyHandlers.ofString())
+      val hs = r.headers.map.asScala.map((k, v) => k.toLowerCase -> v.asScala.toList).toMap
+      LastResponse(r.statusCode, r.body, hs)
+    }
+
   /** Send `method path` to the @intercept-runtime sidecar engine's admin API (the one started with
-    * NO `--intercept-port`) and capture it as the scenario's last response, so the shared `the
-    * response status is N` / `the response body contains X` steps assert on it. POST carries an
-    * empty JSON object body — rift's `POST /intercept` takes optional options and defaults them.
+    * NO `--intercept-port`), so the shared `the response status is N` / `the response body contains
+    * X` steps can assert on it. POST defaults to an empty JSON object body — rift's `POST
+    * /intercept` takes optional options and defaults them.
     */
   private def runtimeInterceptSend(
       method: String,
-      path: String
+      path: String,
+      body: String = "{}"
   ): ZIO[RiftHarness, Throwable, LastResponse] =
+    ZIO
+      .serviceWithZIO[RiftHarness](_.runtimeInterceptAdminUrl)
+      .flatMap(adminSend(_, method, path, Option.when(method == "POST")(body)))
+
+  /** The listener a `POST /intercept` started: its port, and the CA PEM the 201 handed back, if any
+    * (`returnCaKey`).
+    */
+  private final case class RuntimeListener(port: Int, returnedCa: Option[String])
+
+  /** `POST /intercept` with `body` on the runtime engine; the response becomes the last response,
+    * and a 201's listener port (and returned CA) is kept for the tunnel steps.
+    */
+  private def startRuntimeListener(body: String): ZIO[RiftHarness, Throwable, Unit] =
     for
-      admin <- ZIO.serviceWithZIO[RiftHarness](_.runtimeInterceptAdminUrl)
-      resp <- ZIO.attemptBlocking {
-        val builder = HttpRequest.newBuilder(URI.create(s"$admin$path"))
-        val req = method match
-          case "POST" =>
-            builder
-              .header("Content-Type", "application/json")
-              .POST(HttpRequest.BodyPublishers.ofString("{}"))
-              .build()
-          case "DELETE" => builder.DELETE().build()
-          case _ => builder.GET().build()
-        val r = http.send(req, HttpResponse.BodyHandlers.ofString())
-        val hs = r.headers.map.asScala.map((k, v) => k.toLowerCase -> v.asScala.toList).toMap
-        LastResponse(r.statusCode, r.body, hs)
+      r <- runtimeInterceptSend("POST", "/intercept", body)
+      _ <- Stage.put(r)
+      _ <- ZIO.when(r.status == 201) {
+        for
+          json <- ZIO
+            .fromEither(r.body.fromJson[Json])
+            .mapError(e => new RuntimeException(s"POST /intercept 201 is not JSON ($e): ${r.body}"))
+          port <- ZIO
+            .fromOption(json.get(JsonCursor.field("interceptPort")).toOption.collect {
+              case Json.Num(n) => n.intValue
+            })
+            .orElseFail(
+              new RuntimeException(s"POST /intercept 201 has no interceptPort: ${r.body}")
+            )
+          ca = json.get(JsonCursor.field("caCertPem")).toOption.collect { case Json.Str(s) => s }
+          _ <- Stage.put(RuntimeListener(port, ca))
+        yield ()
       }
-    yield resp
+    yield ()
+
+  /** A tunnel through the runtime listener trusting `caPem`, then `GET path` on it. */
+  private def runtimeListenerExchange(
+      host: String,
+      path: String,
+      caPem: String
+  ): IO[Throwable, Unit] =
+    for
+      listener <- Stage
+        .get[RuntimeListener]
+        .mapError(e => new IllegalStateException(s"no runtime listener was started ($e)"))
+      ssl <- ZIO.attemptBlocking(RawHttpConnection.sslTrustingPem(caPem))
+      conn <- ZIO.attemptBlocking(RawHttpConnection.tunnel("127.0.0.1", listener.port, host, ssl))
+      _ <- openTunnels.update(conn :: _)
+      _ <- rawRead(conn, RawHttpConnection.request("GET", host, path), host)
+    yield ()
+
+  private def runtimeRulesPost(body: String): ZIO[RiftHarness, Throwable, Unit] =
+    runtimeInterceptSend("POST", "/intercept/rules", body).flatMap(Stage.put(_))
+
+  /** A serve rule for any path on `host` answering 200 with `body`. */
+  private def serveRule(host: String, body: String): Json =
+    Json.Obj(
+      "host" -> Json.Str(host),
+      "action" -> Json.Obj(
+        "serve" -> Json.Obj("statusCode" -> Json.Num(200), "body" -> Json.Str(body))
+      )
+    )
+
+  private def fixture(path: String): String =
+    val is = getClass.getResourceAsStream(path)
+    if is == null then throw new IllegalStateException(s"missing test resource $path")
+    try new String(is.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8)
+    finally is.close()
+
+  /** The committed test intercept CA (#55). */
+  private lazy val TestCaCert = fixture("/rift-fixtures/intercept/ca-cert.pem")
+  private lazy val TestCaKey = fixture("/rift-fixtures/intercept/ca-key.pem")
+
+  // ── @intercept-auth ──
+
+  /** The scenario's `--intercept-auth` engine. */
+  private final case class AuthEngine(adminUrl: String, interceptPort: Int)
+
+  private def authEngine: IO[Throwable, AuthEngine] =
+    Stage
+      .get[AuthEngine]
+      .mapError(e => new IllegalStateException(s"no intercept-auth engine was started ($e)"))
+
+  private def proxyAuthorization(credentials: String): (String, String) =
+    "Proxy-Authorization" ->
+      s"Basic ${java.util.Base64.getEncoder.encodeToString(credentials.getBytes("UTF-8"))}"
+
+  /** A bare `CONNECT host:443` on a plaintext connection to the auth listener; the answer becomes
+    * the last response, and the connection is kept to observe the close.
+    */
+  private def connectToAuthListener(
+      host: String,
+      headers: List[(String, String)]
+  ): IO[Throwable, Unit] =
+    for
+      engine <- authEngine
+      conn <- ZIO.attemptBlocking(RawHttpConnection.plain("localhost", engine.interceptPort))
+      _ <- openTunnels.update(conn :: _)
+      _ <- Stage.put(ListenerConnection(conn))
+      _ <- rawRead(conn, RawHttpConnection.connectRequest(host, headers), host)
+    yield ()
 
   /** Build an SSLContext that trusts the intercept CA from the exported PKCS#12 truststore bytes —
     * exactly what a real SUT would do to trust the MITM leaf certs. The bytes come from the harness
@@ -217,14 +321,20 @@ object Intercept12Suite
     * close before any answer fails the step — the raw steps that allow a close say so themselves.
     */
   private def rawExchange(host: String, request: Array[Byte]): ZIO[RiftHarness, Throwable, Unit] =
-    for
-      conn <- tunnelTo(host)
-      read <- ZIO.attemptBlocking(conn.exchange(request))
-      _ <- read match
-        case RawRead.Response(r) => Stage.put(r.toLastResponse) *> Stage.put(r)
-        case RawRead.Closed =>
-          ZIO.fail(new RuntimeException(s"the intercept tunnel to $host closed without answering"))
-    yield ()
+    tunnelTo(host).flatMap(rawRead(_, request, host))
+
+  private def rawRead(
+      conn: RawHttpConnection,
+      request: Array[Byte],
+      host: String
+  ): IO[Throwable, Unit] =
+    ZIO.attemptBlocking(conn.exchange(request)).flatMap {
+      case RawRead.Response(r) => Stage.put(r.toLastResponse) *> Stage.put(r)
+      case RawRead.Closed =>
+        ZIO.fail(
+          new RuntimeException(s"the intercept connection for $host closed without answering")
+        )
+    }
 
   private def lastRawResponse: IO[Throwable, RawResponse] =
     Stage
@@ -619,7 +729,7 @@ object Intercept12Suite
   //    so its `/intercept` admin routes begin in the "not running" state.
 
   Given("a rift server started without an intercept listener") {
-    ZIO.serviceWithZIO[RiftHarness](_.startRuntimeInterceptEngine).unit
+    ZIO.serviceWithZIO[RiftHarness](_.startRuntimeInterceptEngine()).unit
   }
 
   When("the intercept listener is queried over the admin API") {
@@ -632,4 +742,180 @@ object Intercept12Suite
 
   When("the intercept listener is stopped over the admin API") {
     runtimeInterceptSend("DELETE", "/intercept").flatMap(Stage.put(_))
+  }
+
+  // ── #190: POST /intercept start options + rule-store limits (the @intercept-runtime engine) ──
+
+  Given("a rift server started without an intercept listener or --allow-injection") {
+    ZIO.serviceWithZIO[RiftHarness](_.startRuntimeInterceptEngine(allowInjection = false)).unit
+  }
+
+  When(
+    "the intercept listener is started over the admin API seeding a serve rule " / string / " for host " / string
+  ) { (body: String, host: String) =>
+    startRuntimeListener(
+      Json.Obj("rules" -> Json.Arr(serveRule(host, body))).toJson
+    )
+  }
+
+  When("the intercept listener is started over the admin API with returnCaKey") {
+    startRuntimeListener("""{"returnCaKey":true}""")
+  }
+
+  When("the intercept listener is started over the admin API with the test CA as inline PEM") {
+    startRuntimeListener(
+      Json.Obj("caCertPem" -> Json.Str(TestCaCert), "caKeyPem" -> Json.Str(TestCaKey)).toJson
+    )
+  }
+
+  When("the intercept listener is started over the admin API with the " / string / " options") {
+    (options: String) =>
+      val body = options match
+        case "returnCaKey with a supplied CA" =>
+          Json
+            .Obj(
+              "returnCaKey" -> Json.Bool(true),
+              "caCertPem" -> Json.Str(TestCaCert),
+              "caKeyPem" -> Json.Str(TestCaKey)
+            )
+            .toJson
+        case "half PEM pair" => Json.Obj("caCertPem" -> Json.Str(TestCaCert)).toJson
+        case "DNS host" => """{"host":"localhost"}"""
+        case "unknown field" => """{"bogus":1}"""
+        case other => throw new IllegalArgumentException(s"unknown start-options case '$other'")
+      startRuntimeListener(body)
+  }
+
+  Then("the runtime intercept rules count is " / int) { (n: Int) =>
+    ZIO
+      .serviceWithZIO[RiftHarness](_.runtimeInterceptAdminUrl)
+      .flatMap(rulesCount)
+      .flatMap(c => assertRepro(c == n, s"expected $n runtime intercept rule(s), got $c"))
+  }
+
+  Then("the runtime intercept CA PEM is the test CA") {
+    for
+      admin <- ZIO.serviceWithZIO[RiftHarness](_.runtimeInterceptAdminUrl)
+      r <- adminSend(admin, "GET", "/intercept/ca.pem")
+      _ <- assertRepro(
+        r.status == 200 && r.body.trim == TestCaCert.trim,
+        s"GET /intercept/ca.pem (${r.status}) should equal the inline test CA, got '${r.body.take(80)}'"
+      )
+    yield ()
+  }
+
+  When("a raw HTTPS GET to " / string / " " / string / " through the runtime intercept listener") {
+    (host: String, path: String) =>
+      for
+        admin <- ZIO.serviceWithZIO[RiftHarness](_.runtimeInterceptAdminUrl)
+        ca <- adminSend(admin, "GET", "/intercept/ca.pem")
+        _ <- runtimeListenerExchange(host, path, ca.body)
+      yield ()
+  }
+
+  When(
+    "a raw HTTPS GET to " / string / " " / string / " through the runtime intercept listener trusting the returned CA"
+  ) { (host: String, path: String) =>
+    Stage
+      .get[RuntimeListener]
+      .mapError(e => new IllegalStateException(s"no runtime listener was started ($e)"))
+      .flatMap(l =>
+        ZIO
+          .fromOption(l.returnedCa)
+          .orElseFail(new IllegalStateException("the start response carried no caCertPem"))
+      )
+      .flatMap(runtimeListenerExchange(host, path, _))
+  }
+
+  When(
+    "a clean serve rule and a rule with an inject predicate nested under not are posted as one runtime intercept batch"
+  ) {
+    val poisoned = Json.Obj(
+      "host" -> Json.Str("poisoned.test"),
+      "predicates" -> Json.Arr(
+        Json.Obj("not" -> Json.Obj("inject" -> Json.Str("function (r) { return true; }")))
+      ),
+      "action" -> Json.Obj("serve" -> Json.Obj("statusCode" -> Json.Num(200)))
+    )
+    runtimeRulesPost(Json.Arr(serveRule("clean.test", "clean"), poisoned).toJson)
+  }
+
+  When("a batch of " / int / " serve rules is posted to the runtime intercept rules") { (n: Int) =>
+    runtimeRulesPost(Json.Arr(Chunk.tabulate(n)(i => serveRule(s"cap-$i.test", "x"))).toJson)
+  }
+
+  // ── @intercept-auth: the --intercept-auth listener (rift#878) ──
+
+  Given("a rift server whose intercept listener requires proxy auth") {
+    ZIO.serviceWithZIO[RiftHarness](_.startInterceptAuthEngine).flatMap { (admin, port) =>
+      Stage.put(AuthEngine(admin, port))
+    }
+  }
+
+  Given(
+    "an intercept rule on the authenticated engine serves " / string / " for host " / string
+  ) { (body: String, host: String) =>
+    for
+      engine <- authEngine
+      r <- adminSend(
+        engine.adminUrl,
+        "POST",
+        "/intercept/rules",
+        Some(serveRule(host, body).toJson)
+      )
+      _ <- assertRepro(r.status == 201, s"POST /intercept/rules -> ${r.status}: ${r.body}")
+    yield ()
+  }
+
+  When(
+    "a CONNECT to " / string / " is sent to the authenticated intercept listener without credentials"
+  )((host: String) => connectToAuthListener(host, Nil))
+
+  When(
+    "a CONNECT to " / string / " is sent to the authenticated intercept listener with credentials " / string
+  ) { (host: String, credentials: String) =>
+    connectToAuthListener(host, List(proxyAuthorization(credentials)))
+  }
+
+  Then("the response carries a Basic proxy-authenticate challenge") {
+    lastRawResponse.flatMap { r =>
+      val challenge = r.headers.collect { case ("proxy-authenticate", v) => v }
+      assertRepro(
+        challenge.exists(_.startsWith("Basic")),
+        s"expected a `Proxy-Authenticate: Basic …` challenge, got $challenge"
+      )
+    }
+  }
+
+  Then("the authenticated intercept listener then closes the connection") {
+    for
+      listener <- Stage
+        .get[ListenerConnection]
+        .mapError(e => new IllegalStateException(s"no listener connection was opened ($e)"))
+      read <- ZIO.attemptBlocking(listener.conn.readNext())
+      _ <- assertRepro(
+        read == RawRead.Closed,
+        s"expected the listener to close after the 407, but it sent another response: $read"
+      )
+    yield ()
+  }
+
+  When(
+    "a raw HTTPS GET to " / string / " " / string / " through the authenticated intercept listener with credentials " / string
+  ) { (host: String, path: String, credentials: String) =>
+    for
+      engine <- authEngine
+      ssl <- ZIO.attemptBlocking(RawHttpConnection.sslTrustingPem(TestCaCert))
+      conn <- ZIO.attemptBlocking(
+        RawHttpConnection.tunnel(
+          "localhost",
+          engine.interceptPort,
+          host,
+          ssl,
+          List(proxyAuthorization(credentials))
+        )
+      )
+      _ <- openTunnels.update(conn :: _)
+      _ <- rawRead(conn, RawHttpConnection.request("GET", host, path), host)
+    yield ()
   }

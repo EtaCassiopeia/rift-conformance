@@ -69,6 +69,100 @@ Feature: Intercept / TLS-MITM forward-proxy (rift#413) — CONNECT interception 
     When the intercept listener is stopped over the admin API
     Then the response status is 204
 
+  # #190: the `POST /intercept` start options (rift#594/#655) and the rule-store limits
+  # (rift#567/#579/#657/#659), on the same dedicated no-intercept engine.
+  @intercept-runtime
+  Scenario: POST /intercept with rules seeds the listener it starts (rift#655)
+    Given a rift server started without an intercept listener
+    When the intercept listener is started over the admin API seeding a serve rule "seeded" for host "seed.test"
+    Then the response status is 201
+    And the runtime intercept rules count is 1
+    When a raw HTTPS GET to "seed.test" "/" through the runtime intercept listener
+    Then the response status is 200
+    And the response body is "seeded"
+
+  @intercept-runtime
+  Scenario: returnCaKey hands back the generated CA key once; GET /intercept never does (rift#594)
+    Given a rift server started without an intercept listener
+    When the intercept listener is started over the admin API with returnCaKey
+    Then the response status is 201
+    And the response JSON has top-level field "caCertPem"
+    And the response JSON has top-level field "caKeyPem"
+    When the intercept listener is queried over the admin API
+    Then the response status is 200
+    And the response JSON has no top-level field "caCertPem"
+    And the response JSON has no top-level field "caKeyPem"
+    When a raw HTTPS GET to "returned-ca.test" "/" through the runtime intercept listener trusting the returned CA
+    Then the response status is 200
+
+  @intercept-runtime
+  Scenario: POST /intercept with an inline PEM CA serves that CA (rift#594)
+    Given a rift server started without an intercept listener
+    When the intercept listener is started over the admin API with the test CA as inline PEM
+    Then the response status is 201
+    And the runtime intercept CA PEM is the test CA
+
+  @intercept-runtime
+  Scenario Outline: POST /intercept refuses <options> 400 and starts nothing
+    Given a rift server started without an intercept listener
+    When the intercept listener is started over the admin API with the "<options>" options
+    Then the response status is 400
+    And the response body contains "bad data"
+    And the response body contains "<message>"
+    When the intercept listener is queried over the admin API
+    Then the response status is 404
+
+    Examples:
+      | options                        | message                                   |
+      | returnCaKey with a supplied CA | returnCaKey requires the CA to be generated |
+      | half PEM pair                  | must be provided together                 |
+      | DNS host                       | is not an IP literal                      |
+      | unknown field                  | unknown field `bogus`                     |
+
+  @intercept-runtime
+  Scenario: a rule batch with one inject rule installs none, gate off (rift#657/#659)
+    Given a rift server started without an intercept listener or --allow-injection
+    When the intercept listener is started over the admin API
+    Then the response status is 201
+    When a clean serve rule and a rule with an inject predicate nested under not are posted as one runtime intercept batch
+    Then the response status is 400
+    And the response body contains "invalid injection"
+    And the runtime intercept rules count is 0
+
+  @intercept-runtime
+  Scenario: a rule batch over the 10,000 cap is refused 429 in full (rift#567/#579)
+    Given a rift server started without an intercept listener
+    When the intercept listener is started over the admin API
+    Then the response status is 201
+    When a batch of 10001 serve rules is posted to the runtime intercept rules
+    Then the response status is 429
+    And the runtime intercept rules count is 0
+
+  # @intercept-auth: rift#878's proxy auth. The listener needs `--intercept-auth`, so this drives a
+  # dedicated engine the external harness spawns with `--intercept-auth u:p` (external-only, excluded
+  # from the embedded and container aliases). The 407 comes before any TLS, so no leaf is minted.
+  @intercept-auth
+  Scenario: a CONNECT without Proxy-Authorization is refused 407 with a Basic challenge (rift#878)
+    Given a rift server whose intercept listener requires proxy auth
+    When a CONNECT to "auth.test" is sent to the authenticated intercept listener without credentials
+    Then the response status is 407
+    And the response carries a Basic proxy-authenticate challenge
+    And the authenticated intercept listener then closes the connection
+
+  @intercept-auth
+  Scenario: a CONNECT with the wrong credentials is refused 407 (rift#878)
+    Given a rift server whose intercept listener requires proxy auth
+    When a CONNECT to "auth.test" is sent to the authenticated intercept listener with credentials "u:wrong"
+    Then the response status is 407
+
+  @intercept-auth
+  Scenario: a CONNECT with the right credentials is tunnelled and served by a rule (rift#878)
+    Given a rift server whose intercept listener requires proxy auth
+    And an intercept rule on the authenticated engine serves "authed" for host "auth.test"
+    When a raw HTTPS GET to "auth.test" "/" through the authenticated intercept listener with credentials "u:p"
+    Then the response status is 200
+    And the response body is "authed"
+
   # @intercept-raw: request framing and connection handling inside the CONNECT tunnel (rift 0.18.0 —
   # rift#991 moved the tunnel onto hyper). A JDK HttpClient hides both, so these scenarios drive a
   # raw client: `CONNECT host:443`, TLS over the tunnel trusting the intercept CA, then hand-framed
@@ -100,8 +194,7 @@ Feature: Intercept / TLS-MITM forward-proxy (rift#413) — CONNECT interception 
     And the response body is "chunked-matched"
 
   # rift 0.18.0 (rift#993) keeps a successful tunnel alive for more requests; the pre-TLS refusals
-  # still close. (A 407 needs an engine started with --intercept-auth, which the shared harness is
-  # not, so it is not covered here.)
+  # still close. (The 407 refusal is covered under @intercept-auth, on its own engine.)
   @intercept-raw
   Scenario: two requests on one CONNECT tunnel are both answered on the same connection (rift#993)
     Given an intercept rule serves 200 "first" for host "keepalive.example.com" path "/first"
