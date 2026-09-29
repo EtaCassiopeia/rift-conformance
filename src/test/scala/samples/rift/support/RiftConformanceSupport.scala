@@ -36,6 +36,22 @@ object RiftConformanceSupport:
     */
   val OversizeBodyBytes: Int = 1024 * 1024
 
+  /** The value at a dotted path; a numeric segment indexes an array (`stubs.0.responses`). */
+  def jsonAt(json: Json, path: String): Option[Json] =
+    path.split('.').foldLeft(Option(json)) { (cur, seg) =>
+      cur.flatMap {
+        case Json.Obj(fields) => fields.collectFirst { case (`seg`, v) => v }
+        case Json.Arr(elems) => seg.toIntOption.flatMap(elems.lift)
+        case _ => None
+      }
+    }
+
+  /** Object keys sorted recursively, so two documents compare equal regardless of key order. */
+  def canonical(json: Json): Json = json match
+    case Json.Obj(fields) => Json.Obj(fields.map((k, v) => k -> canonical(v)).sortBy(_._1))
+    case Json.Arr(elems) => Json.Arr(elems.map(canonical))
+    case other => other
+
   /** Whole-send budget. Mirrors the 10s request timeout on the `HttpClient` path: a wedged engine
     * must fail this scenario crisply rather than hang the CI run, and a thread blocked in a socket
     * write does not answer `Thread.interrupt`, so nothing else would bound it.
@@ -280,6 +296,11 @@ final case class UpstreamPort(port: Int)
 /** The front-door port of this scenario's `--front-door` reload engine (feature 11, rift#1160). */
 final case class FrontDoorPort(port: Int)
 
+/** A scenario-local engine spawned with extra CLI flags (feature 19 `@rift-debug-env`: `--debug`).
+  * While staged, the flow-state admin helpers target its admin API instead of the harness engine.
+  */
+final case class ScenarioEngine(proc: Process, adminUrl: String)
+
 /** Shared Plane A step backbone. Mix into a `ZIOSteps[RiftHarness, S]` suite. Steps talk **directly
   * to the admin API and the imposter ports** — `MockControl` appears nowhere, which is what keeps
   * Plane A an independent oracle (a red here is an engine/tool finding, never a library bug).
@@ -375,6 +396,18 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
       .serviceWithZIO[RiftHarness](_.stopTlsFlagEngine)
       .tapError(e => ZIO.logWarning(s"TLS-flag engine teardown failed: ${e.getMessage}"))
       .ignore
+  }
+
+  // Reap this scenario's flag-spawned engine (feature 19 `@rift-debug-env`) if one was started.
+  afterScenario {
+    Stage.get[ScenarioEngine].option.flatMap {
+      case Some(e) =>
+        RiftHarness
+          .killProcess(e.proc)
+          .tapError(err => ZIO.logWarning(s"spawned engine teardown failed: ${err.getMessage}"))
+          .ignore
+      case None => ZIO.unit
+    }
   }
 
   // ── Stage accessors ─────────────────────────────────────────────────────────────────────
@@ -1449,6 +1482,11 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
       .getOrElse(0)
     VerifyResult(intOf("matched"), intOf("total"), closestPath, failedCount)
 
+  /** The admin API owning the current imposter: a staged [[ScenarioEngine]]'s, else the harness's.
+    */
+  private def flowAdminUrl: URIO[RiftHarness, String] =
+    Stage.get[ScenarioEngine].map(_.adminUrl).orElse(ZIO.serviceWith[RiftHarness](_.adminUrl))
+
   /** `PUT .../admin/imposters/{port}/flow-state/{flowId}/{key}` body `{"value":"..."}` — note the
     * `/admin/` prefix, distinct from every other admin-surface path in this trait.
     */
@@ -1459,10 +1497,10 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
   ): ZIO[RiftHarness, Throwable, Unit] =
     for
       port <- currentPort
-      admin <- ZIO.serviceWith[RiftHarness](_.adminUrl)
+      admin <- flowAdminUrl
       body = s"""{"value":"${jsonEscape(value)}"}"""
       resp <- httpSend(
-        s"$admin/admin/imposters/$port/flow-state/$flowId/$key",
+        s"$admin/admin/imposters/$port/flow-state/${flowId.replace("{port}", port.toString)}/$key",
         "PUT",
         Map("Content-Type" -> "application/json"),
         Some(body)
@@ -1478,9 +1516,9 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
   private def getFlowState(flowId: String, key: String): ZIO[RiftHarness, Throwable, LastResponse] =
     for
       port <- currentPort
-      admin <- ZIO.serviceWith[RiftHarness](_.adminUrl)
+      admin <- flowAdminUrl
       resp <- httpSend(
-        s"$admin/admin/imposters/$port/flow-state/$flowId/$key",
+        s"$admin/admin/imposters/$port/flow-state/${flowId.replace("{port}", port.toString)}/$key",
         "GET",
         Map.empty,
         None
@@ -1490,9 +1528,9 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
   private def deleteFlowState(flowId: String, key: String): ZIO[RiftHarness, Throwable, Unit] =
     for
       port <- currentPort
-      admin <- ZIO.serviceWith[RiftHarness](_.adminUrl)
+      admin <- flowAdminUrl
       resp <- httpSend(
-        s"$admin/admin/imposters/$port/flow-state/$flowId/$key",
+        s"$admin/admin/imposters/$port/flow-state/${flowId.replace("{port}", port.toString)}/$key",
         "DELETE",
         Map.empty,
         None
@@ -2747,6 +2785,88 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
           s"expected 404 for flow-state $flow/$key, got ${resp.status}: ${resp.body}"
         )
       )
+  }
+
+  // Typed read (feature 19): `set "42"` must store the JSON number 42, so a string "42" fails here.
+  Then("flow-state " / string / " in flow " / string / " is the number " / int) {
+    (key: String, flow: String, n: Int) =>
+      for
+        resp <- getFlowState(flow, key)
+        _ <- assertRepro(
+          resp.status == 200,
+          s"GET flow-state $flow/$key -> ${resp.status} (expected 200): ${resp.body}"
+        )
+        json <- parseAdminJson(resp.body)
+        got = json match
+          case Json.Obj(fields) => fields.collectFirst { case ("value", v) => v }
+          case _ => None
+        _ <- assertRepro(
+          got.exists {
+            case Json.Num(v) => v.compareTo(java.math.BigDecimal.valueOf(n.toLong)) == 0
+            case _ => false
+          },
+          s"expected flow-state $flow/$key = the number $n, got $got (body=${resp.body})"
+        )
+      yield ()
+  }
+
+  // Feature 19 `@rift-debug-env`: a scenario-local engine started with an extra CLI flag, holding
+  // the fixture as the current imposter. External mode only — it spawns the build dir's binary.
+  Given("a fresh imposter from fixture " / string / " on an engine started with " / string) {
+    (name: String, flag: String) =>
+      for
+        cfg <- RiftHarnessConfig.fromEnv
+        adminPort <- TestPorts.next
+        metricsPort <- TestPorts.next
+        proc <- RiftHarness.rawSpawn(
+          cfg,
+          adminPort,
+          metricsPort,
+          None,
+          None,
+          extraArgs = List(flag)
+        )
+        admin = s"http://localhost:$adminPort"
+        _ <- Stage.put(ScenarioEngine(proc, admin))
+        _ <- RiftHarness.awaitReady(s"$admin/imposters", proc)
+        raw <- loadFixture(name)
+        port <- postAtFreshPort(admin, raw, s"fixture $name on a $flag engine")
+        _ <- Stage.put(CurrentPort(port))
+      yield ()
+  }
+
+  // A top-level field of the last JSON response, compared as parsed JSON: `"true"` is the boolean,
+  // `"\"f1\""` the string.
+  Then("the response JSON field " / string / " is " / string) { (field: String, literal: String) =>
+    for
+      expected <- ZIO
+        .fromEither(literal.fromJson[Json])
+        .mapError(m => new IllegalArgumentException(s"step literal '$literal' is not JSON: $m"))
+      fields <- lastResponseObject
+      got = fields.collectFirst { case (`field`, v) => v }
+      _ <- assertRepro(got.contains(expected), s"expected '$field' = $literal, got $got")
+    yield ()
+  }
+
+  // Carried-not-executed blocks (feature 19, rift#973/#978): the value at a dotted path (numeric
+  // segments index arrays) must equal the fixture's value at the same path, key order aside.
+  Then("the response JSON at " / string / " equals the same path in fixture " / string) {
+    (path: String, name: String) =>
+      for
+        r <- lastResponse
+        served <- parseAdminJson(r.body)
+        fixture <- loadFixture(name).flatMap(parseAdminJson)
+        want <- ZIO
+          .fromOption(RiftConformanceSupport.jsonAt(fixture, path))
+          .orElseFail(new IllegalArgumentException(s"fixture $name has nothing at '$path'"))
+        got = RiftConformanceSupport.jsonAt(served, path)
+        _ <- assertRepro(
+          got
+            .map(RiftConformanceSupport.canonical)
+            .contains(RiftConformanceSupport.canonical(want)),
+          s"at '$path': expected ${want.toJson}, got ${got.fold("<absent>")(_.toJson)}"
+        )
+      yield ()
   }
 
   When("the client replaces all imposters with fixture " / string) { (name: String) =>

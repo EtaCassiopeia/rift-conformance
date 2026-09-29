@@ -440,6 +440,37 @@ The admin routes that feature 08 (by-id GET, enable/disable, debug, savedRequest
 
 Out of scope: the data-directory delete-failure `503` (needs a read-only filesystem), `x-rift-scope` authorization (SPI), and `PUT /imposters` atomicity (#582, see the ledger row).
 
+### `19-flow-state-declarative.feature` ← rift docs/features/flow-state.md (rift#969, #530; issue #194) — DONE
+
+Declarative flow state on the default in-memory store. Runs on the external and embedded legs; the
+`@rift-debug-env` row spawns a scenario-local engine with `--debug` (`rawSpawn` `extraArgs`), so it is
+external-only and excluded in `engineEmbedded`/`engineContainer`. Fixtures are under `stateops/`;
+the main one keys its flow on `X-Flow`. Flow-state values are read back through the admin route and
+asserted by JSON type (`the number 42` vs the string `"007"`).
+
+| Engine contract | Plane A scenario |
+|---|---|
+| `increment` creates the key at 0; `{{ state.n }}` reads the pre-op value (`n=`, `n=1`, `n=2`, stored `3`) | `increment creates the key at 0, and the template reads the pre-op value` |
+| `increment` `by: 5` | `increment honours by` |
+| `set` renders `previousValue` (`vx`, then `vvxx`) | `set renders previousValue — the key's value before this op` |
+| `set "42"` stores the number 42; `"007"` and `"4.5"` stay strings | `set stores a canonical integer string as a number and anything else as a string` |
+| `delete` → the key reads 404 | `delete removes the key` |
+| `clearFlow` empties the requesting flow only | `clearFlow empties the requesting flow and leaves other flows alone` |
+| a firing `_rift.fault` skips the ops (503, key absent) | `stateOps do not run when a fault pre-empts the response` |
+| a `wait` delays but does not skip them | `a wait delays stateOps but does not skip them` |
+| without `--debug` an unrenderable `set` value renders `""` (date-templates.md "When a token fails"), and the later ops still run | `without --debug an unrenderable set value stores "" and the remaining ops still run` |
+| `--debug`: the first failing op aborts the rest → `500` + `x-rift-state-ops-error: true`; earlier ops applied | `under --debug the first failing op aborts the rest with a 500` (`@rift-debug-env`) |
+| no `flowState` → an in-memory store is auto-provisioned (flow id = the imposter port) | `stateOps on an imposter with no flowState auto-provision an in-memory store` |
+| fail-loud config → `400 "bad data"`: `ttlSeconds` `0`/`-5`, unknown backend, `redis` without a block or with a flat `url`, `rediss://` and `redis+sentinel://` URLs | `flowState config is fail-loud — <case>` (7 rows) |
+| `DELETE /admin/imposters/{p}/flow-state/{flow}` → `200 {cleared:true, flowId}`, idempotent, other flows kept; unknown imposter → `404` | `DELETE … clears the flow and is idempotent`, `clearing a flow on a port with no imposter is a 404` |
+| `PUT …/{key}` without `value` → `400` | `PUT of a flow-state key without a value is a 400` |
+| `_rift.sequencing` / `_rift.dataset` are carried, not executed: unchanged in the replayable export, the `is` body still served | `the carried-not-executed sequencing and dataset blocks round-trip unchanged` |
+
+Out of scope: Redis-specific parity for `set`/`clearFlow` (feature 15 is the place for it) and the
+64-lost-race CAS give-up. The dataset fixture's `key` omits Mountebank's `index`: rift's `LookupKey`
+has no such field, so a carried `index` is dropped from the export (the executed `lookup` ignores it
+too; followed up under #203).
+
 ## Phase 2 admin/topology/proxy/reload surface — COMPLETE ✅ (features 07–11 all green)
 
 ## Plane B — MockControl mock corpus (issue #13)
@@ -909,7 +940,7 @@ the same 15 as 1.4.2 — `EmbeddedEngine` has no methods for them and `RiftFfi` 
 | `DELETE /imposters[/{port}]` awaits full teardown before returning (port no longer serves after DELETE) | #597 | 0.13.5 | **covered (#200)** — `21-admin-rest.feature` connects once, with no retry, right after the `200`, and asserts the connect is refused |
 | `PUT /imposters` is atomic (no lossy delete-then-recreate on partial failure) | #582 | 0.13.3 | **gap** — needs a deterministic mid-apply bind failure. Out of scope for #200 |
 | Intercept rule store capped 10k → `429`; admin body capped 64 MiB → `413` | #579/#567 | 0.13.3 | **covered** — the 64 MiB `413` by #200 (feature 21: 64 MiB + 1 → `413 request too large`, exactly 64 MiB → `400 bad data`); the intercept `429` by #190 (`12-intercept` `@intercept-runtime`: 10,001 rules in one `POST /intercept/rules` → `429`, and the list stays `[]`, rejected in full) |
-| `flowState.ttlSeconds` ≤ 0 rejected `400` at create (was accepted) | — | 0.13.2 | **gap** — pin the reject |
+| `flowState.ttlSeconds` ≤ 0 rejected `400` at create (was accepted) | — | 0.13.2 | **covered (#194)** — `19-flow-state-declarative` config outline: `0` and `-5` → `400 "bad data"`, `must be >= 1 (got N)` |
 | Constant-time admin API-key comparison | #566 | 0.13.3 | not black-box assertable (timing) — no gap row |
 
 ### Cache-key correctness — regression-pin opportunities (both fixed in 0.14.0)
