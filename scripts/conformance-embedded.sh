@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Plane B "embedded" backend runner (rift-conformance issue #13): the samples.mock.* MockControl
-# corpus against the in-process Rift engine over Panama FFM (zio-bdd-rift-embedded-natives).
-# No Docker, but needs a JDK 22+ (the FFM binding jar is Java-22 bytecode — zio-bdd#247 — and the
+# corpus against the in-process Rift engine over Panama FFM (rift-java-embedded + rift-java-natives).
+# No Docker, but needs a JDK 22+ (rift-java-embedded is Java-22 bytecode, and the
 # forked test JVM adds --enable-native-access via build.sbt's ffmEnabled gate; FFM is stable on 22+
 # so no --enable-preview) — SKIPs cleanly on older JDKs so run-all.sh stays green on JDK 11/17/21.
 # Ported from zio-bdd-samples' scripts/conformance-embedded.sh.

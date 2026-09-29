@@ -28,15 +28,23 @@ object FixedPort25Suite extends ZIOSteps[MockControl, MockState] with MockSuppor
   /** The port a scenario pinned, stashed for the bind assertion. */
   private final case class PinnedPort(port: Int)
 
-  /** A free port to pin: grab an OS-assigned one and release it. Racy in principle, but the window
-    * is tiny and the pinned imposter binds it immediately after — good enough for a conformance
-    * run.
+  /** A free port to pin. On a pooled backend it must lie in the pool; take the highest free one, so
+    * it stays clear of auto-assigned ports drawn from the bottom. Otherwise grab an OS-assigned
+    * port and release it. Racy in principle, but the window is tiny and the pinned imposter binds
+    * it immediately after — good enough for a conformance run.
     */
   private val freePort: IO[Throwable, Int] =
     ZIO.attemptBlocking {
-      val s = new ServerSocket(0)
-      try s.getLocalPort
-      finally s.close()
+      def bindable(p: Int) = scala.util.Try(new ServerSocket(p).close()).isSuccess
+      Backends.pinnablePorts match
+        case Some(pool) =>
+          pool.reverse
+            .find(bindable)
+            .getOrElse(throw new IllegalStateException(s"no free port left in pool $pool"))
+        case None =>
+          val s = new ServerSocket(0)
+          try s.getLocalPort
+          finally s.close()
     }
 
   private def pinnedMock(port: Int, path: String, body: String): MockSource =

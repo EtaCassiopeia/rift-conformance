@@ -440,8 +440,28 @@ object RiftHarness:
       ZIO.logInfo(s"admin port $preferred busy; falling back to a free port") *> freePort
     }.orDie
 
+  /** Busy means a live listener OR an unbindable port. The connect check comes first because the
+    * bind probe alone cannot see a listener: `ServerSocket` sets SO_REUSEADDR and binds the
+    * wildcard, and on macOS that bind succeeds beside a process listening on IPv4 `0.0.0.0`.
+    * zio-bdd builds the environment layer more than once per run, so a second build finding "2525
+    * free" while the first build's engine holds it spawns a doomed engine. Since rift 0.18.0 binds
+    * the admin listener LAST (after metrics and intercept), that doomed engine passes every
+    * readiness probe — admin answered by the OTHER engine, metrics/intercept by its own short-lived
+    * listeners — then exits with `Address already in use`, leaving the harness pointed at dead
+    * ports.
+    */
   private def probeFree(port: Int): IO[Throwable, Int] =
     ZIO.attemptBlocking {
+      val probe = new Socket()
+      val listening =
+        try
+          // IPv4 loopback explicitly: rift binds `0.0.0.0`, which `localhost` resolving to `::1`
+          // would miss.
+          probe.connect(new InetSocketAddress("127.0.0.1", port), 200)
+          true
+        catch case _: java.io.IOException => false // refused/timed out: nobody is listening
+        finally probe.close()
+      if listening then throw new java.net.BindException(s"port $port has a live listener")
       val s = new ServerSocket(port)
       s.close()
       port

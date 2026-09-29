@@ -472,6 +472,70 @@ entry point is panic-guarded across the C ABI ([rift#484/#487](https://github.co
 fallback now clamps/caps like the Boa path ([rift#490/#504](https://github.com/achird-labs/rift/pull/504),
 `--no-default-features` only).
 
+## Pin bump 0.15.0 → 0.18.0 + zio-bdd 1.4.4 → 1.5.0 (2026-09-28) — closes #146, #145, #140
+
+The pin moved three releases (0.16.0, 0.17.0, 0.18.0). The first run against 0.18.0 was red: 7 Plane A
+failures across 5 specs/suites. **None was an engine defect.** Each was either a documented 0.18.0
+contract change the harness had not caught up with, or a harness bug the new release exposed. The
+fixes below adapt the harness, and every Plane A leg is green again (external, embedded, container).
+
+| Red on 0.18.0 | Cause | Resolution |
+|---|---|---|
+| `12-intercept` ×2 (`Broken pipe`), `09` metrics counter (`delta=0`), `11-reload` (`ConnectException`) | **Harness race.** zio-bdd builds a suite's env layer more than once. The second build's `choosePort(2525)` bind probe reported a live rift's admin port **free** on macOS, so it spawned an engine that could never bind 2525. 0.18.0 binds the admin listener **last** (after metrics and intercept), so that doomed engine passed every readiness probe: the admin probe was answered by the *other* engine, metrics and intercept by its own short-lived listeners. It then exited `Address already in use`, leaving the harness on dead ports. | `probeFree` now treats a live listener (a connect to `127.0.0.1:port`) as busy. Regression test `RiftHarnessSpec` "a second layer build while the first engine is alive gets its own live engine" builds the layer twice against a real engine. It fails without the fix (the second build shares the first's admin URL and has a dead metrics port) and passes with it. A JVM-side decoy socket does not reproduce the bug; only a real rift does |
+| `AllowInjectionMatrix116Spec` `--datadir` case | rift#1128: a `--datadir` file must be named `<port>.json`, and any other name is skipped | Fixture files renamed `9500.json`/`9501.json`. The spec also asserts the skip reason names `allowInjection`, so it cannot pass for the naming reason |
+| `AllowInjectionMatrix116Spec` unparseable `_behaviors` | 0.18.0 refuses a malformed behavior as a `400 bad data` load error on every door, before the injection classifier runs | Still refused, so the rift#610 fail-closed invariant holds, and the gate simply never sees it. `SchemaRefused` accepts `bad data` for that one payload only |
+| `ShippedExamples120Spec` lint | rift#1094/#1156: a directory lint reports `E002` for ports shared *across* files, and four standalone examples share 4545 | The examples are linted one file per run, since each is loaded alone. **Filed [rift#1217](https://github.com/achird-labs/rift/issues/1217)** (TOOL-DRIFT): `examples/README.md` tells users to run `rift-lint examples/`, which now exits 1 on rift's own examples |
+
+The vendored examples are synced to v0.18.0. `task-management-api.json` carries the rift#808 reorder, so
+the two pinned-divergence drives flip to the advertised `count:1` and `404` (**closes #140**).
+
+### Embedded leg: engine-version split closed, binding gap gone
+
+zio-bdd 1.5.0 (zio-bdd#336) removed `zio-bdd-rift-embedded*`. The embedded engine is now rift-java's
+`rift-java-embedded` + `rift-java-natives` **0.3.2**, which embeds rift **0.18.0**, the same release as the
+binary legs. The split recorded in the sections below is **closed**. Neither zio-bdd's `EmbeddedRift`
+nor rift-java's public `Rift.embedded` can pass `serve_admin` the `allowInjection` and `configFile`
+options, or take raw intercept-rule JSON. So `EmbeddedAdmin` (now `samples.rift.support`) binds the
+C-ABI through rift-java's package-private `RiftFfi` in a single JDK-22-only class
+(`src/test/java-jdk22/.../ConformanceFfi.java`, compiled only when `ffmEnabled`).
+
+`RiftFfi` binds the **whole** C-ABI: the 12 v2 admin symbols, `rift_verify`, `rift_stub_warnings`, and
+intercept list/clear/`ca_pem`. The binding gap of **#96** is therefore gone, and the FFI legs of
+**#75 / #92 / #94** plus the `@intercept-http` embedded exclusions are reachable. They are not wired
+yet: `ConformanceFfi` wraps only the calls the harness uses today.
+
+### Plane B on 1.5.0
+
+- **wiremock (`mockConformance`) is green**, fixing the #143 red: zio-bdd#338 makes `--exclude-tags`
+  drop a scenario that also carries a parameterized `@mock(...)` tag. The missing Plane B CI job in
+  #143 still stands.
+- `FixedPort25`: a pooled adapter (`Rift.connect`) now refuses an authored port outside its pool
+  (zio-bdd#213/#303, documented). `Backends.pinnablePorts` exposes the rift-external pool, and the
+  suite pins a free port from inside it.
+- Two library regressions were filed and **not worked around** (FINDINGS F6/F7):
+  [zio-bdd#349](https://github.com/EtaCassiopeia/zio-bdd/issues/349) (recorded text body reads back
+  JSON-quoted; `08-received` red on rift-external + embedded) and
+  [zio-bdd#350](https://github.com/EtaCassiopeia/zio-bdd/issues/350) (raw documents with `"port": 0`
+  refused; every raw-document scenario red on rift-external).
+
+### 0.16.0–0.18.0 new-capability gaps
+
+These are already tracked by open issues filed as the releases shipped:
+
+- intercept serve-rule non-string body: #148
+- outbound `--upstream-ca-file` and imposter `mutualAuth`: #149
+- intercept tunnel 413 and decoded chunked bodies: #150
+- CONNECT tunnel reuse: #151
+- intercept multi-value headers and HTTP/2 negotiation: #152
+- reload re-applying front-door routes: #153
+- behaviors on proxy/inject responses: #154
+- repeated copy behaviors: #155
+- the ordered behaviors program: #156
+- templating substitution not re-expanded: #157
+
+Not yet tracked: `rift_preface_failures_total{listener,kind}` (rift#1045, visible on `/metrics` in
+0.18.0), graceful `SIGTERM` shutdown (#1155), and WebSocket upgrade through the intercept tunnel (#997).
+
 ## v0.15.0 new-capability coverage gaps (pin bump 0.14.0 → 0.15.0) — tracked by [#72](https://github.com/EtaCassiopeia/rift-conformance/issues/72)
 
 Verified green on the bump: all 14 Plane A features pass against 0.15.0 with no conforming change.

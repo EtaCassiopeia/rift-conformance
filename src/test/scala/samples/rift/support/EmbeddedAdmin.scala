@@ -1,0 +1,123 @@
+package samples.rift.support
+
+import zio.*
+import zio.bdd.mock.rift.embedded.EmbeddedRift
+import zio.json.*
+import zio.json.ast.Json
+
+import java.net.URI
+import java.nio.file.Path
+
+/** The raw C-ABI calls the Plane A embedded harness needs, JSON in and JSON out. Blocking; each
+  * throws on an engine error. Implemented by `io.github.achirdlabs.rift.embedded.ConformanceFfi`
+  * (src/test/scala-jdk22), which is compiled only on a JDK 22+ build, the FFM floor of
+  * `rift-java-embedded`. This trait is what lets the rest of the harness compile on JDK 21.
+  */
+trait EmbeddedFfi:
+  def serveAdmin(optionsJson: String): String
+  def buildInfo(): String
+  def startIntercept(optionsJson: String): String
+  def interceptAddRules(rulesJson: String): Unit
+  def interceptExportTruststore(format: String, password: String, outPath: String): Unit
+  def stop(): Unit
+
+/** Starts the in-process engine with its real admin API for the Plane A `RiftHarness` embedded mode
+  * (rift-conformance #18).
+  *
+  * Why not zio-bdd's `EmbeddedRift` or rift-java's public `Rift.embedded`: neither can pass
+  * `serve_admin` the `allowInjection` and `configFile` options (rift-java's `EmbeddedOptions` sends
+  * only host/port/apiKey/upstream trust), and neither takes raw intercept rule JSON. The harness
+  * needs all three to serve the same corpus as external mode, so it binds the C-ABI directly
+  * through rift-java's package-private `RiftFfi` — the coupling is confined to [[EmbeddedFfi]]'s
+  * one implementation.
+  */
+object EmbeddedAdmin:
+
+  private val ImplClass = "io.github.achirdlabs.rift.embedded.ConformanceFfi"
+
+  /** True iff the FFM binding and a `librift_ffi` for this host resolve — false on JDK < 22 or an
+    * unsupported platform. The harness gates on this.
+    */
+  def available: Boolean =
+    EmbeddedRift.available && scala.util.Try(Class.forName(ImplClass)).isSuccess
+
+  final case class Admin(
+      adminUrl: String,
+      adminPort: Int,
+      commit: Option[String],
+      version: String,
+      handle: Handle
+  )
+
+  /** The intercept C-ABI ops. `serve_admin` does not expose `/intercept` over HTTP, so feature 12's
+    * rule/truststore admin goes through here for embedded (#53). Valid only inside the scope opened
+    * by [[serve]].
+    */
+  final class Handle private[EmbeddedAdmin] (ffi: EmbeddedFfi):
+    /** Start the intercept/TLS-MITM listener on loopback; yields its `(host, port)`. */
+    def startIntercept: Task[(String, Int)] =
+      for
+        out <- ZIO.attemptBlocking(ffi.startIntercept("""{"host":"127.0.0.1","port":0}"""))
+        port <- field(out, "interceptPort").flatMap(asInt(out, "interceptPort"))
+      yield ("127.0.0.1", port)
+
+    def interceptAddRules(rulesJson: String): Task[Unit] =
+      ZIO.attemptBlocking(ffi.interceptAddRules(rulesJson))
+
+    /** Export the intercept truststore (PKCS#12) to `outPath`. */
+    def interceptExportTruststore(password: String, outPath: String): Task[Unit] =
+      ZIO.attemptBlocking(ffi.interceptExportTruststore("pkcs12", password, outPath))
+
+  /** Start the in-process engine and its real admin API on loopback:`port` (0 → OS-assigned),
+    * seeding `configFile` so `POST /admin/reload` reconciles toward it (feature 11). Scoped: the
+    * engine is stopped when the scope closes. A `serve_admin` rejection is a real error and fails
+    * loudly.
+    *
+    * `allowInjection` (default `true`) mirrors the `--allowInjection` flag external/container mode
+    * spawn the binary with: `serve_admin` defaults it to `false` (rift#492/#511), which would
+    * reject every inject/scripting imposter the corpus serves. `AllowInjectionGate82Spec` (#82)
+    * asserts the gate itself with both values. Direct FFI ops stay ungated by design.
+    */
+  def serve(
+      port: Int,
+      configFile: Path,
+      allowInjection: Boolean = true
+  ): ZIO[Scope, Throwable, Admin] =
+    for
+      ffi <- ZIO.acquireRelease(open)(f => ZIO.attemptBlocking(f.stop()).orDie)
+      opts = Json.Obj(
+        "host" -> Json.Str("127.0.0.1"),
+        "port" -> Json.Num(port),
+        "allowInjection" -> Json.Bool(allowInjection),
+        "configFile" -> Json.Str(configFile.toAbsolutePath.toString)
+      )
+      served <- ZIO.attemptBlocking(ffi.serveAdmin(opts.toJson))
+      adminUrl <- field(served, "adminUrl").flatMap(asString(served, "adminUrl"))
+      build <- ZIO.attemptBlocking(ffi.buildInfo())
+      version <- field(build, "version").flatMap(asString(build, "version"))
+      // An absent or empty commit means the natives carry no git identity.
+      commit = parse(build).toOption
+        .flatMap(_.get("commit"))
+        .collect { case Json.Str(c) if c.nonEmpty => c }
+    yield Admin(adminUrl, URI.create(adminUrl).getPort, commit, version, new Handle(ffi))
+
+  private def open: Task[EmbeddedFfi] =
+    ZIO.attemptBlocking(
+      Class.forName(ImplClass).getDeclaredConstructor().newInstance().asInstanceOf[EmbeddedFfi]
+    )
+
+  private def parse(json: String): Either[String, Json.Obj] =
+    json.fromJson[Json.Obj]
+
+  private def field(json: String, name: String): Task[Json] =
+    ZIO
+      .fromEither(parse(json).flatMap(_.get(name).toRight(s"no '$name' field")))
+      .mapError(e => new RuntimeException(s"embedded engine answered unexpectedly ($e): $json"))
+
+  private def asString(json: String, name: String)(v: Json): Task[String] = v match
+    case Json.Str(s) => ZIO.succeed(s)
+    case other => ZIO.fail(new RuntimeException(s"'$name' is not a string ($other): $json"))
+
+  private def asInt(json: String, name: String)(v: Json): Task[Int] = v match
+    case Json.Num(n) => ZIO.succeed(n.intValue)
+    case other => ZIO.fail(new RuntimeException(s"'$name' is not a number ($other): $json"))

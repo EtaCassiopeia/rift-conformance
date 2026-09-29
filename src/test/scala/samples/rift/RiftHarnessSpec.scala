@@ -77,5 +77,27 @@ object RiftHarnessSpec extends ZIOSpecDefault:
           fb <- RiftHarness.choosePort(busy)
         yield assertTrue(fb != busy) && assertTrue(fb > 0)
       }
-    } @@ TestAspect.withLiveClock @@ TestAspect.timeout(15.seconds)
+    } @@ TestAspect.withLiveClock @@ TestAspect.timeout(15.seconds),
+    // zio-bdd builds a suite's environment layer more than once per run. A JVM bind probe reports a
+    // live rift's admin port FREE on macOS (a JVM-side decoy like the test above does not reproduce
+    // that — only a real engine does), so the second build spawned an engine that could never own
+    // 2525. Under rift 0.18.0, which binds admin last, that doomed engine passed every readiness
+    // probe via the FIRST engine's admin API, then exited, leaving the harness on dead ports.
+    test("a second layer build while the first engine is alive gets its own live engine") {
+      ZIO.scoped {
+        for
+          first <- RiftHarness.layer.build.map(_.get[RiftHarness])
+          second <- RiftHarness.layer.build.map(_.get[RiftHarness])
+          // Outlast the ~200ms a doomed engine lives before its admin bind fails.
+          _ <- ZIO.sleep(1.second)
+          metrics <- status(s"${second.metricsUrl}/metrics").either
+          engine <- engineOnPort(portOf(second.adminUrl))
+          alive <- ZIO.foreach(engine)((pid, _) => isAlive(pid))
+        yield assertTrue(
+          first.adminUrl != second.adminUrl,
+          metrics == Right(200),
+          alive.contains(true)
+        )
+      }
+    } @@ TestAspect.withLiveClock @@ TestAspect.timeout(90.seconds)
   )

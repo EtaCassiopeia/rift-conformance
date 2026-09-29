@@ -1,7 +1,6 @@
 package samples.rift.support
 
 import zio.*
-import zio.bdd.mock.rift.embedded.EmbeddedAdmin
 
 import java.net.URI
 import java.net.http.{HttpClient, HttpRequest, HttpResponse}
@@ -114,7 +113,7 @@ object RiftHarnessEmbedded:
         ZIO.fail(
           new RuntimeException(
             "RIFT_MODE=embedded requires a JDK 22+ JVM with a resolvable librift_ffi " +
-              "(zio-bdd-rift-embedded-natives on the classpath, or -Drift.ffi.lib=/path). " +
+              "(rift-java-embedded + a rift-java-natives classifier jar on the test classpath). " +
               "On JDK < 22 use RIFT_MODE=external."
           )
         )

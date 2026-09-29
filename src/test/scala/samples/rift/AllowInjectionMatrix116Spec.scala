@@ -67,6 +67,13 @@ object AllowInjectionMatrix116Spec extends ZIOSpecDefault:
     )
   )
 
+  /** Payloads rift 0.18.0 refuses at the schema layer, before the injection classifier runs: a
+    * malformed behavior is now a `bad data` load error on every door (rift CHANGELOG 0.18.0,
+    * "refuse the config … naming the key"). Still refused, so the rift#610 fail-closed invariant
+    * holds — the gate simply never sees it.
+    */
+  private val SchemaRefused: Set[String] = Set("unparseable _behaviors (fail-closed)")
+
   private val CleanStub = """{"responses":[{"is":{"statusCode":200,"body":"ok"}}]}"""
 
   private def imposter(port: Int, stub: String): String =
@@ -170,8 +177,9 @@ object AllowInjectionMatrix116Spec extends ZIOSpecDefault:
           }
           clean <- send(s"$admin/imposters", "POST", Some(imposter(9199, CleanStub)))
         yield
-          val bad = refused.filterNot { case (_, code, t) =>
-            code == 400 && t.contains("invalid injection")
+          val bad = refused.filterNot { case (label, code, t) =>
+            code == 400 && (t.contains("invalid injection") ||
+              (SchemaRefused(label) && t.contains("bad data")))
           }
           assertTrue(
             bad.isEmpty,
@@ -280,12 +288,15 @@ object AllowInjectionMatrix116Spec extends ZIOSpecDefault:
     },
     // Also the restart-persistence case from the rift#612 rationale: an imposter that was persisted
     // while the gate was on must be SKIPPED, not executed, when the engine restarts without it.
+    // Files are named `<port>.json`: since rift 0.18.0 (#1128) any other name is itself skipped, so
+    // a misnamed clean file would vanish and a misnamed scripted one would be skipped for the wrong
+    // reason. The `allowInjection` wording pins that the skip came from the gate.
     test("--datadir skips only the scripted file and still serves the clean one") {
       external {
         for
           dir <- tempDir
-          _ <- writeJson(dir, "scripted.json", imposter(9500, ScriptedStubs.head._2))
-          _ <- writeJson(dir, "clean.json", imposter(9501, CleanStub))
+          _ <- writeJson(dir, "9500.json", imposter(9500, ScriptedStubs.head._2))
+          _ <- writeJson(dir, "9501.json", imposter(9501, CleanStub))
           eng <- engine(List("--datadir", dir.toString))
           admin = eng._1
           out = eng._2
@@ -297,7 +308,8 @@ object AllowInjectionMatrix116Spec extends ZIOSpecDefault:
           ports.contains(9501),
           !ports.contains(9500),
           text.contains("skipped"),
-          text.contains("scripted.json")
+          text.contains("9500.json"),
+          text.contains("allowInjection")
         )
       }
     },
