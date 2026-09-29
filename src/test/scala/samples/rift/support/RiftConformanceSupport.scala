@@ -1548,6 +1548,42 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
     postImposterFromFixture(name).unit
   }
 
+  // A static corpus file (`corpus/imposters/<name>.json`) served at a fresh pool port rather than its
+  // declared 45xx one, so a scenario can drive one corpus imposter on its own.
+  Given("a fresh imposter from corpus file " / string) { (name: String) =>
+    for
+      raw <- ZIO
+        .attemptBlocking(Files.readString(corpusImpostersDir.resolve(s"$name.json")))
+        .flatMap(rewriteFixtureJson)
+      admin <- ZIO.serviceWith[RiftHarness](_.adminUrl)
+      port <- postAtFreshPort(admin, raw, s"corpus file $name")
+      _ <- track(port) *> Stage.put(CurrentPort(port))
+    yield ()
+  }
+
+  // A raw POST of a fixture expected to be REJECTED at create time: the response is stashed for the
+  // status/body steps instead of asserting 201. Tracked like the unresolvable-script door above, so a
+  // regression that accepts it cannot squat a pool port.
+  When("the client posts the imposter fixture " / string) { (name: String) =>
+    for
+      raw <- loadFixture(name).flatMap(rewriteFixtureJson)
+      admin <- ZIO.serviceWith[RiftHarness](_.adminUrl)
+      port <- freeProbePort
+      _ <- track(port)
+      json <- ZIO.fromEither(injectPort(raw, port)).mapError(new RuntimeException(_))
+      _ <- recordCurl(
+        s"curl -i -X POST $admin/imposters -H 'Content-Type: application/json' -d '$json'"
+      )
+      resp <- httpSend(
+        s"$admin/imposters",
+        "POST",
+        Map("Content-Type" -> "application/json"),
+        Some(json)
+      )
+      _ <- Stage.put(resp)
+    yield ()
+  }
+
   When("the request body is " / string) { (b: String) =>
     pendingRequest.flatMap(pr => Stage.put(pr.copy(body = Some(b))))
   }

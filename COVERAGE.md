@@ -78,7 +78,7 @@ that file).
 
 | Range | Owner | This checkpoint |
 |-------|-------|-----------------|
-| 45xx  | Corpus imposters (posted verbatim, byte-fidelity) | 4501–4520 (15 files) |
+| 45xx  | Corpus imposters (posted verbatim, byte-fidelity) | 4501–4521 (16 files) |
 | 46xx  | Plane B mock corpus | not used here (Plane B lands in #13) |
 | 48xx  | Plane A in-harness probes (fresh-imposter pool) | not used by the gate feature (corpus-only) |
 | 2525  | Admin API (harness external mode) | Plane A engine; shell gate ran its own engine on a separate admin port |
@@ -173,6 +173,8 @@ assertion time), not merely "renders some ISO date". Remaining: `06-behaviors`. 
 | `shellTransform` rewrites a static `is` | `shellTransform rewrites a static response body` | `behaviors/behaviors` |
 | Set-Cookie multi-value survives a `copy` (rift#272) | `multi-value Set-Cookie survives a copy behavior (rift#272)` (2 distinct headers) | `behaviors/behaviors` |
 | JS `decorate` rewrites the response | `a JS decorate behavior rewrites the response` | `behaviors/behaviors` |
+| rift#1195: a `behaviors` array runs every `copy` element in order (`GET /copy` → `A=cop B=GET`, as in Mountebank 2.9.1) | `a behaviors array applies every copy element in order` | corpus `21-behaviors-array-copy` (also gated by feature 01 lint + rift-verify `_verify`) |
+| rift#1195: a malformed earlier `copy` element is refused with a `400` naming `` `copy` behavior is malformed `` | `a behaviors array with a malformed earlier copy element is refused at creation` | `behaviors/array-copy-malformed` |
 
 **Note on the former `@gap` probes:** the design tagged `shellTransform`-on-static-`is`,
 Set-Cookie-survives-`copy` (rift#272), and top-level-`fault`-→-502 (rift#309) as expected-divergence.
