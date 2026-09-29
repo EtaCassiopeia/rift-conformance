@@ -107,24 +107,47 @@ object RawHttpConnection:
     ctx.init(null, tmf.getTrustManagers, new SecureRandom())
     ctx
 
+  /** A TLS context trusting only the one CA certificate in `pem` — for an intercept CA that is
+    * handed back as PEM (`returnCaKey`, `GET /intercept/ca.pem`) rather than as a truststore.
+    */
+  def sslTrustingPem(pem: String): SSLContext =
+    val cert = java.security.cert.CertificateFactory
+      .getInstance("X.509")
+      .generateCertificate(new ByteArrayInputStream(pem.getBytes(UTF_8)))
+    val ks = KeyStore.getInstance(KeyStore.getDefaultType)
+    ks.load(null, null)
+    ks.setCertificateEntry("intercept-ca", cert)
+    val tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm)
+    tmf.init(ks)
+    val ctx = SSLContext.getInstance("TLS")
+    ctx.init(null, tmf.getTrustManagers, new SecureRandom())
+    ctx
+
+  /** `CONNECT target:443`, with any extra header lines (e.g. `Proxy-Authorization`). */
+  def connectRequest(target: String, headers: List[(String, String)] = Nil): Array[Byte] =
+    val lines = s"CONNECT $target:443 HTTP/1.1" :: s"Host: $target:443" ::
+      headers.map((k, v) => s"$k: $v")
+    (lines.mkString("\r\n") + "\r\n\r\n").getBytes(ISO_8859_1)
+
   /** A plaintext connection to `host:port` — the intercept listener before any tunnel exists. */
   def plain(host: String, port: Int): RawHttpConnection =
     new RawHttpConnection(connect(host, port))
 
   /** `CONNECT target:443` through the proxy at `proxyHost:proxyPort`, then a TLS handshake over the
     * tunnel for `target` (SNI + hostname verification) with `ssl`, offering only `http/1.1` in
-    * ALPN. Fails unless the proxy answers the `CONNECT` with `200`.
+    * ALPN. `connectHeaders` ride on the `CONNECT` itself. Fails unless the proxy answers the
+    * `CONNECT` with `200`.
     */
   def tunnel(
       proxyHost: String,
       proxyPort: Int,
       target: String,
-      ssl: SSLContext
+      ssl: SSLContext,
+      connectHeaders: List[(String, String)] = Nil
   ): RawHttpConnection =
     val raw = connect(proxyHost, proxyPort)
     try
-      val connect = s"CONNECT $target:443 HTTP/1.1\r\nHost: $target:443\r\n\r\n"
-      raw.getOutputStream.write(connect.getBytes(ISO_8859_1))
+      raw.getOutputStream.write(connectRequest(target, connectHeaders))
       raw.getOutputStream.flush()
       // Read the CONNECT reply unbuffered: nothing after its blank line may be consumed here, as
       // those bytes belong to the TLS handshake.

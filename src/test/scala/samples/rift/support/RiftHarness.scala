@@ -99,9 +99,10 @@ trait RiftHarness:
     * External mode overrides this (raw-spawns a child on fresh ports, remembered and reaped by
     * [[stopRuntimeInterceptEngine]] and the layer scope). Other modes cannot spawn a second
     * no-intercept engine, so they fail — the scenario is tagged `@intercept-runtime` and runs
-    * external-only.
+    * external-only. `allowInjection = false` spawns it without `--allow-injection`, for the
+    * rule-batch atomicity check (#190), which the shared engine cannot host.
     */
-  def startRuntimeInterceptEngine: Task[String] =
+  def startRuntimeInterceptEngine(allowInjection: Boolean = true): Task[String] =
     ZIO.fail(new UnsupportedOperationException("runtime intercept lifecycle is external-mode only"))
 
   /** The admin URL of the [[startRuntimeInterceptEngine]] engine; fails if none is running. */
@@ -137,6 +138,17 @@ trait RiftHarness:
 
   /** Reap the [[startIsolatedAdminEngine]] engine if one is running; a no-op otherwise. */
   def stopIsolatedAdminEngine: Task[Unit] = ZIO.unit
+
+  /** Start a dedicated engine whose intercept listener requires proxy auth (`--intercept-auth u:p`,
+    * rift#878) and return its `(adminUrl, interceptPort)` — feature 12 `@intercept-auth` (#190).
+    * Its listener is seeded with the committed test CA, like the shared one. External mode only, as
+    * for [[startUpstreamTrustEngine]].
+    */
+  def startInterceptAuthEngine: Task[(String, Int)] =
+    ZIO.fail(new UnsupportedOperationException("the intercept-auth engine is external-mode only"))
+
+  /** Reap the [[startInterceptAuthEngine]] engine if one is running; a no-op otherwise. */
+  def stopInterceptAuthEngine: Task[Unit] = ZIO.unit
 
   /** Swap in a `--configfile`-backed engine for the life of the returned `Scope`, reverting to a
     * plain engine (same admin/metrics ports) when the scope closes.
@@ -250,6 +262,7 @@ private final class RiftHarnessLive(
     runtimeInterceptRef: Ref[Option[(Process, String)]],
     upstreamTrustRef: Ref[Option[Process]],
     isolatedAdminRef: Ref[Option[Process]],
+    interceptAuthRef: Ref[Option[(Process, String, Int)]],
     val tools: RiftTools,
     info: RiftBuildInfo
 ) extends RiftHarness:
@@ -267,12 +280,19 @@ private final class RiftHarnessLive(
     * same "never orphan a spawned child" discipline as the reload path — and force-kills it on a
     * readiness failure so a never-ready engine doesn't hold its ports for the rest of the run.
     */
-  override def startRuntimeInterceptEngine: Task[String] =
+  override def startRuntimeInterceptEngine(allowInjection: Boolean): Task[String] =
     for
       _ <- stopRuntimeInterceptEngine // never leak a prior sidecar if a scenario forgot to stop it
       port <- RiftHarness.freePort
       metricsPort <- RiftHarness.freePort
-      proc <- RiftHarness.rawSpawn(cfg, port, metricsPort, None, None)
+      proc <- RiftHarness.rawSpawn(
+        cfg,
+        port,
+        metricsPort,
+        None,
+        None,
+        allowInjection = allowInjection
+      )
       url = s"http://localhost:$port"
       _ <- runtimeInterceptRef.set(Some((proc, url)))
       _ <- RiftHarness
@@ -322,6 +342,29 @@ private final class RiftHarnessLive(
 
   override def stopIsolatedAdminEngine: Task[Unit] =
     isolatedAdminRef.getAndSet(None).flatMap(_.fold(ZIO.unit)(RiftHarness.killProcess))
+  override def startInterceptAuthEngine: Task[(String, Int)] =
+    for
+      _ <- stopInterceptAuthEngine
+      port <- RiftHarness.freePort
+      metricsPort <- RiftHarness.freePort
+      interceptPort <- RiftHarness.freePort
+      proc <- RiftHarness.rawSpawn(
+        cfg,
+        port,
+        metricsPort,
+        None,
+        Some(interceptPort),
+        extraArgs = List("--intercept-auth", RiftHarness.InterceptAuthCredentials)
+      )
+      url = s"http://localhost:$port"
+      _ <- interceptAuthRef.set(Some((proc, url, interceptPort)))
+      _ <- (RiftHarness.awaitReady(s"$url/imposters", proc) *>
+        RiftHarness.awaitTcpReady("localhost", interceptPort, proc))
+        .onError(_ => RiftHarness.killProcess(proc).ignore)
+    yield (url, interceptPort)
+
+  override def stopInterceptAuthEngine: Task[Unit] =
+    interceptAuthRef.getAndSet(None).flatMap(_.fold(ZIO.unit)(e => RiftHarness.killProcess(e._1)))
 
   override def stopRuntimeInterceptEngine: Task[Unit] =
     runtimeInterceptRef.getAndSet(None).flatMap {
@@ -443,6 +486,9 @@ object RiftHarness:
   private val httpTimeout = JDuration.ofSeconds(2)
   private[support] val client = HttpClient.newHttpClient()
 
+  /** The `--intercept-auth` credential of the [[RiftHarness.startInterceptAuthEngine]] engine. */
+  val InterceptAuthCredentials = "u:p"
+
   // The committed test intercept CA (#55): a throwaway CA (CN=rift-conformance-test-intercept-ca)
   // under test resources. Extract cert + key from the classpath to temp files once (rift's
   // `--intercept-ca-cert/--key` need filesystem paths), and keep the cert PEM so feature 12 can
@@ -538,6 +584,11 @@ object RiftHarness:
       })
       _ <- ZIO.addFinalizer(upstreamTrustRef.get.flatMap(_.fold(ZIO.unit)(killProcess(_).orDie)))
       _ <- ZIO.addFinalizer(isolatedAdminRef.get.flatMap(_.fold(ZIO.unit)(killProcess(_).orDie)))
+      // The feature-12 @intercept-auth engine (#190), likewise.
+      interceptAuthRef <- Ref.make(Option.empty[(Process, String, Int)])
+      _ <- ZIO.addFinalizer(
+        interceptAuthRef.get.flatMap(_.fold(ZIO.unit)(e => killProcess(e._1).orDie))
+      )
     yield RiftHarnessLive(
       s"http://localhost:$port",
       s"http://localhost:$metricsPort",
@@ -550,6 +601,7 @@ object RiftHarness:
       runtimeInterceptRef,
       upstreamTrustRef,
       isolatedAdminRef,
+      interceptAuthRef,
       RiftTools.fromBuildDir(cfg.buildDir),
       info
     )
@@ -638,7 +690,8 @@ object RiftHarness:
       upstreamCaFile: Option[Path] = None,
       logTo: Option[Path] = None,
       extraArgs: List[String] = Nil,
-      extraEnv: Map[String, String] = Map.empty
+      extraEnv: Map[String, String] = Map.empty,
+      allowInjection: Boolean = true
   ): Task[Process] =
     ZIO.attemptBlocking {
       val binary = cfg.buildDir.resolve("rift").toString
@@ -653,11 +706,10 @@ object RiftHarness:
         binary,
         "--port",
         port.toString,
-        "--allow-injection",
         "--nologfile",
         "--metrics-port",
         metricsPort.toString
-      )
+      ) ++ (if allowInjection then List("--allow-injection") else Nil)
       // --intercept-port starts the opt-in TLS-MITM listener (rift 0.10.0+); its rules + CA share the
       // admin API. Harmless when no intercept rules are posted, so external mode always starts one.
       // When a listener runs, seed a committed caller-provided intercept CA (rift 0.11.3, #55) so the
