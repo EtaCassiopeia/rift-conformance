@@ -1,0 +1,118 @@
+package io.github.achirdlabs.rift.embedded;
+
+import io.github.achirdlabs.rift.EmbeddedOptions;
+import java.lang.foreign.Arena;
+import java.lang.foreign.MemorySegment;
+import samples.rift.support.EmbeddedFfi;
+
+/**
+ * The Plane A embedded harness's binding to the rift C-ABI (see {@code EmbeddedAdmin}).
+ *
+ * <p>It lives in rift-java's package because {@link RiftFfi} and {@link NativeLibraryResolver}
+ * are package-private. It drives {@code RiftFfi} directly rather than {@code FfiCalls}, because
+ * {@code FfiCalls} keeps the engine handle private and has no truststore export. The call
+ * discipline is the same as {@code FfiCalls}: a string result is read then freed, a null result or
+ * a non-zero status is an engine error carrying {@code rift_last_error}.
+ *
+ * <p>Compiled only on a JDK 22+ build (the FFM floor of rift-java-embedded).
+ */
+public final class ConformanceFfi implements EmbeddedFfi {
+
+  private final Arena libArena;
+  private final RiftFfi ffi;
+  private final MemorySegment handle;
+
+  public ConformanceFfi() {
+    var lib = NativeLibraryResolver.resolve(EmbeddedOptions.builder().build()).path();
+    var arena = Arena.ofShared();
+    try {
+      var bound = RiftFfi.load(lib, arena);
+      var h = bound.start();
+      if (RiftFfi.isNull(h)) {
+        throw new IllegalStateException("failed to start the embedded rift engine");
+      }
+      this.libArena = arena;
+      this.ffi = bound;
+      this.handle = h;
+    } catch (RuntimeException e) {
+      arena.close();
+      throw e;
+    }
+  }
+
+  @Override
+  public String serveAdmin(String optionsJson) {
+    try (var a = Arena.ofConfined()) {
+      return readAndFree(ffi.serveAdmin(handle, FfmCompat.allocateCString(a, optionsJson)));
+    }
+  }
+
+  @Override
+  public String buildInfo() {
+    return readAndFree(ffi.buildInfo());
+  }
+
+  @Override
+  public String startIntercept(String optionsJson) {
+    try (var a = Arena.ofConfined()) {
+      return readAndFree(ffi.startIntercept(handle, FfmCompat.allocateCString(a, optionsJson)));
+    }
+  }
+
+  @Override
+  public void interceptAddRules(String rulesJson) {
+    try (var a = Arena.ofConfined()) {
+      check(ffi.interceptAddRules(handle, FfmCompat.allocateCString(a, rulesJson)));
+    }
+  }
+
+  @Override
+  public void interceptExportTruststore(String format, String password, String outPath) {
+    try (var a = Arena.ofConfined()) {
+      check(
+          ffi.interceptExportTruststore(
+              handle,
+              FfmCompat.allocateCString(a, format),
+              FfmCompat.allocateCString(a, password),
+              FfmCompat.allocateCString(a, outPath)));
+    }
+  }
+
+  @Override
+  public void stop() {
+    try {
+      ffi.stop(handle);
+    } finally {
+      libArena.close();
+    }
+  }
+
+  private String readAndFree(MemorySegment s) {
+    if (RiftFfi.isNull(s)) {
+      throw engineError();
+    }
+    try {
+      return RiftFfi.readString(s);
+    } finally {
+      ffi.free(s);
+    }
+  }
+
+  private void check(int status) {
+    if (status != 0) {
+      throw engineError();
+    }
+  }
+
+  private RuntimeException engineError() {
+    var e = ffi.lastError();
+    if (RiftFfi.isNull(e)) {
+      return new IllegalStateException("rift engine call failed with no error message");
+    }
+    try {
+      return new IllegalStateException("rift engine call failed: " + RiftFfi.readString(e));
+    } finally {
+      ffi.free(e);
+    }
+  }
+}

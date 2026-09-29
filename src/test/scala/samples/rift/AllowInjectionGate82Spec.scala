@@ -1,7 +1,7 @@
 package samples.rift
 
+import samples.rift.support.EmbeddedAdmin
 import zio.*
-import zio.bdd.mock.rift.embedded.EmbeddedAdmin
 import zio.test.*
 
 import java.net.URI

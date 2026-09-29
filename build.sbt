@@ -1,37 +1,26 @@
 ThisBuild / scalaVersion := "3.3.4"
 ThisBuild / organization := "io.github.etacassiopeia"
 
-val zioVersion = "2.1.17"
-val zioBddVersion = "1.4.4"
+// Track zio-bdd's own ZIO: a lower pin here gets zio-test evicted upward while zio-test-sbt stays
+// behind, and the forked test runner dies with NoSuchMethodError before any spec runs.
+val zioVersion = "2.1.21"
+val zioBddVersion = "1.5.0"
 
-// zio-bdd 1.4.4 is a public Maven Central release (no local publishLocal / sibling checkout needed).
-// Since 1.4.1 the embedded C-ABI (rift#411/#410) exposes serveAdmin (the real in-process admin API),
-// flow-state/space ops, and intercept — enough for the Plane A embedded oracle (RIFT_MODE=embedded,
-// issue #18). 1.4.2 also ships self-contained embedded natives (no system-LuaJIT dlopen; zio-bdd#312).
+// zio-bdd 1.5.0 re-based its Rift adapters onto the official SDK (zio-bdd#336): `zio-bdd-rift` sits
+// on `rift-scala-zio`, and the in-process engine is rift-java's `rift-java-embedded` plus its
+// `rift-java-natives` classifier jar (added below). The `zio-bdd-rift-embedded*` artifacts are
+// gone (#145).
 //
-// ENGINE-VERSION SPLIT: two independent knobs govern the engine build, and they intentionally
-// diverge.
-//   • The BINARY legs — external + container Plane A, and rift-external Plane B — run the `rift` /
-//     `rift-lint` / `rift-verify` binaries that scripts/build-rift.sh fetches at RIFT_VERSION
-//     (now 0.15.0). These are the engine-as-source-of-truth planes and track the latest release.
-//   • The EMBEDDED leg — embedded Plane A + Plane B — loads `librift_ffi` from the
-//     `zio-bdd-rift-embedded-natives` Maven artifact, whose rift version is pinned by zioBddVersion.
-//     zio-bdd 1.4.3 bumped its rift pin 0.13.1 → 0.14.0 for BOTH the container image and the
-//     natives (zio-bdd#325 — `riftNativesVersion = riftVersion`), so on 1.4.4 the embedded leg runs
-//     0.14.0 engine code. No zio-bdd release carries 0.15.0 natives yet; the leg stays one release
-//     behind until one does.
-// This split is ABI-safe: neither rift 0.14.0 nor 0.15.0 ships a C-ABI/FFI/manifest bump (0.14.0's
-// only FFI touch is an additive optional `rules` field on `rift_start_intercept`), so the 0.14.0
-// natives load and drive unchanged. The embedded leg is therefore green but exercises 0.14.0 engine
-// code, not 0.15.0 — a coverage caveat recorded in COVERAGE.md, narrowed by this bump but not yet
-// closed. The @preflight version-coherence gate is external-only (RiftHarness.layer) and compares
-// BUILD_INFO against the same-fetch binaries, so it stays coherent at 0.15.0.
+// ONE ENGINE VERSION: riftJavaVersion MUST equal the `rift-java-core` that zio-bdd-rift pulls in
+// (via rift-scala-zio 0.3.0) — the embedded engine and the core meet across the FFI boundary. The
+// rift-java 0.3.2 natives embed rift 0.18.0, the same release scripts/build-rift.sh fetches for
+// the binary legs (external + container Plane A, rift-external Plane B), so the embedded leg no
+// longer lags. Bump RIFT_VERSION, zioBddVersion and riftJavaVersion together.
 //
-// NOT changed by 1.4.4: the embedded Scala binding still wraps only 15 FFI symbols. `librift_ffi`
-// exports all 12 v2 admin symbols plus `rift_verify` and `rift_stub_warnings` (verified with `nm`
-// on the 1.4.4 natives), but `EmbeddedEngine` has no wrappers for them and `RiftFfi` has no generic
-// `call(symbol, json)` dispatch — so the FFI legs of #75/#92/#94 stay blocked on #96, which is a
-// binding gap, not a natives gap.
+// rift-java's `RiftFfi` binds the whole C-ABI (v2 admin symbols, `rift_verify`,
+// `rift_stub_warnings`, intercept list/clear/ca-pem), so the binding gap of #96 is gone; what the
+// harness wires up is in EmbeddedAdmin.
+val riftJavaVersion = "0.3.2"
 
 // The RiftHarness, the Plane A steps, and their specs live under src/test — this build hosts the
 // conformance harness, not a shipped library, so its dependencies are test-scoped.
@@ -42,12 +31,12 @@ libraryDependencies ++= Seq(
   "io.github.etacassiopeia" %% "zio-bdd" % zioBddVersion % Test,
   "io.github.etacassiopeia" %% "zio-bdd-mock" % zioBddVersion % Test, // Plane B: portable MockControl SPI, DSL, model
   "io.github.etacassiopeia" %% "zio-bdd-wiremock" % zioBddVersion % Test, // Plane B: default backend (in-process, no Docker)
-  "io.github.etacassiopeia" %% "zio-bdd-rift" % zioBddVersion % Test, // Plane B: gated backend (container / embedded FFM)
-  // 1.3.1 split the embedded-FFM Scala API (EmbeddedRift / EmbeddedRiftMockControl) out of
-  // zio-bdd-rift into its own module (it was part of zio-bdd-rift under 1.2.0-SNAPSHOT). Needed
-  // unconditionally so Backends.scala's `import zio.bdd.mock.rift.embedded.EmbeddedRift` compiles
-  // on every JDK; only the FFM binding + native library (below) are JDK 22+-gated.
-  "io.github.etacassiopeia" %% "zio-bdd-rift-embedded" % zioBddVersion % Test,
+  // Plane B: gated backend (container / embedded FFM). Needs JDK 17+ (rift-java-core is class 61).
+  "io.github.etacassiopeia" %% "zio-bdd-rift" % zioBddVersion % Test,
+  // RiftHarnessContainer (Plane A container mode) drives Docker through testcontainers-scala. Up to
+  // zio-bdd 1.4.4 it arrived transitively via zio-bdd-rift; 1.5.0 moved to rift-java-testcontainers,
+  // so it is declared here, at the version 1.4.4 carried.
+  "com.dimafeng" %% "testcontainers-scala-core" % "0.41.4" % Test,
   "dev.zio" %% "zio-test" % zioVersion % Test,
   "dev.zio" %% "zio-test-sbt" % zioVersion % Test
 )
@@ -74,25 +63,40 @@ Test / testFrameworks := Seq(
 Test / fork := true
 
 // Embedded FFI (MOCK_BACKEND=embedded Plane B, and RIFT_MODE=embedded Plane A #18): the in-process
-// Rift engine via Panama FFM.
-// Gated on a JDK **22+** JVM: 1.4.4 publishes the FFM binding only as `zio-bdd-rift-embedded-jdk21`,
-// but that jar is compiled to Java-22 bytecode (class 66), so it won't load on JDK 21 despite the
-// name (upstream: zio-bdd#247). FFM is a stable API on 22+, so no --enable-preview is needed (and it
-// would in fact conflict with the class-66 binding). On JDK 11/17/21 the embedded backend is
-// unavailable and the corpus runs on wiremock instead.
+// Rift engine via Panama FFM. Gated on a JDK **22+** JVM: `rift-java-embedded` is Java-22 bytecode
+// (class 66) on the stable FFM API. On JDK 17/21 the embedded backend is unavailable
+// (`EmbeddedRift.available` is false) and the corpus runs on wiremock instead.
 lazy val ffmEnabled: Boolean =
   System.getProperty("java.specification.version", "11").split("\\.").head.toInt >= 22
 
+// rift-java-natives publishes one classifier per platform (darwin-aarch64, linux-x86_64, ...).
+lazy val riftNativesClassifier: Option[String] = {
+  val os = System.getProperty("os.name", "").toLowerCase
+  val arch = System.getProperty("os.arch", "") match {
+    case "amd64" | "x86_64" => "x86_64"
+    case "aarch64" | "arm64" => "aarch64"
+    case other => other
+  }
+  if (os.contains("mac")) Some(s"darwin-$arch")
+  else if (os.contains("linux")) Some(s"linux-$arch")
+  else None
+}
+
 libraryDependencies ++= (
   if (ffmEnabled)
-    Seq(
-      "io.github.etacassiopeia" %% "zio-bdd-rift-embedded-jdk21" % zioBddVersion % Test,
-      "io.github.etacassiopeia" % "zio-bdd-rift-embedded-natives" % zioBddVersion % Test
-    )
+    ("io.github.achird-labs" % "rift-java-embedded" % riftJavaVersion % Test) +:
+      riftNativesClassifier.toSeq.map(c =>
+        ("io.github.achird-labs" % "rift-java-natives" % riftJavaVersion % Test).classifier(c)
+      )
   else Nil
 )
 Test / javaOptions ++= (
   if (ffmEnabled) Seq("--enable-native-access=ALL-UNNAMED") else Nil
+)
+// EmbeddedAdmin's C-ABI binding names FFM types, so it compiles only where rift-java-embedded is on
+// the classpath.
+Test / unmanagedSourceDirectories ++= (
+  if (ffmEnabled) Seq(baseDirectory.value / "src" / "test" / "java-jdk22") else Nil
 )
 
 // Run suites one at a time: the mock corpus shares one backend server per run (a Correlated

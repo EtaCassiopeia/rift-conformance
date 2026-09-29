@@ -154,14 +154,11 @@ object ShippedExamples120Spec extends ZIOSpecDefault:
         // `"count":3`, not just `"count"` — the filtered stub also carries a count field.
         Drive("GET", "/tasks", 200, "\"count\":3"),
         Drive("GET", "/tasks/task-001", 200, "alice@example.com"),
-        // The next two pin a defect in the shipped example, not engine behavior: matching is
-        // first-match-wins, and two stubs are shadowed by more general ones listed before them
-        // (achird-labs/rift#805). `?status=OPEN` is advertised as the count-1 filtered list but the
-        // bare `/tasks` stub answers first; `/tasks/task-999` is advertised as 404 but the
-        // `task-\d+` stub answers first. Asserting what actually happens — rather than dropping
-        // the cases — means an upstream reorder turns this red and we notice the fix.
-        Drive("GET", "/tasks?status=OPEN", 200, "\"count\":3"),
-        Drive("GET", "/tasks/task-999", 200, "alice@example.com"),
+        // Matching is first-match-wins. Up to v0.17 these two stubs were shadowed by more general
+        // ones listed before them (achird-labs/rift#805, surfaced by this spec); the v0.18.0
+        // examples list the specific stubs first (rift#808), so they answer as advertised.
+        Drive("GET", "/tasks?status=OPEN", 200, "\"count\":1"),
+        Drive("GET", "/tasks/task-999", 404, "TASK_NOT_FOUND"),
         // jsonpath `$.name` present vs absent — the 201/400 split is the predicate doing real work.
         Drive("POST", "/tasks", 201, "task-new-001", Some("""{"name":"New"}"""), Json_),
         Drive("POST", "/tasks", 400, "VALIDATION_ERROR", Some("""{"nope":"x"}"""), Json_),
@@ -425,18 +422,25 @@ object ShippedExamples120Spec extends ZIOSpecDefault:
       buildDir match
         case None => ZIO.succeed(assertCompletes)
         case Some(bd) =>
-          RiftTools.fromBuildDir(bd).riftLint(examplesDir).zip(exampleFilesOnDisk).map {
-            (report, onDisk) =>
-              val offenders = RiftTools.errorOffenders(report)
-              // Exactly the files on disk, not `>=`: a lower bound would stay green if lint silently
-              // skipped one of them.
-              val lintedEveryFile = report.filesChecked == onDisk.size
-              assertTrue(
-                report.exitCode == 0,
-                offenders == List.empty[String],
-                report.errors == 0,
-                lintedEveryFile
-              )
+          // One lint run PER FILE: each example is a standalone config, loaded alone, and four of
+          // them share port 4545 by design. Since rift 0.18.0 (#1094) a directory run reports E002
+          // for a port shared across its files, so linting the folder as one run flags a conflict
+          // no real user of these examples can hit.
+          val tools = RiftTools.fromBuildDir(bd)
+          exampleFilesOnDisk.flatMap { onDisk =>
+            ZIO.foreach(onDisk.toList.sorted)(f => tools.riftLint(examplesDir.resolve(f))).map {
+              reports =>
+                val offenders = reports.flatMap(RiftTools.errorOffenders)
+                // Exactly one file per run: a run that checked 0 files would otherwise read green.
+                val lintedEveryFile = reports.forall(_.filesChecked == 1)
+                assertTrue(
+                  reports.forall(_.exitCode == 0),
+                  offenders == List.empty[String],
+                  reports.map(_.errors).sum == 0,
+                  lintedEveryFile,
+                  reports.size == onDisk.size
+                )
+            }
           }
     }
   ) @@ TestAspect.withLiveClock @@ TestAspect.sequential @@ TestAspect.timeout(180.seconds)

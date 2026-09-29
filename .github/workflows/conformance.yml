@@ -87,14 +87,15 @@ jobs:
           RIFT_CORPUS_ROOT: ${{ github.workspace }}/corpus
 
   # Same Plane A oracle, run IN-PROCESS over Panama FFM (#18): zero process spawn, no Docker. Needs a
-  # JDK 22+ runtime (the FFM binding jar is Java-22 bytecode — zio-bdd#247), so this job runs on JDK
-  # 25 while the external job stays on 21. The engine is the bundled librift_ffi native; the released
-  # rift is still fetched for the lint/verify tools + BUILD_INFO (used identically in both modes).
+  # JDK 22+ runtime (rift-java-embedded is Java-22 bytecode), so this job runs on JDK 25 while the
+  # external job stays on 21. The engine is the librift_ffi native from rift-java-natives (pinned by
+  # riftJavaVersion in build.sbt); the released rift is still fetched for the lint/verify tools +
+  # BUILD_INFO (used identically in both modes).
   plane-a-embedded:
     name: Plane A — engine conformance (embedded, FFM)
     runs-on: ubuntu-latest
     # Skipped for a candidate-version run, for the same reason as the container leg: the engine here
-    # is zio-bdd's BUNDLED librift_ffi native, which RIFT_VERSION does not move (it only swaps the
+    # is the rift-java-natives librift_ffi, which RIFT_VERSION does not move (it only swaps the
     # lint/verify tools + BUILD_INFO underneath). Running it against a candidate would either report
     # a false green (the old native passing) or a false red (candidate tools paired with an old
     # native) — and both corrupt the drift verdict.
