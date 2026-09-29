@@ -996,6 +996,71 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
     postImposterFromFixture(name).flatMap(p => Stage.put(UpstreamPort(p)))
   }
 
+  // Feature 14 (rift#1194): a plain-HTTP upstream in the same engine, for proxy responses.
+  Given("an upstream imposter from fixture " / string) { (name: String) =>
+    postImposterFromFixture(name).flatMap(p => Stage.put(UpstreamPort(p)))
+  }
+
+  private def upstreamPort: IO[Throwable, Int] =
+    Stage
+      .get[UpstreamPort]
+      .mapError(_ => new IllegalStateException("no upstream imposter in this scenario"))
+      .map(_.port)
+
+  // The fixture names its proxy target `http://localhost:UPSTREAM_PORT`; the placeholder becomes the
+  // scenario's upstream port, which is only known once that imposter is posted.
+  Given("a fresh imposter from fixture " / string / " proxying to the upstream") { (name: String) =>
+    for
+      up <- upstreamPort
+      raw <- loadFixture(name).flatMap(rewriteFixtureJson)
+      admin <- ZIO.serviceWith[RiftHarness](_.adminUrl)
+      port <- postAtFreshPort(admin, raw.replace("UPSTREAM_PORT", up.toString), s"fixture $name")
+      _ <- track(port) *> Stage.put(CurrentPort(port))
+    yield ()
+  }
+
+  Then("the upstream imposter has recorded " / int / " requests") { (n: Int) =>
+    upstreamPort
+      .flatMap(numberOfRequests)
+      .flatMap(c =>
+        assertRepro(c == n, s"expected the upstream to have received $n request(s), got $c")
+      )
+  }
+
+  /** rift-lint over the fixture `name`, copied to a temp file first: the fixtures live on the
+    * classpath, and rift-lint takes a filesystem path.
+    */
+  private def lintFixture(name: String): ZIO[RiftHarness, Throwable, LintReport] =
+    ZIO.scoped {
+      for
+        raw <- loadFixture(name)
+        tmp <- ZIO.acquireRelease(
+          ZIO.attemptBlocking(Files.writeString(Files.createTempFile("rift-lint-", ".json"), raw))
+        )(p => ZIO.attemptBlocking(Files.deleteIfExists(p)).ignore)
+        report <- ZIO.serviceWithZIO[RiftHarness](_.tools.riftLint(tmp))
+      yield report
+    }
+
+  Then("rift-lint reports " / string / " for fixture " / string) { (code: String, name: String) =>
+    lintFixture(name).flatMap(r =>
+      assertRepro(
+        r.issues.exists(_.code == code),
+        s"expected rift-lint to report $code for $name, got ${r.issues.map(_.code)}: ${r.raw}"
+      )
+    )
+  }
+
+  Then("rift-lint reports no " / string / " for fixture " / string) {
+    (code: String, name: String) =>
+      lintFixture(name).flatMap(r =>
+        assertRepro(
+          !r.issues.exists(_.code == code) && r.exitCode == 0,
+          s"expected rift-lint to report no $code (and exit 0) for $name, got " +
+            s"${r.issues.map(_.code)} exit ${r.exitCode}: ${r.raw}"
+        )
+      )
+  }
+
   When("a proxy imposter to the HTTPS upstream is created") {
     for
       raw <- proxyToUpstreamJson

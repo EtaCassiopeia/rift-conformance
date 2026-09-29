@@ -305,6 +305,26 @@ socket so they can set `Host`, which the JDK `HttpClient` refuses. Excluded from
 | an invalid table (duplicate route id) refuses the reload, and the old routes keep serving | `an invalid route table refuses the reload and the old routes keep serving` (asserts status >= 400; 0.18.0 answers 500) |
 | a `routes` block without `--front-door` reloads with a `warnings` entry naming the flag | `a routes block without --front-door reloads with a warning naming the flag` |
 
+### `14-behaviors-response-types.feature` ← rift#1184 (rift#1192, rift#1194; issue #154) — DONE
+
+`_behaviors` and `repeat` on inject, proxy and fault responses. This is kept out of `06-behaviors`, which covers `is` responses. The feature runs on both the external and the embedded legs. Fixtures are under `behaviors-response-types/`. The proxy upstream is another imposter in the same engine: the fixture's `UPSTREAM_PORT` placeholder is filled in when the proxy imposter is posted.
+
+| Engine contract | Plane A scenario |
+|---|---|
+| inject: `decorate` rewrites the function's result | `decorate rewrites what an inject function returned` |
+| inject: `wait` delays it (≥ 500 ms, lower bound only) | `wait delays an inject response` |
+| inject: a function that throws runs no behavior (the injection-error 400, no decorate marker) | `an inject function that throws runs no behavior` |
+| proxy: `decorate` rewrites the live response | `decorate rewrites a live proxied response` |
+| proxy: under `proxyOnce` the replay is decorated once (`upX`, not `upXX`), and the upstream is hit once | `under proxyOnce the replay is decorated exactly once` |
+| proxy: with `predicateGenerators`, the recorded replay is `Y(X(upstream))` | `with predicateGenerators the recorded replay is Y(X(upstream))` |
+| proxy: a failed decorate records nothing, so the next request goes upstream again (upstream `numberOfRequests` 2) | `a failed decorate records nothing, so the next request goes upstream again` |
+| a block `repeat` cycles proxy / inject / fault responses | `a block repeat cycles a proxy response` / `… an inject response` / `… a fault response` |
+| a top-level `repeat: 3` wins over a block `repeat` | `a top-level repeat wins over a block repeat` |
+| rift-lint: a non-u32 top-level `repeat` → `E035` | `rift-lint refuses a top-level repeat that does not fit a u32` |
+| rift-lint: no `W017` for behaviors on inject/proxy blocks or a repeat-only block | `rift-lint raises no W017 for behaviors on inject and proxy blocks or a repeat-only block` |
+
+Not covered: excluding `wait` from `addWaitBehavior`'s recorded latency. It is timing-sensitive, and the engine test covers it. The fault-repeat scenario sends `POST`, because the JDK client retries an idempotent `GET` once after a reset, which would consume two repeat slots per step. On rift 0.17.0, 11 of the 13 scenarios fail. The throwing-inject and no-`W017` scenarios pass there too, so they are regression guards.
+
 ## Phase 2 admin/topology/proxy/reload surface — COMPLETE ✅ (features 07–11 all green)
 
 ## Plane B — MockControl mock corpus (issue #13)
