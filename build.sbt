@@ -11,19 +11,18 @@ val zioBddVersion = "1.5.1"
 // `rift-java-natives` classifier jar (added below). The `zio-bdd-rift-embedded*` artifacts are
 // gone (#145).
 //
-// ONE ENGINE VERSION: riftJavaVersion MUST equal the `rift-java-core` that zio-bdd-rift pulls in
-// (via rift-scala-zio 0.3.0) — the embedded engine and the core meet across the FFI boundary. The
-// rift-java 0.3.2 natives embed rift 0.18.0, while scripts/build-rift.sh fetches rift 0.18.1 for
-// the binary legs (external + container Plane A, rift-external Plane B). The split is patch-level
-// and ABI-unchanged (both releases' ffi-manifest.json declare `abi: v2` with identical symbols);
-// 0.18.1's fixes that need an 0.18.1 engine are tagged `@native-lag` and excluded from
-// engineEmbedded until rift-java ships natives carrying >= 0.18.1. Bump RIFT_VERSION, zioBddVersion
-// and riftJavaVersion together whenever the natives allow it.
+// ONE ENGINE VERSION: riftJavaVersion MUST equal the `rift-java-core` on the test classpath — the
+// embedded engine and the core meet across the FFI boundary. zio-bdd 1.5.1's zio-bdd-rift still
+// declares rift-java-core 0.3.2 (via rift-scala-zio 0.3.0), so core is declared explicitly below and
+// evicts it up to riftJavaVersion (a patch-level override). The rift-java 0.3.3
+// natives embed rift 0.18.1, the same engine scripts/build-rift.sh fetches for the binary legs
+// (external + container Plane A, rift-external Plane B), so the binary/native engine-version split
+// is closed again. Bump RIFT_VERSION, zioBddVersion and riftJavaVersion together.
 //
 // rift-java's `RiftFfi` binds the whole C-ABI (v2 admin symbols, `rift_verify`,
 // `rift_stub_warnings`, intercept list/clear/ca-pem), so the binding gap of #96 is gone; what the
 // harness wires up is in EmbeddedAdmin.
-val riftJavaVersion = "0.3.2"
+val riftJavaVersion = "0.3.3"
 
 // The RiftHarness, the Plane A steps, and their specs live under src/test — this build hosts the
 // conformance harness, not a shipped library, so its dependencies are test-scoped.
@@ -36,6 +35,9 @@ libraryDependencies ++= Seq(
   "io.github.etacassiopeia" %% "zio-bdd-wiremock" % zioBddVersion % Test, // Plane B: default backend (in-process, no Docker)
   // Plane B: gated backend (container / embedded FFM). Needs JDK 17+ (rift-java-core is class 61).
   "io.github.etacassiopeia" %% "zio-bdd-rift" % zioBddVersion % Test,
+  // Pins rift-java-core to riftJavaVersion on every JDK: zio-bdd-rift declares 0.3.2, and only the
+  // JDK 22+ rift-java-embedded dependency below would otherwise evict it (see ONE ENGINE VERSION).
+  "io.github.achird-labs" % "rift-java-core" % riftJavaVersion % Test,
   // RiftHarnessContainer (Plane A container mode) drives Docker through testcontainers-scala. Up to
   // zio-bdd 1.4.4 it arrived transitively via zio-bdd-rift; 1.5.0 moved to rift-java-testcontainers,
   // so it is declared here, at the version 1.4.4 carried.
@@ -133,8 +135,6 @@ addCommandAlias("engineConformance", "testOnly samples.rift.*")
 // this list is an allowlist — enrolling an unverified suite would make the embedded job red for a
 // reason that has nothing to do with the envelope contract it exists to pin.
 // 14-behaviors-response-types (#154) was verified green on the embedded leg before being enrolled.
-// `native-lag` marks scenarios asserting a fix newer than the embedded natives' rift (currently
-// rift#1219, fixed in 0.18.1 while the natives carry 0.18.0); drop the exclusion on the bump.
 // FfiAdminParity75Spec (#75), FfiStubWarnings92Spec (#92) and FfiVerifyParity94Spec (#94) diff
 // C-ABI calls against the admin HTTP API on one engine; they no-op outside RIFT_MODE=embedded, so
 // only this alias runs them.
@@ -145,7 +145,7 @@ addCommandAlias(
     "samples.rift.Templating05Suite samples.rift.Behaviors06Suite samples.rift.SpacesFsm07Suite " +
     "samples.rift.AdminSurface08Suite samples.rift.Reload11Suite samples.rift.Intercept12Suite " +
     "samples.rift.BehaviorsResponseTypes14Suite " +
-    "-- --exclude-tags intercept-http,intercept-caller-ca,intercept-runtime,front-door,upstream-trust,native-lag" +
+    "-- --exclude-tags intercept-http,intercept-caller-ca,intercept-runtime,front-door,upstream-trust" +
     " ; testOnly samples.rift.RiftEmbeddedHarnessSpec samples.rift.RiftToolsParseSpec" +
     " samples.rift.FfiAdminParity75Spec samples.rift.FfiStubWarnings92Spec" +
     " samples.rift.FfiVerifyParity94Spec"

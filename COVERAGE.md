@@ -540,15 +540,18 @@ A fixes-only release. Everything that moved is asserted rather than just re-run:
 |---|---|
 | rift#1217/#1218: `error-testing`, `latency-testing` and `task-management-api` move off 4545 to 4548/4549/4550 | Examples re-synced (PROVENANCE.md at v0.18.1). `ShippedExamples120Spec` lints `corpus/rift-examples/` in **one** directory run again (the per-file loop was the #1217 workaround), so the cross-file `E002` port check is exercised |
 | rift#1220 malformed `jsonpath`/`xpath` selector, rift#1221 invalid `matches` regex → `400 "bad data"` at every door | The two `@gap` pins in `13-error-envelope` flipped to a 7-row outline (see the never-2xx sweep below) |
-| rift#1219 `GET /imposters/{port}?replayable=true` honours `replayable`, exported from the live stubs | `08-admin-surface` "GET /imposters/{port}?replayable=true exports the live stubs …": a stub added after creation is exported; no `requests`/`numberOfRequests`/`_links`; the detail view is unchanged without the flag. Tagged `@native-lag` (see below) |
+| rift#1219 `GET /imposters/{port}?replayable=true` honours `replayable`, exported from the live stubs | `08-admin-surface` "GET /imposters/{port}?replayable=true exports the live stubs …": a stub added after creation is exported; no `requests`/`numberOfRequests`/`_links`; the detail view is unchanged without the flag. Runs on every leg, embedded included since rift-java 0.3.3 (see below) |
 
-**Engine-version split is back, patch-level.** The binary legs run 0.18.1; the embedded leg's
-rift-java 0.3.2 natives still carry 0.18.0. Both releases' `ffi-manifest.json` declare `abi: v2`
-with the same symbol list, so nothing in the binding moved. The one 0.18.1 fix visible through the
-embedded leg (#1219) stays pinned there: `engineEmbedded` excludes `@native-lag`, and
-`FfiAdminParity75Spec` keeps its `@gap rift#1219`. Flipping both is tracked by
-[#182](https://github.com/EtaCassiopeia/rift-conformance/issues/182), blocked on a rift-java natives
-release carrying ≥ 0.18.1.
+**Engine-version split: opened, then closed again by rift-java 0.3.3 (#182).** The 0.18.1 bump
+first left the embedded leg on rift-java 0.3.2 natives, which carry 0.18.0 (both releases declare
+`abi: v2` with the same symbols), so the #1219 scenario was tagged `@native-lag` and excluded from
+`engineEmbedded`, and `FfiAdminParity75Spec` pinned the old answer as `@gap rift#1219`. rift-java
+**0.3.3** natives embed rift **0.18.1**, the same engine as the binary legs. `riftJavaVersion` is
+0.3.3, and `rift-java-core` is declared explicitly at that version because zio-bdd 1.5.1's
+`zio-bdd-rift` still declares 0.3.2 (a patch-level override). The `@native-lag` tag and its
+`engineEmbedded` exclusion are gone, so the 08 scenario runs embedded too, and the FFI parity case
+now asserts the single route equals the FFI replayable view (`norm(httpSingleReplay) ==
+norm(ffiReplay)`).
 
 ## Pin bump 0.15.0 → 0.18.0 + zio-bdd 1.4.4 → 1.5.0 (2026-09-28) — closes #146, #145, #140
 
