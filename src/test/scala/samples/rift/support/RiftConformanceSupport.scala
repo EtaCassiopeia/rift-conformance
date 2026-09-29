@@ -2200,6 +2200,99 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
     )
   }
 
+  // ── journal filters + recorded-entry shape (feature 08, #201) ─────────────────────────────
+
+  Then("the response JSON at " / string / " is absent") { (path: String) =>
+    lastResponse.flatMap(r =>
+      parseAdminJson(r.body).flatMap { root =>
+        val v = jsonAt(root, path)
+        assertRepro(v.isEmpty, s"expected nothing at '$path', got ${v.map(_.toJson)} in: ${r.body}")
+      }
+    )
+  }
+
+  private def lastResponseArray: IO[Throwable, Chunk[Json]] =
+    lastResponse.flatMap(r =>
+      parseAdminJson(r.body).flatMap {
+        case Json.Arr(es) => ZIO.succeed(es)
+        case _ => ZIO.fail(new RuntimeException(s"response is not a JSON array: ${r.body}"))
+      }
+    )
+
+  Then("the response is a JSON array of " / int / " elements") { (n: Int) =>
+    lastResponseArray.flatMap(es =>
+      assertRepro(es.length == n, s"expected $n elements, got ${es.length}: ${Json.Arr(es).toJson}")
+    )
+  }
+
+  Then("every element of the response JSON array has a non-negative integer " / string) {
+    (field: String) =>
+      lastResponseArray.flatMap { es =>
+        val bad = es.filterNot(e =>
+          jsonAt(e, field).exists {
+            case Json.Num(x) => BigDecimal(x).isWhole && BigDecimal(x) >= 0
+            case _ => false
+          }
+        )
+        assertRepro(
+          es.nonEmpty && bad.isEmpty,
+          s"expected every element to carry a non-negative integer '$field'; offending: " +
+            s"${Json.Arr(bad).toJson} (of ${es.length})"
+        )
+      }
+  }
+
+  // A repeated header needs two header lines; the staged-request Map can hold only one per name.
+  When(
+    "the client sends " / string / " " / string / " with header " / string / " repeated as " /
+      string / " then " / string
+  ) { (method: String, path: String, h: String, v1: String, v2: String) =>
+    for
+      port <- currentPort
+      host <- ZIO.serviceWith[RiftHarness](_.hostFor(port))
+      url = s"http://$host:$port$path"
+      _ <- recordCurl(s"curl -X $method -H '$h: $v1' -H '$h: $v2' '$url'")
+      code <- ZIO.attemptBlocking {
+        val req = HttpRequest
+          .newBuilder(URI.create(url))
+          .timeout(java.time.Duration.ofSeconds(10))
+          .method(method.toUpperCase, HttpRequest.BodyPublishers.noBody)
+          .header(h, v1)
+          .header(h, v2)
+          .build()
+        http.send(req, HttpResponse.BodyHandlers.discarding()).statusCode()
+      }
+      _ <- assertRepro(code == 200, s"$method $path -> $code (expected 200)")
+    yield ()
+  }
+
+  // `hex` is space-separated bytes ("ff fe"): a body that is not UTF-8, so it must be recorded as
+  // base64 with `_mode: "binary"`.
+  When("the client posts the bytes " / string / " to " / string) { (hex: String, path: String) =>
+    for
+      port <- currentPort
+      host <- ZIO.serviceWith[RiftHarness](_.hostFor(port))
+      bytes <- ZIO
+        .attempt(hex.trim.split("\\s+").map(Integer.parseInt(_, 16).toByte))
+        .mapError(e => new IllegalArgumentException(s"bad hex bytes '$hex': ${e.getMessage}"))
+      url = s"http://$host:$port$path"
+      _ <- recordCurl(
+        s"printf '${bytes.map(b => f"\\x${b & 0xff}%02x").mkString}' | curl -X POST " +
+          s"-H 'Content-Type: application/octet-stream' --data-binary @- '$url'"
+      )
+      code <- ZIO.attemptBlocking {
+        val req = HttpRequest
+          .newBuilder(URI.create(url))
+          .timeout(java.time.Duration.ofSeconds(10))
+          .header("Content-Type", "application/octet-stream")
+          .POST(HttpRequest.BodyPublishers.ofByteArray(bytes))
+          .build()
+        http.send(req, HttpResponse.BodyHandlers.discarding()).statusCode()
+      }
+      _ <- assertRepro(code == 200, s"POST $path -> $code (expected 200)")
+    yield ()
+  }
+
   // #596/#597: one connect attempt, no retry — the delete must already have unbound the listener.
   Then("an immediate TCP connect to the current imposter is refused") {
     currentImposterAccepts.flatMap((host, port, ok) =>

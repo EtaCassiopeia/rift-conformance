@@ -137,3 +137,67 @@ Feature: Admin surface — stub-by-id, enable/disable, savedRequests filtering, 
     And the response JSON has no top-level field "_links"
     And the response JSON has 2 stubs and none carries "_links"
     And the response body contains "/added"
+
+  # ── journal filters + recorded-entry shape (#201, docs/api/index.md § savedRequests) ────────────
+  # Three requests: GET /a (space s1), GET /b?x=1 (s1), POST /a with a body (s2) — journal order, so
+  # the array positions below are deterministic. The body is staged last because a staged body
+  # persists across sends. Every `match=` clause is AND-ed (#700).
+  Scenario: savedRequests match= filters by method (case-sensitive), bare path and flow_id
+    Given a fresh imposter from fixture "admin/journal-flows"
+    When the request header "X-Space" is "s1"
+    And the client sends "GET" "/a"
+    And the client sends "GET" "/b?x=1"
+    And the request header "X-Space" is "s2"
+    And the request body is "hello"
+    And the client sends "POST" "/a"
+    When the client sends admin "GET" "/imposters/{port}/savedRequests?match=method=GET" with payload "-"
+    Then the response is a JSON array of 2 elements
+    When the client sends admin "GET" "/imposters/{port}/savedRequests?match=method=get" with payload "-"
+    Then the response is a JSON array of 0 elements
+    When the client sends admin "GET" "/imposters/{port}/savedRequests?match=path=/b" with payload "-"
+    Then the response is a JSON array of 1 elements
+    When the client sends admin "GET" "/imposters/{port}/savedRequests?match=flow_id=s1" with payload "-"
+    Then the response is a JSON array of 2 elements
+    When the client sends admin "GET" "/imposters/{port}/savedRequests?match=flow_id=s1&match=method=POST" with payload "-"
+    Then the response is a JSON array of 0 elements
+
+  # Journal indices start at 1 and `since` is exclusive, so after three requests the cursor is 3 —
+  # passing it back verbatim yields nothing. A fresh journal reports 0.
+  Scenario: savedRequests reports the x-rift-next-index cursor
+    Given a fresh imposter from fixture "admin/journal-flows"
+    When the client sends admin "GET" "/imposters/{port}/savedRequests" with payload "-"
+    Then the response header "x-rift-next-index" is "0"
+    When the client sends "GET" "/a"
+    And the client sends "GET" "/b"
+    And the client sends "GET" "/c"
+    And the client sends admin "GET" "/imposters/{port}/savedRequests" with payload "-"
+    Then the response is a JSON array of 3 elements
+    And the response header "x-rift-next-index" is "3"
+    When the client sends admin "GET" "/imposters/{port}/savedRequests?since=3" with payload "-"
+    Then the response is a JSON array of 0 elements
+
+  # 0.18.0 (#364/#940): status and latencyMs are recorded together; `body` only when there was one.
+  Scenario: a recorded entry carries status and latencyMs, and body only when the request had one
+    Given a fresh imposter from fixture "admin/journal-flows"
+    When the client sends "GET" "/a"
+    And the request body is "hello"
+    And the client sends "POST" "/a"
+    And the client sends admin "GET" "/imposters/{port}/savedRequests" with payload "-"
+    Then the response is a JSON array of 2 elements
+    And every element of the response JSON array has a non-negative integer "status"
+    And every element of the response JSON array has a non-negative integer "latencyMs"
+    And the response JSON at "0.status" is the number 200
+    And the response JSON at "0.body" is absent
+    And the response JSON at "1.body" is the string "hello"
+    And the response JSON at "0.requestFrom" is a non-empty string
+
+  Scenario: a repeated header is recorded as a list in send order; a binary body as base64
+    Given a fresh imposter from fixture "admin/journal-flows"
+    When the client sends "GET" "/m" with header "X-M" repeated as "a" then "b"
+    And the client posts the bytes "ff fe" to "/bin"
+    And the client sends admin "GET" "/imposters/{port}/savedRequests" with payload "-"
+    Then the response JSON at "0.headers.X-M" has 2 elements
+    And the response JSON at "0.headers.X-M.0" is the string "a"
+    And the response JSON at "0.headers.X-M.1" is the string "b"
+    And the response JSON at "1._mode" is the string "binary"
+    And the response JSON at "1.body" is the string "//4="
