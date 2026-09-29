@@ -1,6 +1,6 @@
 package samples.rift
 
-import samples.rift.support.RiftTools
+import samples.rift.support.{RiftTools, TestPorts}
 import zio.*
 import zio.json.*
 import zio.json.ast.Json
@@ -9,7 +9,6 @@ import zio.test.*
 
 import java.net.URI
 import java.net.http.{HttpClient, HttpRequest, HttpResponse}
-import java.net.ServerSocket
 import java.nio.file.{Files, Path, Paths}
 import scala.jdk.CollectionConverters.*
 
@@ -114,13 +113,6 @@ object SdkCorpusReplay83Spec extends ZIOSpecDefault:
       out.toFile.deleteOnExit()
       Files.writeString(out, json)
       out
-    }
-
-  private def freePort: Task[Int] =
-    ZIO.attemptBlocking {
-      val s = new ServerSocket(0)
-      try s.getLocalPort
-      finally s.close()
     }
 
   private def spawnEngine(
@@ -229,8 +221,8 @@ object SdkCorpusReplay83Spec extends ZIOSpecDefault:
             for
               manifest <- readManifest(dir)
               config <- combinedConfig(dir, manifest)
-              port <- freePort
-              metricsPort <- freePort
+              port <- TestPorts.next
+              metricsPort <- TestPorts.next
               proc <- spawnEngine(bd, dir.resolve("corpus"), config, port, metricsPort)
               _ <- awaitAdmin(port, proc)
               loaded <- loadedImposterCount(port)

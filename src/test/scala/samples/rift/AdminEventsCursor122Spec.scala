@@ -1,5 +1,6 @@
 package samples.rift
 
+import samples.rift.support.TestPorts
 import zio.*
 import zio.test.*
 
@@ -37,12 +38,6 @@ object AdminEventsCursor122Spec extends ZIOSpecDefault:
       (r.statusCode, r.body)
     }
 
-  private def freePort: Task[Int] = ZIO.attemptBlocking {
-    val s = new java.net.ServerSocket(0)
-    try s.getLocalPort
-    finally s.close()
-  }
-
   /** Top-level JSON array elements, counted structurally rather than by a substring. */
   private def arrayLength(body: String): Option[Int] =
     val t = body.trim
@@ -78,7 +73,7 @@ object AdminEventsCursor122Spec extends ZIOSpecDefault:
   private def engine: ZIO[Scope, Throwable, String] =
     for
       buildDir <- ZIO.fromOption(buildDirOpt).orElseFail(new RuntimeException("no RIFT_BUILD_DIR"))
-      port <- freePort
+      port <- TestPorts.next
       _ <- ZIO.acquireRelease(ZIO.attemptBlocking {
         val pb = new ProcessBuilder(
           s"$buildDir/rift",
@@ -104,7 +99,7 @@ object AdminEventsCursor122Spec extends ZIOSpecDefault:
   /** A recording imposter plus `n` requests driven at it. */
   private def recordingImposter(admin: String, n: Int): Task[Int] =
     for
-      port <- freePort
+      port <- TestPorts.next
       created <- send(
         s"$admin/imposters",
         "POST",

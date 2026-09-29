@@ -1,11 +1,11 @@
 package samples.rift
 
+import samples.rift.support.TestPorts
 import zio.*
 import zio.test.*
 
 import java.net.URI
 import java.net.http.{HttpClient, HttpRequest, HttpResponse}
-import java.net.ServerSocket
 import java.nio.file.{Files, Path, Paths}
 
 /** File-based script authoring (rift#441, #87): a `_rift.script` can reference its code by `file:`
@@ -28,13 +28,6 @@ object FileScriptAuthoring87Spec extends ZIOSpecDefault:
   private def buildDir: Option[Path] = sys.env.get("RIFT_BUILD_DIR").map(Paths.get(_))
 
   private val scriptsDir: Path = Paths.get("src/test/resources/rift-scripts").toAbsolutePath
-
-  private def freePort: Task[Int] =
-    ZIO.attemptBlocking {
-      val s = new ServerSocket(0)
-      try s.getLocalPort
-      finally s.close()
-    }
 
   private def spawnEngine(
       bd: Path,
@@ -104,8 +97,8 @@ object FileScriptAuthoring87Spec extends ZIOSpecDefault:
       case Some(bd) =>
         ZIO.scoped {
           for
-            adminPort <- freePort
-            metricsPort <- freePort
+            adminPort <- TestPorts.next
+            metricsPort <- TestPorts.next
             proc <- spawnEngine(bd, adminPort, metricsPort)
             _ <- awaitAdmin(adminPort, proc)
             r <- f(adminPort)
@@ -116,7 +109,7 @@ object FileScriptAuthoring87Spec extends ZIOSpecDefault:
     test("a file: script reference resolves under --scripts-dir and serves") {
       withEngine { adminPort =>
         for
-          port <- freePort
+          port <- TestPorts.next
           created <- send(
             "POST",
             s"http://127.0.0.1:$adminPort/imposters",
@@ -129,7 +122,7 @@ object FileScriptAuthoring87Spec extends ZIOSpecDefault:
     test("a ref: script reference resolves a named _rift.scripts entry and serves") {
       withEngine { adminPort =>
         for
-          port <- freePort
+          port <- TestPorts.next
           created <- send("POST", s"http://127.0.0.1:$adminPort/imposters", Some(refImposter(port)))
           served <- send("GET", s"http://127.0.0.1:$port/r", None)
         yield assertTrue(created._1 == 201, served._1 == 200, served._2 == "from-named-ref")
@@ -138,7 +131,7 @@ object FileScriptAuthoring87Spec extends ZIOSpecDefault:
     test("a file: path escaping --scripts-dir is rejected") {
       withEngine { adminPort =>
         for
-          port <- freePort
+          port <- TestPorts.next
           created <- send(
             "POST",
             s"http://127.0.0.1:$adminPort/imposters",

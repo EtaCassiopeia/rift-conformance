@@ -2,6 +2,7 @@ package samples.rift
 
 import samples.rift.support.EmbeddedAdmin.{Admin, StubRef}
 import samples.rift.support.FfiParity.*
+import samples.rift.support.TestPorts
 import zio.*
 import zio.json.*
 import zio.json.ast.Json
@@ -409,7 +410,7 @@ object FfiAdminParity75Spec extends ZIOSpecDefault:
         val ffi = admin.handle
         for
           port <- create(admin, TwoStubs)
-          unknown <- freePort
+          unknown <- TestPorts.next
           httpImp <- http("GET", s"${admin.adminUrl}/imposters/$unknown").map(_.status)
           httpStub <- http("GET", s"${admin.adminUrl}/imposters/$port/stubs/by-id/nope")
             .map(_.status)

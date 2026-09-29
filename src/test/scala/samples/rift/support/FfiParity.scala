@@ -6,7 +6,7 @@ import zio.json.*
 import zio.json.ast.Json
 import zio.test.*
 
-import java.net.{ServerSocket, URI}
+import java.net.URI
 import java.net.http.{HttpClient, HttpRequest, HttpResponse}
 import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Path}
@@ -85,13 +85,6 @@ object FfiParity:
     case Json.Obj(fields) => fields.map(_._1).toSet
     case _ => Set.empty
 
-  def freePort: Task[Int] =
-    ZIO.attemptBlocking {
-      val s = new ServerSocket(0)
-      try s.getLocalPort
-      finally s.close()
-    }
-
   def stub(id: String, path: String, body: String): Json =
     Json.Obj(
       "id" -> Json.Str(id),
@@ -116,7 +109,7 @@ object FfiParity:
   /** Create an imposter over HTTP on a fresh port; yields the port. */
   def create(admin: Admin, stubs: Chunk[Json], extra: (String, Json)*): Task[Int] =
     for
-      port <- freePort
+      port <- TestPorts.next
       _ <- httpJson(
         "POST",
         s"${admin.adminUrl}/imposters",
