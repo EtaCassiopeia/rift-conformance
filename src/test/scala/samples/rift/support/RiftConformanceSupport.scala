@@ -1811,6 +1811,41 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
     )
   }
 
+  // rift#1199: `GET /imposters/:port` writes a multi-item `_behaviors.copy` back as a `behaviors`
+  // array holding one `{"copy": {...}}` element per item, the shape Mountebank itself loads.
+  Then(
+    "the current imposter writes stub " / int / " back with " / int / " single-item copy behaviors"
+  ) { (index: Int, n: Int) =>
+    for
+      port <- currentPort
+      admin <- ZIO.serviceWith[RiftHarness](_.adminUrl)
+      resp <- httpSend(s"$admin/imposters/$port", "GET", Map.empty, None)
+      json <- parseAdminJson(resp.body)
+      behaviors = for
+        stubs <- field(json, "stubs").collect { case Json.Arr(s) => s }
+        stub <- stubs.lift(index)
+        responses <- field(stub, "responses").collect { case Json.Arr(r) => r }
+        first <- responses.headOption
+        b <- field(first, "behaviors").collect { case Json.Arr(b) => b.toList }
+      yield b
+      singleCopies = behaviors.toList.flatten.count {
+        case Json.Obj(fs) =>
+          fs.map(_._1).toList == List("copy") && field(Json.Obj(fs), "copy")
+            .exists(_.isInstanceOf[Json.Obj])
+        case _ => false
+      }
+      _ <- assertRepro(
+        behaviors.exists(_.length == n) && singleCopies == n,
+        s"expected stub $index written back as $n single-item copy behaviors, got " +
+          behaviors.fold("<no behaviors array>")(_.map(_.toJson).mkString("[", ",", "]"))
+      )
+    yield ()
+  }
+
+  private def field(json: Json, name: String): Option[Json] = json match
+    case Json.Obj(fs) => fs.collectFirst { case (`name`, v) => v }
+    case _ => None
+
   Then("the response took at most " / int / " ms") { (ceil: Int) =>
     elapsedMs.flatMap(ms =>
       assertRepro(ms <= ceil, s"expected the request to take <= $ceil ms, took $ms ms")
