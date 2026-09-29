@@ -121,7 +121,9 @@ addCommandAlias("engineConformance", "testOnly samples.rift.*")
 // embedded FFI binds start-intercept/add-rules/export-truststore but not the HTTP-only ca.pem +
 // rules-list/clear routes, so those two scenarios (tagged @intercept-http) are skipped here.
 // 11-reload's @front-door scenarios (rift#1160) need an engine spawned with `--front-door`, which
-// only external mode can do, so they are excluded too. The
+// only external mode can do, so they are excluded too. `upstream-trust` (feature 09, rift#974) spawns
+// a second engine the same way; 09 is in neither the embedded nor the container list, but the tag is
+// excluded from both so enrolling 09 later cannot pull it in. The
 // zio-test specs run in a second step (the zio-bdd `--exclude-tags` arg is not theirs to parse).
 // 13-error-envelope (#118) is likewise absent: its doors (strictBehaviors shellTransform, the
 // `defaultForward` 502, the over-size-body cap) were only verified against the spawned engine, and
@@ -135,7 +137,7 @@ addCommandAlias(
     "samples.rift.FaultsTransport03Suite samples.rift.ScriptingBounds04Suite " +
     "samples.rift.Templating05Suite samples.rift.Behaviors06Suite samples.rift.SpacesFsm07Suite " +
     "samples.rift.AdminSurface08Suite samples.rift.Reload11Suite samples.rift.Intercept12Suite " +
-    "-- --exclude-tags intercept-http,intercept-caller-ca,intercept-runtime,front-door" +
+    "-- --exclude-tags intercept-http,intercept-caller-ca,intercept-runtime,front-door,upstream-trust" +
     " ; testOnly samples.rift.RiftEmbeddedHarnessSpec samples.rift.RiftToolsParseSpec" +
     " samples.rift.FfiAdminParity75Spec"
 )
@@ -161,7 +163,7 @@ addCommandAlias(
   "engineContainer",
   "; testOnly samples.rift.RiftContainerHarnessSpec samples.rift.RiftToolsParseSpec" +
     " ; testOnly samples.rift.ConsistencyGateSuite samples.rift.FaultsTransport03Suite " +
-    "samples.rift.Intercept12Suite -- --exclude-tags full-corpus-verify,intercept-caller-ca,intercept-runtime"
+    "samples.rift.Intercept12Suite -- --exclude-tags full-corpus-verify,intercept-caller-ca,intercept-runtime,upstream-trust"
 )
 
 // `lintFeatures` — the dry-run step-matching gate (#142): loads the feature suites and checks every

@@ -234,6 +234,22 @@ Harness: `RiftHarness` now spawns the engine with a fresh `--metrics-port` and e
 (the metrics listener is a separate port from the admin API, per the old `conformance-ext.sh`
 `METRICS_URL` note); a trust-all `HttpClient` (confined to the HTTPS send) drives the self-signed leg.
 
+**TLS trust in both directions (issue #149).** Test certificates are committed under
+`rift-fixtures/tls/`, which also documents how they were generated. They are signed by the existing
+intercept test CA.
+
+| Engine contract | Plane A scenario | Fixture |
+|---|---|---|
+| rift#977 `mutualAuth` requires a client cert: a client presenting none fails the handshake | `a mutualAuth imposter refuses a client that presents no certificate` | `tls/mutual-auth-ca` |
+| rift#977 `mutualAuth` + `rejectUnauthorized` + `ca`: a cert the CA signed gets 200, an unrelated one fails the handshake | `a mutualAuth imposter validating against the test CA accepts only a cert that CA signed` | `tls/mutual-auth-ca` |
+| rift#977 `mutualAuth` alone accepts a cert from any issuer, but still requires one | `a mutualAuth imposter without rejectUnauthorized accepts a client cert from any issuer` | `tls/mutual-auth-any` |
+| rift#974 `--upstream-ca-file`: a proxy trusts an HTTPS upstream signed by that CA; the shared engine (no flag) gets a 502 with `x-rift-proxy-error` (`@upstream-trust`, external-only) | `a proxy trusts an HTTPS upstream only when its CA is given to --upstream-ca-file` | `tls/upstream` |
+
+The `@upstream-trust` scenario runs on a dedicated engine spawned with `--upstream-ca-file`
+(`RiftHarness.startUpstreamTrustEngine`, reaped in `afterScenario`), following the `@intercept-runtime`
+sidecar pattern. `--upstream-tls-skip-verify` is not covered. On rift 0.17.0 the three mTLS
+scenarios fail: every client gets HTTP 200.
+
 ### `10-proxy-record.feature` ← conformance proxy + ext proxy — DONE (closes #9)
 
 | Spec item (issue #9) | Plane A scenario | Fixtures |
