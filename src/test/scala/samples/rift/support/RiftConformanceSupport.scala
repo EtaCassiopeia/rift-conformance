@@ -1117,13 +1117,18 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
     */
   private def serverVerify(
       pathEquals: String,
-      includeClosest: Boolean
+      includeClosest: Boolean,
+      flowId: Option[String] = None
   ): ZIO[RiftHarness, Throwable, VerifyResult] =
     for
       port <- currentPort
       admin <- ZIO.serviceWith[RiftHarness](_.adminUrl)
       closestField = if includeClosest then ""","includeClosest":true""" else ""
-      body = s"""{"predicates":[{"equals":{"path":"${jsonEscape(pathEquals)}"}}]$closestField}"""
+      flowField = flowId.fold("")(f => s""","flowId":"${jsonEscape(f)}"""")
+      body =
+        s"""{"predicates":[{"equals":{"path":"${jsonEscape(
+            pathEquals
+          )}"}}]$closestField$flowField}"""
       resp <- httpSend(
         s"$admin/imposters/$port/verify",
         "POST",
@@ -1753,6 +1758,19 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
           s"verify path=$path: expected matched=$matched total=$total, got matched=${r.matched} total=${r.total}"
         )
       )
+  }
+
+  Then(
+    "a verify for path " / string / " in flow " / string / " matches " / int / " of " / int /
+      " recorded requests"
+  ) { (path: String, flowId: String, matched: Int, total: Int) =>
+    serverVerify(path, includeClosest = false, flowId = Some(flowId)).flatMap(r =>
+      assertRepro(
+        r.matched == matched && r.total == total,
+        s"verify path=$path flowId=$flowId: expected matched=$matched total=$total, " +
+          s"got matched=${r.matched} total=${r.total}"
+      )
+    )
   }
 
   Then(

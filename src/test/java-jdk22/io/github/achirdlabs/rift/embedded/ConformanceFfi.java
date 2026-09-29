@@ -179,6 +179,13 @@ public final class ConformanceFfi implements EmbeddedFfi {
   }
 
   @Override
+  public String verify(int port, String bodyJson) {
+    try (var a = Arena.ofConfined()) {
+      return readAndFree(ffi.verify(handle, port, FfmCompat.allocateCString(a, bodyJson)));
+    }
+  }
+
+  @Override
   public void stop() {
     try {
       ffi.stop(handle);

@@ -68,6 +68,22 @@ Feature: Admin surface — stub-by-id, enable/disable, savedRequests filtering, 
     When the client sends "GET" "/other"
     Then a verify for path "/absent" with includeClosest reports the closest request path "/other"
 
+  # #94: verify's `flowId` scopes BOTH counts to one flow, resolved through the imposter's
+  # `flowState.flowIdSource` (here the X-Space header) — the same scoping savedRequests
+  # ?match=flow_id= applies. Without `flowId` the count spans every flow; an unseen flow is 0 of 0.
+  Scenario: verify flowId scopes matched and total to one flow
+    Given a fresh imposter from fixture "admin/verify-flows"
+    When the request header "X-Space" is "blue"
+    And the client sends "GET" "/hi"
+    And the client sends "GET" "/hi"
+    And the client sends "GET" "/other"
+    And the request header "X-Space" is "green"
+    And the client sends "GET" "/hi"
+    Then a verify for path "/hi" matches 3 of 4 recorded requests
+    And a verify for path "/hi" in flow "blue" matches 2 of 3 recorded requests
+    And a verify for path "/hi" in flow "green" matches 1 of 1 recorded requests
+    And a verify for path "/hi" in flow "absent" matches 0 of 0 recorded requests
+
   Scenario: flow-state KV full lifecycle — set, get, delete, then 404
     Given a fresh imposter from fixture "admin/base"
     When the client sets flow-state "k1" in flow "f1" to "v1"

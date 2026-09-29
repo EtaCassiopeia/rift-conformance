@@ -33,6 +33,7 @@ trait EmbeddedFfi:
   def setScenarioState(port: Int, name: String, stateJson: String): Unit
   def resetScenarios(port: Int, flowId: String): Unit
   def stubWarnings(port: Int): String
+  def verify(port: Int, bodyJson: String): String
   def stop(): Unit
 
 /** Starts the in-process engine with its real admin API for the Plane A `RiftHarness` embedded mode
@@ -147,6 +148,13 @@ object EmbeddedAdmin:
       */
     def stubWarnings(port: Int): Task[Json] =
       ZIO.attemptBlocking(ffi.stubWarnings(port)).flatMap(parseJson)
+
+    /** `rift_verify` (rift#494) — `body` is the `POST /imposters/{port}/verify` body
+      * `{"predicates","flowId"?,"includeRequests"?,"includeClosest"?}`; yields the
+      * `{"matched","total","requests"?,"closest"?}` envelope.
+      */
+    def verify(port: Int, body: Json): Task[Json] =
+      ZIO.attemptBlocking(ffi.verify(port, body.toJson)).flatMap(parseJson)
 
   /** How `rift_get_stub`/`rift_update_stub`/`rift_delete_stub` address a stub. */
   enum StubRef:
