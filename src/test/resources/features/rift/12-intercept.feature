@@ -128,3 +128,32 @@ Feature: Intercept / TLS-MITM forward-proxy (rift#413) — CONNECT interception 
     When a raw HTTPS POST of 1052672 body bytes of pipelined "/smuggled" requests to "tail.example.com" "/upload" through the intercept tunnel
     Then the response status is 413
     And the next raw HTTPS GET to "tail.example.com" "/after" on the same tunnel is answered "after-413" or the connection is closed
+
+  # rift 0.18.0: the intercept listener advertises `h2, http/1.1` over ALPN (rift#996), and a request
+  # header sent more than once keeps every value for matching and forwarding (rift#994).
+  Scenario: an h2-capable client negotiates HTTP/2 through the intercept tunnel (rift#996)
+    Given an intercept rule serves 200 "over-h2" for host "h2.example.com" path "/h2"
+    When an HTTP/2 HTTPS GET to "h2.example.com" "/h2" through the intercept proxy
+    Then the response status is 200
+    And the response body is "over-h2"
+    And the response was served over HTTP/2
+
+  @intercept-raw
+  Scenario: a repeated request header matches an intercept rule on either value (rift#994)
+    Given an intercept rule serves 200 "saw-first" for host "multi-first.example.com" when header "x-multi" equals "first"
+    And an intercept rule serves 200 "saw-second" for host "multi-second.example.com" when header "x-multi" equals "second"
+    When a raw HTTPS GET to "multi-first.example.com" "/" with header "x-multi" sent as "first" then "second" through the intercept tunnel
+    Then the response status is 200
+    And the response body is "saw-first"
+    When a raw HTTPS GET to "multi-second.example.com" "/" with header "x-multi" sent as "first" then "second" through the intercept tunnel
+    Then the response status is 200
+    And the response body is "saw-second"
+
+  @intercept-raw
+  Scenario: a repeated request header is forwarded with every value, in order (rift#994)
+    Given a fresh imposter from fixture "intercept/upstream-recording"
+    And an intercept rule forwards host "multi-forward.example.com" to the current imposter
+    When a raw HTTPS GET to "multi-forward.example.com" "/svc" with header "x-multi" sent as "first" then "second" through the intercept tunnel
+    Then the response status is 200
+    And the response body is "upstream-ok"
+    And the current imposter recorded header "x-multi" as "first" then "second"

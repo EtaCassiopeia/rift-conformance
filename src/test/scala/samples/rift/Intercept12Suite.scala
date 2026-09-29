@@ -9,6 +9,8 @@ import samples.rift.support.{
   RiftState
 }
 import zio.*
+import zio.json.*
+import zio.json.ast.Json
 import zio.bdd.core.Assertions
 import zio.bdd.core.Suite
 import zio.bdd.core.step.{Stage, ZIOSteps}
@@ -148,34 +150,35 @@ object Intercept12Suite
 
   /** Issue an HTTPS GET to `host``path` THROUGH the intercept listener (as an HTTP proxy: the JDK
     * client sends `CONNECT host:443`, which rift intercepts and TLS-MITMs). No DNS for `host` is
-    * needed — the proxy tunnels by name.
+    * needed — the proxy tunnels by name. `version` is the client's preference; the protocol ALPN
+    * actually settled on comes back with the response.
     */
   private def httpsViaIntercept(
       host: String,
-      path: String
-  ): ZIO[RiftHarness, Throwable, LastResponse] =
+      path: String,
+      version: HttpClient.Version = HttpClient.Version.HTTP_2
+  ): ZIO[RiftHarness, Throwable, (LastResponse, HttpClient.Version)] =
     for
-      ep <- ZIO.serviceWithZIO[RiftHarness](_.interceptEndpoint)
-      hostPort <- ZIO
-        .fromOption(ep)
-        .orElseFail(
-          new RuntimeException("no intercept listener — RIFT_MODE does not support intercept")
-        )
-      (iHost, iPort) = hostPort
+      listener <- interceptListener
+      (iHost, iPort) = listener
       bytes <- ZIO.serviceWithZIO[RiftHarness](_.interceptTruststore(TrustPassword))
       ssl <- sslFromTruststore(bytes)
       resp <- ZIO.attemptBlocking {
         val client = HttpClient
           .newBuilder()
+          .version(version)
           .sslContext(ssl)
           .proxy(ProxySelector.of(new InetSocketAddress(iHost, iPort)))
           .build()
         val req = HttpRequest.newBuilder(URI.create(s"https://$host$path")).GET().build()
         val r = client.send(req, HttpResponse.BodyHandlers.ofString())
         val hs = r.headers.map.asScala.map((k, v) => k.toLowerCase -> v.asScala.toList).toMap
-        LastResponse(r.statusCode, r.body, hs)
+        (LastResponse(r.statusCode, r.body, hs), r.version)
       }
     yield resp
+
+  /** The HTTP version the last `httpsViaIntercept` exchange was served over. */
+  private final case class NegotiatedVersion(version: HttpClient.Version)
 
   // ── @intercept-raw: the raw tunnel client (framing + connection contracts HttpClient hides) ──
 
@@ -420,7 +423,84 @@ object Intercept12Suite
   }
 
   When("an HTTPS GET to " / string / " " / string / " through the intercept proxy") {
-    (host: String, path: String) => httpsViaIntercept(host, path).flatMap(Stage.put(_))
+    (host: String, path: String) => httpsViaIntercept(host, path).flatMap((r, _) => Stage.put(r))
+  }
+
+  When("an HTTP/2 HTTPS GET to " / string / " " / string / " through the intercept proxy") {
+    (host: String, path: String) =>
+      httpsViaIntercept(host, path, HttpClient.Version.HTTP_2).flatMap((r, v) =>
+        Stage.put(r) *> Stage.put(NegotiatedVersion(v))
+      )
+  }
+
+  Then("the response was served over HTTP/2") {
+    Stage
+      .get[NegotiatedVersion]
+      .mapError(e => new IllegalStateException(s"no HTTP/2 exchange was made ($e)"))
+      .flatMap(n =>
+        assertRepro(
+          n.version == HttpClient.Version.HTTP_2,
+          s"expected ALPN to negotiate HTTP/2 through the tunnel, got ${n.version}"
+        )
+      )
+  }
+
+  Given(
+    "an intercept rule serves " / int / " " / string / " for host " / string / " when header " / string / " equals " / string
+  ) { (status: Int, body: String, host: String, header: String, value: String) =>
+    val rule =
+      s"""{"host":"${jsonEscape(host)}","predicates":[{"equals":{"headers":{"${jsonEscape(
+          header
+        )}":"${jsonEscape(value)}"}}}],"action":{"serve":{"statusCode":$status,"body":"${jsonEscape(
+          body
+        )}"}}}"""
+    ZIO.serviceWithZIO[RiftHarness](_.interceptAddRule(rule))
+  }
+
+  // Two separate header lines with one name — a JDK HttpClient may fold them, the raw client can't.
+  When(
+    "a raw HTTPS GET to " / string / " " / string / " with header " / string / " sent as " / string / " then " / string / " through the intercept tunnel"
+  ) { (host: String, path: String, name: String, first: String, second: String) =>
+    rawExchange(
+      host,
+      RawHttpConnection.request("GET", host, path, headers = List(name -> first, name -> second))
+    )
+  }
+
+  Then(
+    "the current imposter recorded header " / string / " as " / string / " then " / string
+  ) { (name: String, first: String, second: String) =>
+    for
+      port <- currentPort
+      admin <- ZIO.serviceWith[RiftHarness](_.adminUrl)
+      body <- ZIO.attemptBlocking {
+        val req = HttpRequest.newBuilder(URI.create(s"$admin/imposters/$port")).GET().build()
+        http.send(req, HttpResponse.BodyHandlers.ofString()).body
+      }
+      json <- ZIO.fromEither(body.fromJson[Json]).mapError(e => new RuntimeException(s"$e: $body"))
+      // The one recorded request's values for `name` (header names are case-insensitive); a
+      // single value records as a string, a repeated header as an array.
+      values = json match
+        case Json.Obj(fields) =>
+          fields
+            .collectFirst { case ("requests", Json.Arr(reqs)) => reqs.toList }
+            .toList
+            .flatten
+            .collect { case Json.Obj(r) => r }
+            .flatMap(_.collectFirst { case ("headers", Json.Obj(hs)) => hs.toList }.toList.flatten)
+            .collect { case (k, v) if k.equalsIgnoreCase(name) => v }
+            .flatMap {
+              case Json.Str(v) => List(v)
+              case Json.Arr(vs) => vs.toList.collect { case Json.Str(v) => v }
+              case _ => Nil
+            }
+        case _ => Nil
+      _ <- assertRepro(
+        values == List(first, second),
+        s"expected the forwarded request to carry $name as [$first, $second] in order, got $values: " +
+          body.take(400)
+      )
+    yield ()
   }
 
   Then("the intercept rules count is " / int) { (n: Int) =>
