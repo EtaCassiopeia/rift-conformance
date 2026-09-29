@@ -76,6 +76,15 @@ object AllowInjectionMatrix116Spec extends ZIOSpecDefault:
 
   private val CleanStub = """{"responses":[{"is":{"statusCode":200,"body":"ok"}}]}"""
 
+  /** rift#1101's exploit: the fifth positional slot used to land in `shellTransform`. */
+  private val PositionalBehaviors =
+    """{"responses":[{"is":{"statusCode":200},"_behaviors":[null,null,null,null,"echo pwned"]}]}"""
+  private val ScalarBehaviors = """{"responses":[{"is":{"statusCode":200},"behaviors":"x"}]}"""
+  private val ObjectBehaviors =
+    """{"responses":[{"is":{"statusCode":200},"behaviors":[{"wait":1}]}]}"""
+  private val NullUnderscoreBehaviors =
+    """{"responses":[{"is":{"statusCode":200},"_behaviors":null,"behaviors":[{"wait":1}]}]}"""
+
   private def imposter(port: Int, stub: String): String =
     s"""{"port":$port,"protocol":"http","stubs":[$stub]}"""
 
@@ -335,6 +344,63 @@ object AllowInjectionMatrix116Spec extends ZIOSpecDefault:
           // The bypass rift#612 fixed was a reload mutating state it had no right to touch.
           after == before
         )
+      }
+    },
+    // ── positional `_behaviors` array (rift#1101, fixed in 0.18.0) ─────────────────────────────
+    // The engine used to read an ARRAY `_behaviors` by position into the behaviors block, so the
+    // fifth slot landed in `shellTransform` and was admitted with the gate shut. The fix refuses the
+    // shape at the schema layer, so the answer is the same `bad data` whether the gate is on or off.
+    test("a positional _behaviors array is refused with the gate OFF and ON; controls still load") {
+      external {
+        for
+          // One engine at a time: both legs bind the same imposter ports.
+          results <- ZIO.foreach(List(false, true)) { gateOn =>
+            ZIO.scoped:
+              for
+                eng <- engine(Nil, gateOn = gateOn)
+                admin = eng._1
+                positional <- send(
+                  s"$admin/imposters",
+                  "POST",
+                  Some(imposter(9700, PositionalBehaviors))
+                )
+                positionalGet <- send(s"$admin/imposters/9700", "GET", None)
+                scalar <- send(s"$admin/imposters", "POST", Some(imposter(9701, ScalarBehaviors)))
+                scalarGet <- send(s"$admin/imposters/9701", "GET", None)
+                objArray <- send(s"$admin/imposters", "POST", Some(imposter(9702, ObjectBehaviors)))
+                nullFallback <- send(
+                  s"$admin/imposters",
+                  "POST",
+                  Some(imposter(9703, NullUnderscoreBehaviors))
+                )
+              yield (
+                gateOn,
+                positional,
+                positionalGet._1,
+                scalar,
+                scalarGet._1,
+                objArray,
+                nullFallback
+              )
+          }
+        yield
+          val checks = results.map { case (gateOn, pos, posGet, sc, scGet, obj, nul) =>
+            assertTrue(
+              pos._1 == 400,
+              errorType(pos._2).contains("bad data"),
+              pos._2.contains("`_behaviors`"),
+              posGet == 404,
+              sc._1 == 400,
+              errorType(sc._2).contains("bad data"),
+              sc._2.contains("`behaviors`"),
+              scGet == 404,
+              obj._1 == 201,
+              nul._1 == 201,
+              // The fallback must keep the `behaviors` block, not silently drop it.
+              nul._2.contains("\"wait\"")
+            ).label(s"gate ${if gateOn then "ON" else "OFF"}")
+          }
+          checks.reduce(_ && _)
       }
     },
     // ── intercept door (rift#657/#659, landed in 0.14.0) ───────────────────────────────────────
