@@ -9,6 +9,7 @@ import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Path, Paths}
 import java.time.Duration as JDuration
 import java.util.concurrent.TimeUnit
+import scala.jdk.CollectionConverters.*
 
 /** Owns the engine lifecycle — the one shared seam both attribution planes drive through. External
   * mode (this issue) spawns a real `rift` child.
@@ -586,7 +587,7 @@ object RiftHarness:
     * probe-and-release and the spawned rift's own bind. See [[TestPorts]]'s scaladoc for the full
     * rationale.
     */
-  private[support] def freePort: IO[Throwable, Int] = TestPorts.next
+  private[rift] def freePort: IO[Throwable, Int] = TestPorts.next
 
   /** RAW spawn — starts `rift` with the given ports (and, when present, a `--configfile`) and
     * registers the same belt-and-braces JVM shutdown hook `layer` always has, but does NOT wrap the
@@ -594,7 +595,7 @@ object RiftHarness:
     * revert) never accumulates one. Callers are responsible for reaping the process they replace
     * via `killProcess` — `layer`'s single scope finalizer reaps whatever is current at scope-close.
     */
-  private[support] def rawSpawn(
+  private[rift] def rawSpawn(
       cfg: RiftHarnessConfig,
       port: Int,
       metricsPort: Int,
@@ -602,7 +603,9 @@ object RiftHarness:
       interceptPort: Option[Int],
       frontDoorPort: Option[Int] = None,
       upstreamCaFile: Option[Path] = None,
-      logTo: Option[Path] = None
+      logTo: Option[Path] = None,
+      extraArgs: List[String] = Nil,
+      extraEnv: Map[String, String] = Map.empty
   ): Task[Process] =
     ZIO.attemptBlocking {
       val binary = cfg.buildDir.resolve("rift").toString
@@ -637,8 +640,9 @@ object RiftHarness:
         interceptPort.toList.flatMap(p => List("--intercept-port", p.toString)) ++
         frontDoorPort.toList.flatMap(p => List("--front-door", p.toString)) ++
         upstreamCaFile.toList.flatMap(p => List("--upstream-ca-file", p.toString)) ++
-        caArgs
+        caArgs ++ extraArgs
       val pb = new ProcessBuilder(args*)
+      pb.environment().putAll(extraEnv.asJava)
       pb.directory(cfg.corpusRoot.toFile)
       pb.redirectErrorStream(true)
       pb.redirectOutput(logFile)
@@ -658,7 +662,7 @@ object RiftHarness:
     * `SIGKILL` — the whole point of the harness is "no orphan", so a teardown that doesn't actually
     * take says so loudly rather than reporting success.
     */
-  private[support] def killProcess(proc: Process): Task[Unit] =
+  private[rift] def killProcess(proc: Process): Task[Unit] =
     ZIO.attemptBlocking {
       proc.destroy()
       if !proc.waitFor(5, TimeUnit.SECONDS) then proc.destroyForcibly()
@@ -671,7 +675,7 @@ object RiftHarness:
     * which 404s an unrouted probe). Watches the child: if the engine exits early it fails fast with
     * the exit code. Same budget/spacing as [[awaitReady]].
     */
-  private[support] def awaitTcpReady(host: String, port: Int, proc: Process): IO[Throwable, Unit] =
+  private[rift] def awaitTcpReady(host: String, port: Int, proc: Process): IO[Throwable, Unit] =
     ZIO.attemptBlocking {
       val deadline = java.lang.System.nanoTime + ReadinessBudgetMs * 1000000L
       var ready = false
