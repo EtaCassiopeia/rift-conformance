@@ -2,16 +2,16 @@
 # Plane A runner (rift-conformance issue #15): the samples.rift.* ZIO-BDD suites against a real rift.
 # RIFT_MODE=external (default) spawns a real rift child (RiftMode.External); RIFT_MODE=embedded (#18)
 # runs the engine in-process over Panama FFM — zero spawn, no Docker — and runs the embedded-supported
-# subset (engineEmbedded: 01–08 + 11, minus the external/container-only 09/10). Fetches the released
+# subset (engineEmbedded: every feature but 09 and 16; COVERAGE.md's feature × mode matrix, #206). Fetches the released
 # engine first if RIFT_BUILD_DIR is unset (the lint/verify tools + BUILD_INFO come from it in BOTH
 # modes; embedded only swaps how the *engine* runs).
 #
 # Usage: scripts/conformance-engine.sh
 #
 # RIFT_MODE=container (#12) runs the engine in a Docker container on a published image (RIFT_IMAGE)
-# and runs the container-safe subset (engineContainer: feature 01 gate incl. @full-corpus serve,
-# minus @full-corpus-verify + feature 03 transport faults). Docker/RIFT_IT-gated — SKIPs when RIFT_IT!=1 or docker
-# is absent, like the Plane B rift-container leg.
+# and runs the container-safe subset (engineContainer: every feature but 09, 11 and 16, minus the
+# tags build.sbt names per mode). Docker/RIFT_IT-gated — SKIPs when RIFT_IT!=1 or docker is absent,
+# like the Plane B rift-container leg.
 #
 # Usage: scripts/conformance-engine.sh
 #

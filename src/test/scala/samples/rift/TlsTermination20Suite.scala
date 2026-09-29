@@ -5,8 +5,7 @@ import samples.rift.support.{
   RawHttpConnection,
   RiftConformanceSupport,
   RiftHarness,
-  RiftState,
-  TestPorts
+  RiftState
 }
 import zio.*
 import zio.json.*
@@ -175,16 +174,16 @@ object TlsTermination20Suite
   /** POST an imposter built for a fresh port to `url`, keep the answer as the last response, and
     * target it when it was created.
     */
-  private def post(url: String, build: Int => String): IO[Throwable, LastResponse] =
+  private def post(url: String, build: Int => String): ZIO[RiftHarness, Throwable, LastResponse] =
     for
-      port <- TestPorts.next
+      port <- trackedProbePort
       r <- send(url, "POST", "/imposters", Some(build(port)))
       _ <- Stage.put(r)
       _ <- ZIO.when(r.status == 201)(created.update((url, port) :: _) *> Stage.put(Target(port)))
     yield r
 
   /** POST and require a 201: for the setup steps, where a refusal is a broken scenario. */
-  private def create(url: String, build: Int => String): IO[Throwable, Unit] =
+  private def create(url: String, build: Int => String): ZIO[RiftHarness, Throwable, Unit] =
     post(url, build).flatMap(r =>
       assertRepro(r.status == 201, s"POST /imposters -> ${r.status}: ${r.body.take(300)}")
     )

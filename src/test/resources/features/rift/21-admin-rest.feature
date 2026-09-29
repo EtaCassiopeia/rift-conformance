@@ -57,6 +57,8 @@ Feature: Admin REST long tail — system routes, listing views, delete-all, tear
   # ── teardown ─────────────────────────────────────────────────────────────────────────────────
   # #596/#597: the delete returns only after the listener is unbound, so a connect issued right
   # after the 200 is refused — no retry, no settle window.
+  # @connect-refused: asserts a raw TCP connect is refused; a Docker-published port always accepts (container excludes it).
+  @connect-refused
   Scenario: DELETE /imposters/{port} returns a zero-count snapshot after the listener is gone
     Given a fresh imposter from fixture "admin-rest/two-stubs"
     When the client sends "GET" "/a"
