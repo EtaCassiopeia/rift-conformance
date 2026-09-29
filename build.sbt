@@ -139,6 +139,8 @@ addCommandAlias("engineConformance", "testOnly samples.rift.*")
 // FfiAdminParity75Spec (#75), FfiStubWarnings92Spec (#92), FfiVerifyParity94Spec (#94) and
 // FfiLongTail205Spec (#205) diff C-ABI calls against the admin HTTP API on one engine; they no-op
 // outside RIFT_MODE=embedded, so only this alias runs them.
+// AdminEventsCursor122Spec (#122, #201) runs here too: the in-process harness serves the same
+// /events + savedRequests admin HTTP, and the embedded natives carry 0.18.1 since rift-java 0.3.3.
 // 21-admin-rest (#200) runs here too, minus `@admin-isolated`: its DELETE /imposters scenarios need a
 // second, raw-spawned engine (the recipe `upstream-trust` uses), which only external mode can start.
 addCommandAlias(
@@ -152,7 +154,8 @@ addCommandAlias(
     "admin-isolated" +
     " ; testOnly samples.rift.RiftEmbeddedHarnessSpec samples.rift.RiftToolsParseSpec" +
     " samples.rift.FfiAdminParity75Spec samples.rift.FfiStubWarnings92Spec" +
-    " samples.rift.FfiVerifyParity94Spec samples.rift.FfiLongTail205Spec"
+    " samples.rift.FfiVerifyParity94Spec samples.rift.FfiLongTail205Spec" +
+    " samples.rift.AdminEventsCursor122Spec"
 )
 
 // Plane A container pass (issue #12, RIFT_MODE=container): the acceptance subset the Docker-run
