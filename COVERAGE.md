@@ -697,8 +697,9 @@ These are already tracked by open issues filed as the releases shipped:
   escaped-string form (external, embedded, container). `GET /intercept/rules` lists it as an object
   (`@intercept-http`). The `--configfile` `intercept` block door is one more
   `ConfigInterceptBlock113Spec` case: it boots, lists the body as an object, and serves it compact.
-  The `statusCode`-string and multi-value `headers` widening from the scope-extension comment are
-  outside the design decision and not covered here.
+  The `statusCode`-string and multi-value `headers` widening (rift#936) is covered by #191: a
+  `"418"` status serves `418`, a `set-cookie` array serves two wire lines in order, a numeric `x-n`
+  serves `7`, and `GET /intercept/rules` lists the status as a number and `x-n` as `"7"`.
 - outbound `--upstream-ca-file` and imposter `mutualAuth`: #149
 - intercept tunnel 413 and decoded chunked bodies: #150 — **covered**: `12-intercept` `@intercept-raw`
   (a raw `CONNECT` + TLS client, `RawHttpConnection`): over-cap body → `413` with the forward target
@@ -718,6 +719,19 @@ These are already tracked by open issues filed as the releases shipped:
   only, on an engine spawned with `--intercept-auth u:p`. A `CONNECT` with no `Proxy-Authorization`
   gets `407` with a `Proxy-Authenticate: Basic` challenge, then EOF; wrong credentials get `407`; the
   right ones get `200 Connection Established`, and a rule serves the tunnelled request.
+- remaining intercept tunnel behaviour: #191 — **covered** in `12-intercept`. `@intercept-raw`
+  (external, embedded and container): an unmatched request falls through to `200 text/plain`
+  `rift intercepted GET /x for <host>` (plus a newline); a serve rule with no `body` answers
+  `content-length: 0` and an empty body; a rule matches the `CONNECT` host even when the SNI and
+  `Host` name another host that has its own rule; a chunk-size line `zz` gets `400`; a forward rule
+  to a closed port gets `502`. `@intercept-http`: `GET /intercept/truststore.jks?password=s3cret`
+  echoes `x-truststore-password: s3cret` and loads as a JDK `JKS` store holding the exported CA, and
+  `/intercept/ca.pem` is `application/x-pem-file`. `@intercept-ws` (rift#997, external only): an
+  engine with `--intercept-port` and `--upstream-ca-file <test CA>` relays an unmatched
+  `Upgrade: websocket` to an in-harness TLS echo origin (`WsEchoOrigin`) → `101`, and a `ping` text
+  frame comes back; with a serve rule for the origin host, the rule answers `200` with its body
+  instead. Out of scope: the 30 s `408`, RFC 8441 extended CONNECT, the no-SNI handshake failure
+  and the leaf-cache LRU.
 - reload re-applying front-door routes: #153
 - front-door request routing and gateway error edges: #187 — **covered** by `16-front-door` (external; gateway rows untagged)
 - behaviors on proxy/inject responses: #154
@@ -725,8 +739,9 @@ These are already tracked by open issues filed as the releases shipped:
 - the ordered behaviors program: #156
 - templating substitution not re-expanded: #157
 
-Graceful `SIGTERM` shutdown (#1155) is now covered by `RiftCliLifecycleSpec` (#189). Not yet tracked: `rift_preface_failures_total{listener,kind}` (rift#1045, visible on `/metrics` in
-0.18.0) and WebSocket upgrade through the intercept tunnel (#997).
+Graceful `SIGTERM` shutdown (#1155) is now covered by `RiftCliLifecycleSpec` (#189), and WebSocket
+passthrough (#997) by #191. Not yet tracked: `rift_preface_failures_total{listener,kind}` (rift#1045,
+visible on `/metrics` in 0.18.0).
 
 ### Never-2xx-on-failure sweep (#173, umbrella #115)
 
