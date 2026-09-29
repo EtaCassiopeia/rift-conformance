@@ -504,7 +504,7 @@ object RiftHarness:
   // `--intercept-ca-cert/--key` need filesystem paths), and keep the cert PEM so feature 12 can
   // assert the exported `/intercept/ca.pem` equals exactly the CA we provided (proving rift loaded
   // the caller CA rather than minting an ephemeral one). `None` if the fixture is absent.
-  private[support] lazy val interceptCa: Option[(Path, Path, String)] =
+  private[rift] lazy val interceptCa: Option[(Path, Path, String)] =
     (
       readResource("/rift-fixtures/intercept/ca-cert.pem"),
       readResource("/rift-fixtures/intercept/ca-key.pem")
