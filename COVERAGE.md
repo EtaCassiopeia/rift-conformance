@@ -358,12 +358,24 @@ Out of scope, per the issue: TLS session resumption, `SSL_CERT_FILE`/`SSL_CERT_D
 | multi-level proxyAlways chain | `a multi-level proxyAlways chain resolves through every hop` | `proxy/chain-{leaf,mid,top}` |
 | predicateGenerators capture query (VALUE, not just key) | `predicateGenerators can capture the query string` | `proxy/query-{upstream,proxy}` |
 | predicateGenerators capture a named request header | `predicateGenerators capture a named request header into the recorded predicate` | `proxy/headers-{upstream,proxy}` |
+| #202 `proxyAlways` records one stub per unique request right after the proxy (newest first), merging repeats (`/x` holds 2 responses); upstream sees all 3 | `proxyAlways records one stub per unique request after the proxy, merging repeats` | `proxy/options/{upstream,always}` |
+| #202 `addWaitBehavior`: `x-rift-proxy-latency` ≥ 300 and the recorded stub's `behaviors[0].wait` ≥ 300 | `addWaitBehavior reports the upstream latency and records it as a wait` | `proxy/options/add-wait` |
+| #202 `injectHeaders` reaches the upstream (`X-Inj: v`); `pathRewrite /api→""` forwards `/users` | `injectHeaders and pathRewrite shape the forwarded request` | `proxy/options/inject-rewrite` |
+| #202 rift#1050 `injectHeaders` naming one header twice → `400` (a divergence from Mountebank) | `injectHeaders naming one header twice is refused` | `proxy/options/inject-dup` |
+| #202 every live proxied response carries `x-rift-proxy: true` | asserted in the proxyAlways / addWaitBehavior / injectHeaders scenarios | — |
+| #202 `DELETE …/savedProxyResponses` clears a no-pG proxyOnce store (upstream reached again) | `DELETE savedProxyResponses clears a proxyOnce store so the upstream is reached again` | `proxy/options/once-store` |
+| #202 **gap** [achird-labs/rift#1239](https://github.com/achird-labs/rift/issues/1239): the same route keeps a pG-recorded stub (`recordedFrom`), so it replays without reaching the upstream | `DELETE savedProxyResponses keeps a predicateGenerators-recorded stub (rift#1239)` (`@gap`, pins 0.18.1) | `proxy/options/once-pg` |
+| #202 proxy `key`/`cert`/`passphrase`/`ciphers` accepted and not read back | `the proxy key/cert/passphrase/ciphers fields are accepted and not read back` | `proxy/options/key-cert` |
 
 > Note on config shape: `predicateGenerators.matches` takes booleans for `path`/`method`/`query`
 > but a per-header OBJECT for headers — `"headers": {"X-Trace": true}` — which rift captures
 > correctly. rift does NOT honour mountebank's blanket `"headers": true` (capture-all) shorthand
 > (silently ignored) — the one genuine mountebank-compat divergence, a config-shape gap rather than
 > a capture bug.
+
+Feature 10 runs on the embedded leg too since #202: every proxy target is another imposter in the
+same engine, so nothing in it needs the spawned process. Out of scope (#202): excluding `wait` from
+the `addWaitBehavior` latency, an HTTPS upstream with a client certificate, `ProxyStoreError::Refused`.
 
 ### `11-reload.feature` ← conformance-reload.sh (rift#316) — DONE (issue #10)
 
