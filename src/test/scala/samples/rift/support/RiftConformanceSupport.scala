@@ -3432,4 +3432,107 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
       )
     yield ()
   }
+
+  // ── reload diff classes (#199, feature 11) ─────────────────────────────────────────────────
+
+  Given("the engine is started with the reload fixture " / string) { (name: String) =>
+    // Flag the revert BEFORE the swap: a start that fails half-way must still be reverted.
+    Stage.put(ReloadActive(true)) *>
+      loadFixture(name).flatMap(json => ZIO.serviceWithZIO[RiftHarness](_.startReloadConfig(json)))
+  }
+
+  When("the reload config file is rewritten to fixture " / string) { (name: String) =>
+    loadFixture(name).flatMap(json => ZIO.serviceWithZIO[RiftHarness](_.rewriteReloadConfig(json)))
+  }
+
+  When("the reload config file is rewritten to invalid JSON") {
+    ZIO.serviceWithZIO[RiftHarness](_.rewriteReloadConfig("""{"imposters":[ not json"""))
+  }
+
+  Then("the reload report " / string / " port " / int) { (field: String, port: Int) =>
+    for
+      fields <- lastResponseObject
+      ports = fields.collectFirst { case (`field`, Json.Arr(elems)) =>
+        elems.collect { case Json.Num(n) => n.intValue }.toList
+      }
+      _ <- assertRepro(
+        ports.contains(List(port)),
+        s"expected reload report '$field' == [$port], got ${ports.getOrElse("<no array>")}"
+      )
+    yield ()
+  }
+
+  Then("the reload report message is " / string) { (message: String) =>
+    lastResponseObject.flatMap { fields =>
+      val got = fields.collectFirst { case ("message", Json.Str(m)) => m }
+      assertRepro(got.contains(message), s"expected reload message '$message', got $got")
+    }
+  }
+
+  // ── auto-port assignment (#199, feature 08) ────────────────────────────────────────────────
+
+  /** The engine assigns a port-less imposter the first free port at or above this. */
+  private val AutoPortFloor = 49152
+
+  When("the client creates a port-less imposter from fixture " / string) { (name: String) =>
+    for
+      raw <- loadFixture(name).flatMap(rewriteFixtureJson)
+      admin <- ZIO.serviceWith[RiftHarness](_.adminUrl)
+      resp <- httpSend(
+        s"$admin/imposters",
+        "POST",
+        Map("Content-Type" -> "application/json"),
+        Some(raw)
+      )
+      _ <- assertRepro(resp.status == 201, s"POST /imposters -> ${resp.status}: ${resp.body}")
+      json <- parseAdminJson(resp.body)
+      port <- ZIO
+        .fromOption(json match
+          case Json.Obj(fs) => fs.collectFirst { case ("port", Json.Num(n)) => n.intValue }
+          case _ => None
+        )
+        .orElseFail(
+          new RuntimeException(s"no assigned 'port' in the create response: ${resp.body}")
+        )
+      _ <- track(port) *> Stage.put(CurrentPort(port))
+    yield ()
+  }
+
+  When("the client replaces all imposters with port-less batch fixture " / string) {
+    (name: String) =>
+      for
+        raw <- loadFixture(name).flatMap(rewriteFixtureJson)
+        admin <- ZIO.serviceWith[RiftHarness](_.adminUrl)
+        resp <- httpSend(
+          s"$admin/imposters",
+          "PUT",
+          Map("Content-Type" -> "application/json"),
+          Some(raw)
+        )
+        _ <- assertRepro(resp.status == 200, s"PUT /imposters -> ${resp.status}: ${resp.body}")
+        // Track the declared ports at once, so a failure below still tears them down.
+        _ <- ZIO.foreachDiscard(portsOfBatch(raw).getOrElse(Nil))(track)
+        listed <- httpSend(s"$admin/imposters", "GET", Map.empty, None)
+        json <- parseAdminJson(listed.body)
+        ports = json match
+          case Json.Obj(fs) =>
+            fs.collectFirst { case ("imposters", Json.Arr(is)) =>
+              is.collect { case Json.Obj(f) =>
+                f.collectFirst { case ("port", Json.Num(n)) => n.intValue }
+              }.flatten
+                .toList
+            }.getOrElse(Nil)
+          case _ => Nil
+        _ <- ZIO.foreachDiscard(ports)(track)
+        auto = ports.filter(_ >= AutoPortFloor)
+        _ <- assertRepro(auto.size == 1, s"expected one auto-assigned port, got imposters $ports")
+        _ <- Stage.put(CurrentPort(auto.head))
+      yield ()
+  }
+
+  Then("the assigned port is at least 49152") {
+    currentPort.flatMap(p =>
+      assertRepro(p >= AutoPortFloor, s"expected an auto-assigned port >= $AutoPortFloor, got $p")
+    )
+  }
 }

@@ -151,6 +151,8 @@ addCommandAlias("engineConformance", "testOnly samples.rift.*")
 // second, raw-spawned engine (the recipe `upstream-trust` uses), which only external mode can start.
 // 20-tls-and-http2 (#197) runs here minus `@tls-flags`, whose scenarios start an engine with TLS CLI
 // flags or env vars; the container alias excludes the tag too, in case 20 is ever enrolled there.
+// 11-reload's `@no-config-source` (#199) asserts the reply of an engine with no config source; the
+// embedded harness always reloads from a config file, so it is excluded here.
 addCommandAlias(
   "engineEmbedded",
   "; testOnly samples.rift.ConsistencyGateSuite samples.rift.CoreServing02Suite " +
@@ -161,7 +163,7 @@ addCommandAlias(
     "samples.rift.MatchDiagnostics18Suite samples.rift.TlsTermination20Suite " +
     "samples.rift.AdminRest21Suite samples.rift.FlowStateDeclarative19Suite " +
     "-- --exclude-tags intercept-http,intercept-caller-ca,intercept-runtime,intercept-auth,intercept-ws,front-door,upstream-trust," +
-    "admin-isolated,tls-flags,rift-debug-env,metrics-port" +
+    "admin-isolated,tls-flags,rift-debug-env,metrics-port,no-config-source" +
     " ; testOnly samples.rift.RiftEmbeddedHarnessSpec samples.rift.RiftToolsParseSpec" +
     " samples.rift.FfiAdminParity75Spec samples.rift.FfiStubWarnings92Spec" +
     " samples.rift.FfiVerifyParity94Spec samples.rift.FfiLongTail205Spec" +

@@ -244,6 +244,10 @@ The SSE side of #201 lives in `AdminEventsCursor122Spec`, which now runs on the 
 
 Not covered: `allDeleted`, because the only `DELETE /imposters` door is feature 21's isolated sidecar; the 15 s `: ping`; and `lagged`.
 
+**Auto-port (#199).** `POST /imposters` without a `port` → `201` with a port ≥ 49152 that serves;
+`PUT /imposters` with an explicit port (4829) and a port-less imposter creates both, keeping 4829.
+All modes that run feature 08 (fixtures `admin/auto-port`, `admin/auto-port-batch`).
+
 ### `09-gateway-https-metrics.feature` ← conformance gateway/https + ext metrics — DONE
 
 | Spec item (issue #9) | Plane A scenario | Fixture |
@@ -330,6 +334,19 @@ Out of scope, per the issue: TLS session resumption, `SSL_CERT_FILE`/`SSL_CERT_D
 > `afterScenario` hook (mandatory even on a failed assertion). A single `engineRef`-based layer
 > finalizer reaps whichever engine is current at run end. `conformance-reload.sh` retirement is
 > deferred to #11.
+
+**Reload diff classes (#199).** Four more scenarios, external + embedded (the embedded harness now
+overrides `rewriteReloadConfig`, so a scenario drives the reload itself):
+
+| Behaviour (docs/features/hot-reload.md) | Scenario | Fixtures |
+|---|---|---|
+| added / removed / imposter-level change / one-of-four stubs changed → `created:[4877]`, `deleted:[4874]`, `replaced:[4875]`, `stubPatched:[4876]`, `Reloaded 3 imposter(s)`; the replaced imposter's recorded requests reset to 0, the patched one keeps 2 and its `repeat` cycler continues (`r1` → `r2`) | `a reload reports created, deleted, replaced and stubPatched, and keeps patched state` | `reload/diff-{before,after}` |
+| reordering stubs with explicit `id`s → `stubPatched:[4878]`, nothing replaced, recorded requests kept | `reordering stubs with explicit ids is a stub patch that keeps the recorded requests` | `reload/ids-{before,after}` |
+| an unparseable config → `500`, `Reload failed (imposters unchanged)`, old imposters still serve | `an unparseable config refuses the reload with a 500 and the old imposters keep serving` | the built-in reload config |
+| no config source → `No config source configured; nothing to reload` | `@no-config-source` — external only (the embedded harness always has a config file) | — |
+
+The partial-failure `500` + `failed[]` reply stays a gap: it needs a deterministic mid-apply bind
+failure.
 
 **Front-door routes on reload (rift#1160, issue #153; `@front-door`, external-only).** The reload
 engine is started with `--front-door` on a free port (`RiftHarness.startReloadConfigWithFrontDoor`), and
@@ -907,6 +924,7 @@ These specs are external-only and self-gate on `RIFT_BUILD_DIR` + `RIFT_MODE=ext
 | Admin-plane auth and exposure: `--api-key`/`MB_APIKEY`, blank key, `--require-admin-auth`, `--local-only`, `--host` IP-literal, `--ip-whitelist` (never enforced), `GET /config` | cli.md § API-key authentication; api/index.md § GET /config | **covered (#188)** — `AdminExposureSpec`: a keyed engine answers `401 "unauthorized"` to no key and a wrong key on `/health` and `/imposters`, `200 {"status":"ok"}` to the key; the data plane, `/__rift/{port}/…` and `/metrics` stay ungated; `MB_APIKEY` behaves like the flag; `--api-key "  "` exits non-zero naming the `blank value`; `--require-admin-auth --host 0.0.0.0` without a key exits non-zero naming `--require-admin-auth` and `--api-key`, and serves on `127.0.0.1` or with a key; `--local-only` → `options.localOnly == true`; `--host localhost` → `not an IP literal`; `--ip-whitelist 10.0.0.1` → `ipWhitelist == ["*"]`, loopback still served, a `NOT enforced` warning; the shared engine's `/config` reports its real admin port, `serveOptions` containing `apiKey`/`requireAdminAuth`, and the `BUILD_INFO` version. Non-loopback reachability under `--local-only` is deliberately not probed (CI network topology varies) |
 | Process lifecycle: `healthcheck`, `save` (+ `--remove-proxies`), `replay`, `--pidfile` + `stop`, `SIGTERM`, `--rcfile`, `--loglevel`/`RUST_LOG` refusal, exit codes | cli.md § start/stop/restart/save/replay/healthcheck, § RC file, § Signal Handling, § Exit Codes | **covered (#189)** — `RiftCliLifecycleSpec`: `healthcheck` exits 0 live and 1, fast, on a closed port; against a keyed engine it exits 1 without a key, 0 with `MB_APIKEY`, and 1 with `--url` (an explicit URL is `never sent the API key`); `save` captures a stub added via `POST …/stubs` (rift#1219), `--remove-proxies` drops the `proxy` response, and `replay --configfile` serves the saved stubs on a fresh engine; `save` against a keyed engine without the key exits 1 on the `401` and writes no file; `--pidfile` holds the child pid, `stop` exits 0, the engine exits within 6 s and the pidfile is removed; `stop` refuses a pidfile holding `0` (`non-positive pid`) and treats a dead pid as stale (exit 0); `SIGTERM` → exit 0 within 5 s; an rcfile's `port` and `allowInjection` take effect (`GET /config`), a `--port` flag overrides the rcfile port; a missing rcfile (named in the error) and `{"port":"x"}` abort startup; `--loglevel verbose` and `RUST_LOG='=='` are refused; an unknown flag exits `2`. `restart` is covered transitively (stop + start) |
 | Imposter sources and config preprocessing: `--imposters` (`file:`/bare/`http:`/`https:`), multi-source merge + conflicts, `ETag` reload, YAML, content-based format detection, EJS `process.env`/`include`/unsupported tag, `--no-parse` | cli.md § Imposter sources, § EJS | **covered (#198)** — `ImposterSources198Spec`: two `file:` sources with distinct ports both serve; a port declared twice exits non-zero naming it (`both declare port <p>`); `--imposters` + `--configfile` → `pass only one`; `ftp:x` → `known schemes: file, http, https`; an `http:` source (in-spec JDK `HttpServer`) serves, a reload it answers `304` returns `No source changed` after the engine sent `If-None-Match: "v1"`, and a new body + ETag reloads with `created == [p2]` and the changed imposter serving its new stub; a self-redirecting source → `too many redirects (limit 10)`; an `https:` source (a second engine's TLS imposter from `tls/upstream.json`, trusted with `--upstream-ca-file`) serves, and an `include` in an https document is refused (`not honoured in a document fetched from https://`); a YAML bare sequence serves, a YAML mapping root is refused; a `.yaml` file holding JSON loads; EJS `process.env` set / `|| 'dflt'` / unset (empty body + a warning naming `RIFT_T_BODY`); `include` inlines a stub; `<%# x %>` fails naming the tag and `file:2`, and `--no-parse` serves it verbatim. **Finding [rift#1237](https://github.com/achird-labs/rift/issues/1237):** the 304 no-change reload reports `created`/`deleted`/`replaced`/`stubPatched` as the integer `0` while every other reload reports port arrays — pinned as observed. The 10 MB body cap and 30 s timeout are out of scope |
+| `--datadir` persistence | cli.md § Data directory | **covered (#199)** — `DataDirPersistenceSpec`: `POST` writes `<port>.json` declaring the port and `DELETE` removes it; a restart with the same `--datadir` serves the persisted imposter; `foo.json` declaring port p is skipped at startup (p not served; the output names the file and `a datadir file must be named <p>.json`) and a reload is refused `500` naming it; a stale `<p>.json.tmp` is deleted at startup; `--configfile` imposters are never persisted and the config-file version wins over a datadir file for the same port. The write-failure `503` (needs a read-only filesystem) is out of scope |
 
 ## v0.15.0 new-capability coverage gaps (pin bump 0.14.0 → 0.15.0) — tracked by [#72](https://github.com/EtaCassiopeia/rift-conformance/issues/72)
 
