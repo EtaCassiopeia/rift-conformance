@@ -238,17 +238,51 @@ object RiftToolsCli204Spec extends ZIOSpecDefault:
         )
       }
     },
-    // rift#1238: `--fix` applies nothing to the `{"imposters":[…]}` wrapper and gives no reason.
-    // Pinned as observed until that is fixed.
-    test("--fix leaves an {\"imposters\":[…]} wrapper file unchanged (rift#1238)") {
+    // rift#1238 (fixed in 0.19.0): `--fix` repairs every imposter in an `{"imposters":[…]}` wrapper
+    // and a bare array, keeping the file's shape. Up to 0.18.1 it applied nothing to either.
+    test(
+      "--fix repairs an {\"imposters\":[…]} wrapper and a bare array, keeping the shape (rift#1238)"
+    ) {
       SpawnedEngine.external { cfg =>
         val wrapped = s"""{"imposters":[$HeaderNumber]}"""
+        val array = s"""[$HeaderNumber]"""
         for
           dir <- tempDir
-          file <- write(dir, "wrapped.json", wrapped)
-          run <- tools(cfg).riftLintRaw(file, List("--fix"))
-          after <- read(file)
-        yield assertTrue(after == wrapped, (run.stdout + run.stderr).contains("Applied 0 fixes"))
+          wFile <- write(dir, "wrapped.json", wrapped)
+          aFile <- write(dir, "array.json", array)
+          wRun <- tools(cfg).riftLintRaw(wFile, List("--fix"))
+          aRun <- tools(cfg).riftLintRaw(aFile, List("--fix"))
+          wAfter <- read(wFile)
+          aAfter <- read(aFile)
+          wLint <- tools(cfg).riftLint(wFile)
+          aLint <- tools(cfg).riftLint(aFile)
+        yield assertTrue(
+          (wRun.stdout + wRun.stderr).contains("Applied 1 fixes"),
+          (aRun.stdout + aRun.stderr).contains("Applied 1 fixes"),
+          wAfter.trim.startsWith("{") && wAfter.contains("\"imposters\""),
+          aAfter.trim.startsWith("["),
+          wAfter.contains("\"X-N\": \"7\""),
+          aAfter.contains("\"X-N\": \"7\""),
+          wLint.errors == 0,
+          aLint.errors == 0
+        )
+      }
+    },
+    // rift#1245 (fixed in 0.19.0): W004 stands down for a JSON Content-Type body that is JSON only
+    // once rendered (a `_rift.templated` body); the same body with nothing rendering it still warns.
+    test("W004 stands down for a templated JSON body and still fires untemplated (rift#1245)") {
+      SpawnedEngine.external { cfg =>
+        def imposter(rift: String) =
+          """{"port":4991,"protocol":"http","stubs":[{"responses":[{"is":{"statusCode":200,""" +
+            """"headers":{"Content-Type":"application/json"},""" +
+            """"body":"{ \"visits\": {{ state.visits }} }"}""" + rift + "}]}]}"
+        for
+          dir <- tempDir
+          templated <- write(dir, "templated.json", imposter(""","_rift":{"templated":true}"""))
+          plain <- write(dir, "plain.json", imposter(""))
+          t <- tools(cfg).riftLint(templated)
+          p <- tools(cfg).riftLint(plain)
+        yield assertTrue(!t.issues.exists(_.code == "W004"), p.issues.exists(_.code == "W004"))
       }
     },
     test("an unset process.env tag is W013; --no-parse lints the file verbatim with no W013") {

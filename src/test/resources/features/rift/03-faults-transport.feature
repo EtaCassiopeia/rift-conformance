@@ -179,3 +179,45 @@ Feature: Faults and transport errors
     When the client sends a raw "GET" "/reset" over TLS
     Then the TLS handshake completed
     And the raw response is empty
+
+  # ── a tcp fault reached through the /__rift/ gateway (rift#1234, fixed in 0.19.0; #229) ─────────
+  # The admin port's `/__rift/{port}` gateway gives exactly what the imposter's own port gives. Up
+  # to 0.18.1 it framed every tcp fault as an HTTP 502 with an empty body.
+  #
+  # @tcp-rst: a published Docker port turns the RST into a clean EOF (it does so on the imposter's
+  # own port too), so the container leg cannot tell a reset from an empty reply.
+  @tcp-rst
+  Scenario Outline: a <kind> fault through the gateway resets the connection (rift#1234)
+    Given a fresh imposter from fixture "faults/doors"
+    When the client sends a raw "GET" "<path>" via the gateway
+    Then the raw connection outcome is "connection reset"
+
+    Examples:
+      | kind                     | path          |
+      | CONNECTION_RESET_BY_PEER | /reset        |
+      | top-level fault          | /topfault     |
+      | script reset()           | /script-reset |
+
+  Scenario Outline: a <kind> fault through the gateway gives a <outcome> (rift#1234)
+    Given a fresh imposter from fixture "faults/doors"
+    When the client sends a raw "GET" "<path>" via the gateway
+    Then the raw connection outcome is "<outcome>"
+
+    Examples:
+      | kind                     | path          | outcome                      |
+      | tcp empty                | /empty        | empty reply                  |
+      | tcp garbage              | /garbage      | garbage bytes                |
+      | MALFORMED_RESPONSE_CHUNK | /malformed    | 200 head then a broken chunk |
+
+  # The gateway negotiates HTTP/2 (h2c), which an imposter with a tcp fault never does on its own
+  # port: there the fault resets only that request's stream, and the connection keeps working.
+  Scenario Outline: a <kind> fault through the gateway over HTTP/2 resets only its stream (rift#1234)
+    Given a fresh imposter from fixture "faults/doors"
+    When an h2c client sends "<path>" then "/ok" on one connection via the gateway
+    Then the first HTTP/2 stream was reset with INTERNAL_ERROR
+    And the second HTTP/2 stream answered 200 "ok"
+
+    Examples:
+      | kind                     | path          |
+      | CONNECTION_RESET_BY_PEER | /reset        |
+      | script reset()           | /script-reset |

@@ -23,8 +23,8 @@ import java.net.http.{HttpClient, HttpRequest, HttpResponse}
   * response headers and the `400` on an unknown `types` value.
   *
   * External mode spawns a short-lived engine per case; embedded mode (`RIFT_MODE=embedded`) builds
-  * the in-process harness, which serves the same admin HTTP — the embedded natives carry 0.18.1
-  * since rift-java 0.3.3. Self-gating: a no-op pass without `RIFT_BUILD_DIR` (external) or without
+  * the in-process harness, which serves the same admin HTTP — the embedded natives carry 0.19.0
+  * since rift-java 0.3.4. Self-gating: a no-op pass without `RIFT_BUILD_DIR` (external) or without
   * an FFM binding (embedded).
   */
 object AdminEventsCursor122Spec extends ZIOSpecDefault:
@@ -71,6 +71,18 @@ object AdminEventsCursor122Spec extends ZIOSpecDefault:
   private val buildDirOpt = sys.env.get("RIFT_BUILD_DIR").filter(_.trim.nonEmpty)
   private val embedded =
     sys.env.getOrElse("RIFT_MODE", "external").trim.equalsIgnoreCase("embedded")
+
+  /** `(type, message)` of the first entry of an `{"errors":[…]}` admin envelope. */
+  private def envelope(body: String): Option[(String, String)] =
+    body.fromJson[Json].toOption.collect { case Json.Obj(fs) => fs }.flatMap { fs =>
+      fs.collectFirst { case ("errors", Json.Arr(es)) => es.headOption }.flatten.collect {
+        case Json.Obj(e) =>
+          (
+            e.collectFirst { case ("type", Json.Str(t)) => t }.getOrElse(""),
+            e.collectFirst { case ("message", Json.Str(m)) => m }.getOrElse("")
+          )
+      }
+    }
 
   private def external(effect: ZIO[Scope, Throwable, TestResult]): Task[TestResult] =
     val runnable = if embedded then EmbeddedAdmin.available else buildDirOpt.nonEmpty
@@ -382,14 +394,25 @@ object AdminEventsCursor122Spec extends ZIOSpecDefault:
         )
       }
     },
-    // TODO(rift#1226): tighten to the `errors` envelope once the SSE doors stop answering a bare
-    // `{"error":…}` body; until then only the status is the contract.
-    test("an unknown types value is a 400") {
+    // rift#1226 (fixed in 0.19.0): both streaming doors refuse in the `errors` envelope, like the
+    // rest of the admin API; up to 0.18.1 they answered a bare `{"error":…}` object.
+    test("the streaming doors refuse in the errors envelope (rift#1226)") {
       external {
         for
           admin <- engine
-          r <- send(s"$admin/events?types=bogus", "GET", None)
-        yield assertTrue(r._1 == 400)
+          bogus <- send(s"$admin/events?types=bogus", "GET", None)
+          badPort <- send(s"$admin/events?port=abc", "GET", None)
+          unused <- TestPorts.next
+          noPort <- send(s"$admin/imposters/$unused/savedRequests/stream", "GET", None)
+        yield assertTrue(
+          bogus._1 == 400,
+          envelope(bogus._2).exists((t, m) => t == "bad data" && m.contains("'bogus'")),
+          badPort._1 == 400,
+          envelope(badPort._2).exists(_._1 == "bad data"),
+          noPort._1 == 404,
+          envelope(noPort._2)
+            .contains(("no such resource", s"Imposter not found on port $unused"))
+        )
       }
     }
   ) @@ TestAspect.withLiveClock @@ TestAspect.sequential @@ TestAspect.timeout(3.minutes)

@@ -63,10 +63,6 @@ object ImposterSources198Spec extends ZIOSpecDefault:
   private def json(s: String): Task[Json] =
     ZIO.fromEither(s.fromJson[Json]).mapError(e => new RuntimeException(s"$e: $s"))
 
-  private def num(j: Json, key: String): Option[BigDecimal] = j match
-    case Json.Obj(fs) => fs.collectFirst { case (`key`, Json.Num(n)) => BigDecimal(n) }
-    case _ => None
-
   private def ports(j: Json, key: String): Option[List[Int]] = j match
     case Json.Obj(fs) =>
       fs.collectFirst { case (`key`, Json.Arr(xs)) =>
@@ -257,10 +253,10 @@ object ImposterSources198Spec extends ZIOSpecDefault:
           before == (200, "v1"),
           unchanged._1 == 200,
           unchanged._2.contains("No source changed"),
-          // rift#1237: this 304 short-circuit reports the four diff fields as the integer 0, where
-          // every other reload reports port arrays. Pinned as observed until that is fixed.
+          // rift#1237 (fixed in 0.19.0): this 304 short-circuit reports the four diff fields as
+          // empty port arrays, like every other reload (up to 0.18.1 the integer 0).
           List("created", "deleted", "replaced", "stubPatched")
-            .forall(k => num(unchangedJson, k).contains(BigDecimal(0))),
+            .forall(k => ports(unchangedJson, k).contains(Nil)),
           revalidated.contains("\"v1\""),
           changed._1 == 200,
           ports(changedJson, "created").contains(List(p2)),
