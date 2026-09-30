@@ -90,8 +90,8 @@ retirement (with `conformance-reload.sh`) is **#11**, which will cite this row.
 
 ## Plane A feature × mode matrix (#206)
 
-The same rift 0.18.1 engine ships three ways — the binary (`external`, `engineConformance`), the
-rift-java 0.3.3 natives (`embedded`, `engineEmbedded`, JDK 22+) and the `zainalpour/rift-proxy:v0.18.1`
+The same rift 0.19.0 engine ships three ways — the binary (`external`, `engineConformance`), the
+rift-java 0.3.4 natives (`embedded`, `engineEmbedded`, JDK 22+) and the `zainalpour/rift-proxy:v0.19.0`
 image (`container`, `engineContainer`, `RIFT_IT=1` + Docker). Each feature runs in every mode that can
 drive it; a scenario a mode's harness cannot drive carries a tag that mode's alias excludes. ✔ = the
 whole feature runs; ✔ − `@tag` = runs minus those rows; ✖ = not enrolled, with the reason.
@@ -101,7 +101,7 @@ whole feature runs; ✔ − `@tag` = runs minus those rows; ✖ = not enrolled, 
 | 00 smoke | ✔ | ✔ | ✔ |
 | 01 consistency gate | ✔ | ✔ | ✔ − `@full-corpus-verify` |
 | 02 core serving | ✔ | ✔ | ✔ |
-| 03 faults/transport | ✔ | ✔ | ✔ |
+| 03 faults/transport | ✔ | ✔ | ✔ − `@tcp-rst` |
 | 04 scripting bounds | ✔ | ✔ | ✔ |
 | 05 templating | ✔ | ✔ − `@rift-debug-env` | ✔ − `@rift-debug-env` |
 | 06 behaviors | ✔ | ✔ | ✔ |
@@ -140,6 +140,8 @@ Exclusion tags and their one-line reasons:
 - `@connect-refused` (container, #206): asserts a raw TCP connect is refused; a Docker-published port
   always accepts the connect.
 - `@host-port` (container, #206): the engine auto-assigns a port ≥ 49152, outside the published pool.
+- `@tcp-rst` (container, #229): a Docker-published port turns an RST into a clean EOF (verified on
+  the imposter's own port too), so a raw capture cannot tell a reset from an empty reply.
 
 Container enrolment (#206) needed three harness changes and surfaced no engine or image findings:
 `corpus/data` is mounted read-only at the image workdir so `lookup` rows resolve `data/…`; a metrics
@@ -198,6 +200,8 @@ Remaining behavioral features (this issue's scope, still open): `03-faults-trans
 | stub `delayRange` → per-response wait | `a stub-level delayRange becomes a per-response wait` | `faults/faults` |
 | `is` beats a top-level `fault`; top-level `fault` takes the aliases | `an is response beats a top-level fault on the same response`, `a top-level fault accepts the tcp aliases` | `faults/faults` |
 | tcp reset on HTTPS: handshake completes, then zero bytes | `a tcp reset on an HTTPS imposter resets after the TLS handshake` | `faults/https` |
+| #229 rift#1234 (0.19.0): a tcp fault reached through the `/__rift/{port}` gateway gives what the imposter port gives — reset (`CONNECTION_RESET_BY_PEER`, top-level `fault`, script `reset()`), a clean zero-byte EOF (`empty`), non-HTTP bytes (`garbage`), a `200` chunked head then a non-hex chunk size (`MALFORMED_RESPONSE_CHUNK`). Up to 0.18.1: `502`, empty body | `a <kind> fault through the gateway resets the connection (rift#1234)` (3 reset rows, `@tcp-rst`: excluded from the container leg because a published Docker port turns the RST into a clean EOF, on the imposter's own port too) + `a <kind> fault through the gateway gives a <outcome> (rift#1234)` (3 rows); raw socket | `faults/doors` |
+| #229 rift#1234: over h2c the gateway resets only the faulted stream (`RST_STREAM` `INTERNAL_ERROR`) and the next stream on the same connection answers `200 ok` | `a <kind> fault through the gateway over HTTP/2 resets only its stream (rift#1234)` (Outline: tcp reset, script `reset()`; `H2cProbe`) | `faults/doors` |
 
 Out of scope (#196): probabilities strictly between 0 and 1, ALPN `http/1.1` under a tcp fault (the TLS/HTTP-2 issue), `tcp_fault_carrier`.
 
@@ -348,7 +352,7 @@ The SSE side of #201 lives in `AdminEventsCursor122Spec`, which now runs on the 
 - the `port=` and `match=method=POST` filters;
 - the `savedRequests/stream` alias;
 - `Content-Type: text/event-stream` with `Cache-Control: no-cache`;
-- the `400` on `types=bogus`, which asserts the status only until rift#1226 moves that door to the envelope.
+- the refusals in the `errors` envelope (rift#1226, fixed in 0.19.0): `types=bogus` and `port=abc` → `400 bad data`, an unknown port on `savedRequests/stream` → `404 no such resource` "Imposter not found on port N".
 
 Not covered: `allDeleted`, because the only `DELETE /imposters` door is feature 21's isolated sidecar; the 15 s `: ping`; and `lagged`.
 
@@ -424,7 +428,7 @@ Out of scope, per the issue: TLS session resumption, `SSL_CERT_FILE`/`SSL_CERT_D
 | #202 rift#1050 `injectHeaders` naming one header twice → `400` (a divergence from Mountebank) | `injectHeaders naming one header twice is refused` | `proxy/options/inject-dup` |
 | #202 every live proxied response carries `x-rift-proxy: true` | asserted in the proxyAlways / addWaitBehavior / injectHeaders scenarios | — |
 | #202 `DELETE …/savedProxyResponses` clears a no-pG proxyOnce store (upstream reached again) | `DELETE savedProxyResponses clears a proxyOnce store so the upstream is reached again` | `proxy/options/once-store` |
-| #202 **gap** [achird-labs/rift#1239](https://github.com/achird-labs/rift/issues/1239): the same route keeps a pG-recorded stub (`recordedFrom`), so it replays without reaching the upstream | `DELETE savedProxyResponses keeps a predicateGenerators-recorded stub (rift#1239)` (`@gap`, pins 0.18.1) | `proxy/options/once-pg` |
+| #202 [achird-labs/rift#1239](https://github.com/achird-labs/rift/issues/1239) — **fixed & verified in 0.19.0**: the same route removes a pG-recorded stub (`recordedFrom`) and keeps the declared proxy stub, so the upstream is reached again | `DELETE savedProxyResponses removes a predicateGenerators-recorded stub (rift#1239)` | `proxy/options/once-pg` |
 | #202 proxy `key`/`cert`/`passphrase`/`ciphers` accepted and not read back | `the proxy key/cert/passphrase/ciphers fields are accepted and not read back` | `proxy/options/key-cert` |
 
 > Note on config shape: `predicateGenerators.matches` takes booleans for `path`/`method`/`query`
@@ -520,6 +524,8 @@ How the front door routes a request, and the gateway's error and passthrough edg
 | gateway: `/__rift/{port}` with no path → `/` | `/__rift/{port} with no trailing path dispatches to /` |
 | gateway: the query string reaches a `query` predicate | `the gateway passes the query string through to the imposter's predicates` |
 | gateway: non-numeric port → 400 `bad data`; unknown port → 404 `no such resource` | `a non-numeric gateway port is a 400 bad data` / `a gateway port with no imposter is a 404 no such resource` |
+| #229 rift#1234 (0.19.0): a tcp fault reached through the front door gives what the imposter port gives, per kind (reset ×3 incl. script `reset()`, empty, garbage, malformed chunk). Up to 0.18.1: `502`, empty body | `a <kind> fault through the front door gives a <outcome> (rift#1234)` (`@front-door`, Outline, 6 rows; `front-door/faults`) |
+| #229 rift#1234: over h2c the front door resets only the faulted stream (`INTERNAL_ERROR`); the same connection's next stream is served | `a tcp fault through the front door over HTTP/2 resets only its stream (rift#1234)` (`@front-door`) |
 
 Not covered: `RouteObserver`, which is only an SPI for Rust embedders. The rule that the gateway is not gated by `--api-key` belongs to the admin-auth issue, which spawns a keyed engine. The empty-`id` and single-imposter-document `routes` rejections are also not asserted, because the issue scoped the boot Outline to six rows.
 
@@ -565,14 +571,15 @@ These are the three surfaces that explain why a stub did or did not answer. The 
 | the preview does not advance response cycling | `the debug preview does not advance response cycling` |
 | journal `matchOutcome` on a hit: `matched`, `stubIndex`, `stubId` | `a hit is journaled with matched, stubIndex and stubId` |
 | on a miss: `tried[]` in visit order: `failedPredicate` with `predicateIndex: 1`, then `skippedScenarioState`, then `skippedSpace`; a stub the candidate index ruled out is not listed | `a miss is journaled with every visited stub and why it fell out` |
-| a debug request has no `matchOutcome` | `a debug request is journaled without a matchOutcome` |
+| a debug request has no `matchOutcome`, `status` or `latencyMs` (rift#1227, 0.19.0) | `a debug request is journaled without a matchOutcome, status or latencyMs (rift#1227)` |
 
 `state_ops_never_runs` needs a response with no `is` body. On 0.18.1, `stateOps` on an `is` response raises nothing, and a `_rift` on a proxy or inject response raises `config_key_ignored` instead. The row therefore uses the script-only `_rift` form described in the doc.
 
 A `failedPredicate` entry needs the stub to survive the candidate index. The stub's second predicate is therefore a header `equals`, not a method, because an index-pruned stub is never visited.
 
+`status`/`latencyMs` on a debug-path journal entry are asserted absent (rift#1227, fixed in 0.19.0; up to 0.18.1 the entry carried the debug report's `200`) in `a debug request is journaled without a matchOutcome, status or latencyMs (rift#1227)`. The TCP-fault half of #1227 (no `status` on a fault's entry) was confirmed by curl and is not a scenario.
+
 Not asserted:
-- `status`/`latencyMs` on a debug-path journal entry. achird-labs/rift#1227 (open) says they are recorded, while the doc says they are absent.
 - The pairwise shadow check being skipped above 200 stubs.
 - The debug `500`.
 - The predicate-inject `504` (feature 04 owns that family).
@@ -596,9 +603,9 @@ The admin routes that feature 08 (by-id GET, enable/disable, debug, savedRequest
 | admin body 64 MiB + 1 → `413 request too large`; exactly 64 MiB → `400 bad data` (#567) | `an admin body one byte over 64 MiB is a 413; exactly 64 MiB is not` |
 | `DELETE /imposters` → `200` listing every imposter, then `GET /imposters` → `[]` | `DELETE /imposters returns every imposter and leaves none` (`@admin-isolated`) |
 
-**Gaps pinned** (they assert the current behaviour and flip when the engine is fixed):
-- [achird-labs/rift#1230](https://github.com/achird-labs/rift/issues/1230): the doc says a space `POST` with `{}` is still accepted as a default. 0.18.1 refuses it with `400 bad data`. Scenario: `GAP rift#1230 — …`.
-- [achird-labs/rift#1229](https://github.com/achird-labs/rift/issues/1229): the `DELETE /imposters` body shows each imposter as it was created, so a stub added at runtime is missing (2 stubs, where `GET ?replayable=true` just before shows 3). Scenario: `GAP rift#1229 — …` (`@admin-isolated`).
+**Former gaps, resolved in 0.19.0:**
+- [achird-labs/rift#1230](https://github.com/achird-labs/rift/issues/1230) (docs fix): a space `POST` with `{}` is refused `400 bad data` "body is not a stub"; the doc now says so. Scenario: `a space refuses an empty-object body (rift#1230)` — the engine behaviour, no longer framed as a gap.
+- [achird-labs/rift#1229](https://github.com/achird-labs/rift/issues/1229) — **fixed & verified in 0.19.0**: the `DELETE /imposters` body is the live replayable document, so a stub added at runtime is in it (3 stubs; up to 0.18.1 the creation-time 2). Scenario: `the DELETE /imposters snapshot keeps a stub added at runtime (rift#1229)` (`@admin-isolated`).
 
 Out of scope: the data-directory delete-failure `503` (needs a read-only filesystem), `x-rift-scope` authorization (SPI), and `PUT /imposters` atomicity (#582, see the ledger row).
 
@@ -629,9 +636,9 @@ asserted by JSON type (`the number 42` vs the string `"007"`).
 | `_rift.sequencing` / `_rift.dataset` are carried, not executed: unchanged in the replayable export, the `is` body still served | `the carried-not-executed sequencing and dataset blocks round-trip unchanged` |
 
 Out of scope: Redis-specific parity for `set`/`clearFlow` (feature 15 is the place for it) and the
-64-lost-race CAS give-up. The dataset fixture's `key` omits Mountebank's `index`: rift's `LookupKey`
-has no such field, so a carried `index` is dropped from the export (the executed `lookup` ignores it
-too: [achird-labs/rift#1240](https://github.com/achird-labs/rift/issues/1240), pinned in feature 22).
+64-lost-race CAS give-up. The dataset fixture's `key` omits Mountebank's `index`; since 0.19.0
+(rift#1240) `LookupKey` carries `index` and the export keeps it, and the executed `lookup` honours it
+(asserted in feature 22).
 
 ### `22-mountebank-compat.feature` ← rift docs/mountebank/*.md (issue #203) — DONE
 
@@ -655,12 +662,12 @@ client address). The lookup rows read `corpus/data`, which the container mounts 
 | `name`/`serviceName`/`serviceInfo` round-trip (replayable export; the detail view shows only `name`) | `name, serviceName and serviceInfo round-trip through the replayable export` |
 | flat `{statusCode:"204"}`; `is` beats flat fields; object body → `application/json` | `a flat response with a string statusCode …`, `an is wins over the flat fields …`, `an object body without a Content-Type …` |
 | rift#1085 number digits (`0.1`, `7e23`) | `a JSON body keeps its number digits` |
-| **gap** [achird-labs/rift#1241](https://github.com/achird-labs/rift/issues/1241): an object body's keys are served sorted (MB keeps declaration order) | `an object body is served with its keys sorted (rift#1241)` (`@gap`) |
+| **documented divergence** [achird-labs/rift#1241](https://github.com/achird-labs/rift/issues/1241) (docs/mountebank/responses.md since 0.19.0): an object body's keys are served sorted; Mountebank keeps declaration order. Pinned as the documented contract, not a gap | `an object body is served with its keys sorted — a documented divergence (rift#1241)` |
 | `${request.body}`, `${request.pathParams.id}` | `${request.body} interpolates …`, `${request.pathParams.x} interpolates …` |
 | `[is A, inject B]` cycles A, B, A; the inject turn has `x-rift-inject: true` | `a mixed is/inject response cycle alternates, and the inject turn is marked` |
 | `copy` xpath; `copy` regex + `ignoreCase` → first capture group | `copy using xpath`, `copy using regex with ignoreCase yields the first capture group` |
 | `lookup` with `delimiter:";"` | `lookup honours a csv delimiter` |
-| **gap** [achird-labs/rift#1240](https://github.com/achird-labs/rift/issues/1240): a lookup key `index` is ignored | `a lookup key index is ignored (rift#1240)` (`@gap`) |
+| [achird-labs/rift#1240](https://github.com/achird-labs/rift/issues/1240) — **fixed & verified in 0.19.0**: a lookup key `index: 2` keys the row on the second capture group (`/lookup-index/ab-cd` → `second`) | `a lookup key index selects the capture group (rift#1240)` |
 | `shellTransform` sees `MB_REQUEST`; `exit 3` → original body + `x-rift-shelltransform-error` | `shellTransform receives the request in MB_REQUEST`, `a failing shellTransform …` (`@shell`) |
 | `decorate` sees a string `response.body` | `decorate receives a string response.body` |
 
@@ -875,6 +882,32 @@ entry point is panic-guarded across the C ABI ([rift#484/#487](https://github.co
 ([rift#482/#496](https://github.com/achird-labs/rift/pull/496)); and the function-form `wait`
 fallback now clamps/caps like the Boa path ([rift#490/#504](https://github.com/achird-labs/rift/pull/504),
 `--no-default-features` only).
+
+## Pin bump 0.18.1 → 0.19.0 + rift-java 0.3.3 → 0.3.4 (2026-09-29) — closes #229
+
+Every fix that the harness pinned is now asserted as fixed; every behaviour was probed with curl
+against the standalone 0.19.0 binary first. The shipped examples are unchanged at v0.19.0
+(`sync-rift-examples.sh --check`). rift-java **0.3.4** natives embed rift **0.19.0**, so the
+binary/native engine versions still match; `rift-java-core` stays declared explicitly at 0.3.4
+until a zio-bdd release (1.5.2) declares it. No `@gap` tag remains in the Plane A features.
+
+| rift 0.19.0 fix | Coverage |
+|---|---|
+| rift#1234 a tcp fault through the gateway or the front door aborts the connection (h1) / resets the stream (h2) | **New (#229)**: 8 gateway rows in `03-faults-transport`, 7 front-door rows in `16-front-door` (see those sections). All 15 fail on 0.18.1 (`502`) |
+| rift#1239 `DELETE savedProxyResponses` removes proxy-recorded stubs | `10-proxy-record` `@gap` flipped: 1 stub left, no `recordedFrom`, upstream reached again |
+| rift#1229 `DELETE /imposters` returns the live stubs | `21-admin-rest` `@gap` flipped: the snapshot has 3 stubs |
+| rift#1240 lookup key `index` honoured | `22-mountebank-compat` `@gap` flipped: `index: 2` → `second` |
+| rift#1227 no `status`/`latencyMs` on a debug (or tcp-fault) journal entry | `18-match-diagnostics` debug row now asserts both absent |
+| rift#1226 `/events` + `savedRequests/stream` refuse in the `errors` envelope | `AdminEventsCursor122Spec`: `types=bogus`, `port=abc` (`400 bad data`), unknown port (`404 no such resource`) |
+| rift#1237 no-change reload reports empty port arrays | `ImposterSources198Spec`: the 304 short-circuit's four fields are `[]` (was the integer `0`) |
+| rift#1238 `rift-lint --fix` repairs a wrapper and a bare array | `RiftToolsCli204Spec`: both shapes get `Applied 1 fixes`, keep their shape, and lint clean |
+| rift#1245 `W004` stands down for a templated JSON body | `RiftToolsCli204Spec`: templated → no `W004`; the same body untemplated → `W004` |
+| rift#1241 (docs) object body keys are sorted — a documented divergence | `22-mountebank-compat`: `@gap` dropped; the scenario is labelled a documented divergence |
+| rift#1230 (docs) a space refuses `{}` | `21-admin-rest`: `@gap`/`GAP` framing dropped; asserts the `400` |
+| rift#1228, rift#1244 (docs) | No change needed: feature 18 already asserts `recordMatches` → `config_key_ignored`; `RiftToolsCli204Spec` already asserts `--skip-dynamic` as an opt-in |
+
+The rift-java 0.3.4 `clearProxyRecordings` FFI also removes recorded stubs (#1239); the harness
+never relied on the old behaviour (`FfiAdminParity75Spec` uses a no-pG proxy store).
 
 ## Pin bump 0.18.0 → 0.18.1 (2026-09-29) — closes #160
 

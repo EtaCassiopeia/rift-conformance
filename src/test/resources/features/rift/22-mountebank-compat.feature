@@ -151,10 +151,11 @@ Feature: Mountebank compatibility — predicates, imposter options and response 
     Then the response body contains "\"f\":0.1"
     And the response body contains "\"big\":7e23"
 
-  # GAP (achird-labs/rift#1241): Mountebank serves the declared key order ({"f":…,"big":…});
-  # 0.18.1 sorts the keys. Pinned as current behaviour; flip to the declared order when fixed.
-  @gap
-  Scenario: an object body is served with its keys sorted (rift#1241)
+  # DOCUMENTED DIVERGENCE (rift#1241, docs/mountebank/responses.md since 0.19.0): Mountebank serves
+  # JSON.stringify(body), keeping the declared order ({"f":…,"big":…}); Rift key-sorts JSON values
+  # throughout the engine (stable stub identity for incremental reload relies on it). Not a gap: a
+  # client that needs exact bytes declares a string body. A change here is a behaviour change.
+  Scenario: an object body is served with its keys sorted — a documented divergence (rift#1241)
     Given a fresh imposter from fixture "mbcompat/responses"
     When the client sends "GET" "/numbers"
     Then the response body is "{\"big\":7e23,\"f\":0.1}"
@@ -201,13 +202,13 @@ Feature: Mountebank compatibility — predicates, imposter options and response 
     When the client sends "GET" "/lookup/cd"
     Then the response body is "n=second"
 
-  # GAP (achird-labs/rift#1240): Mountebank's lookup key `index: 2` keys the row on the second group
-  # (`cd` → "second"); 0.18.1 ignores `index` and keys on the first (`ab` → "first").
-  @gap
-  Scenario: a lookup key index is ignored (rift#1240)
+  # rift#1240 (fixed in 0.19.0): a lookup key's `index` picks the regex capture group, as in
+  # Mountebank — `index: 2` keys the row on the second group (`cd` → "second"). Up to 0.18.1 the
+  # index was dropped and the first group keyed it (`ab` → "first").
+  Scenario: a lookup key index selects the capture group (rift#1240)
     Given a fresh imposter from fixture "mbcompat/behaviors"
     When the client sends "GET" "/lookup-index/ab-cd"
-    Then the response body is "n=first"
+    Then the response body is "n=second"
 
   @shell
   Scenario: shellTransform receives the request in MB_REQUEST

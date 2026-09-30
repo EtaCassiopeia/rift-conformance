@@ -135,11 +135,10 @@ Feature: Admin REST long tail — system routes, listing views, delete-all, tear
     Then the response status is 201
     And the response JSON at "space" is the string "s1"
 
-  # GAP achird-labs/rift#1230: the doc says `{}` is still accepted as a space-wide default (201);
-  # 0.18.1 refuses it with 400 "body is not a stub". Pins the current behaviour — flip to 201 when
-  # the engine or the doc settles.
-  @gap
-  Scenario: GAP rift#1230 — a space refuses an empty-object body the doc says it accepts
+  # rift#1230 (docs fixed in 0.19.0): a space POST refuses `{}` with 400 "body is not a stub" — it
+  # is the no-predicate, no-response stub #932 keeps out; docs/api/index.md now says to name a field
+  # (`{"predicates": [], ...}`, the 201 above). The engine was already right; this pins it.
+  Scenario: a space refuses an empty-object body (rift#1230)
     Given a fresh imposter from fixture "admin-rest/two-stubs"
     When the client sends admin "POST" "/imposters/{port}/spaces/s1/stubs" with payload "admin-rest/empty-object"
     Then the response status is 400
@@ -183,15 +182,15 @@ Feature: Admin REST long tail — system routes, listing views, delete-all, tear
     Then the response status is 200
     And the response JSON at "imposters" is an empty array
 
-  # GAP achird-labs/rift#1229: the delete-all body is each imposter as CREATED — a stub added at
-  # runtime is missing, although GET ?replayable=true issued just before shows it. Pins the stale
-  # count (2); the correct answer is 3.
-  @admin-isolated @gap
-  Scenario: GAP rift#1229 — the DELETE /imposters snapshot drops a stub added at runtime
+  # rift#1229 (fixed in 0.19.0): the delete-all body is the document GET ?replayable=true lists just
+  # before, so a stub added at runtime is in it (the Mountebank save-before-reset idiom). Up to
+  # 0.18.1 it was each imposter as CREATED (2 stubs).
+  @admin-isolated
+  Scenario: the DELETE /imposters snapshot keeps a stub added at runtime (rift#1229)
     Given an isolated engine with imposters "iso1" from "admin-rest/two-stubs" and "iso2" from "admin-rest/with-proxy"
     When the client sends isolated admin "POST" "/imposters/{iso1}/stubs" with payload "admin-rest/stub-added"
     And the client sends isolated admin "GET" "/imposters?replayable=true" with payload "-"
     Then the listed imposter "iso1" has 3 stubs
     When the client sends isolated admin "DELETE" "/imposters" with payload "-"
     Then the response status is 200
-    And the listed imposter "iso1" has 2 stubs
+    And the listed imposter "iso1" has 3 stubs

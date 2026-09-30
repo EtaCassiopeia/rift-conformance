@@ -154,12 +154,10 @@ Feature: Proxy record/replay — proxyOnce, proxyTransparent, proxyAlways chains
     Then the response body is "up"
     And the upstream imposter has recorded 2 requests
 
-  # GAP (achird-labs/rift#1239): the route should also clear the stubs a proxy recorded through
-  # predicateGenerators (they carry `recordedFrom`), as the docs and Mountebank do. 0.18.1 keeps them,
-  # so the imposter stays at 2 stubs and replays without reaching the upstream. Pinned as current
-  # behaviour; flip to "1 elements" / "2 requests" when the engine is fixed.
-  @gap
-  Scenario: DELETE savedProxyResponses keeps a predicateGenerators-recorded stub (rift#1239)
+  # rift#1239 (fixed in 0.19.0): the route also removes the stubs a proxy recorded through
+  # predicateGenerators (they carry `recordedFrom`), as Mountebank's deleteSavedProxyResponses does,
+  # and keeps the declared proxy stub. Up to 0.18.1 the recorded stub stayed and kept replaying.
+  Scenario: DELETE savedProxyResponses removes a predicateGenerators-recorded stub (rift#1239)
     Given an upstream imposter from fixture "proxy/options/upstream"
     And a fresh imposter from fixture "proxy/options/once-pg" proxying to the upstream
     When the client sends "GET" "/z"
@@ -167,11 +165,11 @@ Feature: Proxy record/replay — proxyOnce, proxyTransparent, proxyAlways chains
     When the client sends admin "DELETE" "/imposters/{port}/savedProxyResponses" with payload "-"
     Then the response status is 200
     When the client sends admin "GET" "/imposters/{port}" with payload "-"
-    Then the response JSON at "stubs" has 2 elements
-    And the response JSON at "stubs.0.recordedFrom" is present
+    Then the response JSON at "stubs" has 1 elements
+    And the response JSON at "stubs.0.recordedFrom" is absent
     When the client sends "GET" "/z"
     Then the response body is "up"
-    And the upstream imposter has recorded 1 requests
+    And the upstream imposter has recorded 2 requests
 
   # The proxy TLS client fields are accepted and dropped on load: they do not read back.
   Scenario: the proxy key/cert/passphrase/ciphers fields are accepted and not read back

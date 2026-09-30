@@ -103,6 +103,33 @@ Feature: Front door routing and single-port gateway dispatch (rift docs/features
     When the client sends "GET" "/__rift/4873/x" through the front door with host "other.test"
     Then the front door answered "B"
 
+  # rift#1234 (fixed in 0.19.0; #229): a tcp fault reached through the front door aborts the
+  # connection exactly as the imposter's own port does (up to 0.18.1: an HTTP 502, empty body).
+  # front-door/faults.json routes host fault.test to imposter 4872, which holds one stub per kind.
+  @front-door
+  Scenario Outline: a <kind> fault through the front door gives a <outcome> (rift#1234)
+    Given the engine is started with the front door and routes fixture "front-door/faults"
+    When the client sends a raw "GET" "<path>" through the front door with host "fault.test"
+    Then the raw connection outcome is "<outcome>"
+
+    Examples:
+      | kind                     | path          | outcome                      |
+      | CONNECTION_RESET_BY_PEER | /reset        | connection reset             |
+      | top-level fault          | /topfault     | connection reset             |
+      | script reset()           | /script-reset | connection reset             |
+      | tcp empty                | /empty        | empty reply                  |
+      | tcp garbage              | /garbage      | garbage bytes                |
+      | MALFORMED_RESPONSE_CHUNK | /malformed    | 200 head then a broken chunk |
+
+  # Over HTTP/2 (h2c) the fault resets only its own stream; the next stream on the same connection
+  # is served.
+  @front-door
+  Scenario: a tcp fault through the front door over HTTP/2 resets only its stream (rift#1234)
+    Given the engine is started with the front door and routes fixture "front-door/faults"
+    When an h2c client sends "/reset" then "/ok" on one connection through the front door with host "fault.test"
+    Then the first HTTP/2 stream was reset with INTERNAL_ERROR
+    And the second HTTP/2 stream answered 200 "ok"
+
   @front-door
   Scenario Outline: an invalid route table fails the boot, naming the route and the rule
     When an engine is booted with the front door and routes fixture "front-door/<table>"

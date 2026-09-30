@@ -129,9 +129,10 @@ Feature: Match diagnostics — _rift.warnings stub analysis, the X-Rift-Debug re
     And the response JSON at "0.matchOutcome.tried.2.stubId" is the string "s2"
     And the response JSON at "0.matchOutcome.tried.2.why.reason" is the string "skippedSpace"
 
-  # rift#1227 (open): the debug entry is journaled WITH status/latencyMs, which the doc says are
-  # absent. Not asserted either way until the engine side decides — @gap pointer only.
-  Scenario: a debug request is journaled without a matchOutcome
+  # rift#1227 (fixed in 0.19.0): a journal entry records status/latencyMs only for an answer the
+  # client received, so the debug entry leaves both out, as the doc says. Up to 0.18.1 it carried the
+  # debug report's 200.
+  Scenario: a debug request is journaled without a matchOutcome, status or latencyMs (rift#1227)
     Given a fresh imposter from fixture "diagnostics/match-outcome"
     When the request header "X-Rift-Debug" is "1"
     And the client sends "GET" "/hit"
@@ -139,3 +140,5 @@ Feature: Match diagnostics — _rift.warnings stub analysis, the X-Rift-Debug re
     Then the response is a JSON array of 1 elements
     And the response JSON at "0.path" is the string "/hit"
     And the response JSON at "0.matchOutcome" is absent
+    And the response JSON at "0.status" is absent
+    And the response JSON at "0.latencyMs" is absent

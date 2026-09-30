@@ -251,6 +251,9 @@ final case class RawCapture(
 ):
   def text: String = new String(bytes, StandardCharsets.ISO_8859_1)
 
+/** Both streams of the last [[H2cProbe.twoStreams]] exchange (rift#1234, #229). */
+final case class H2cStreams(first: H2Outcome, second: H2Outcome)
+
 /** Request headers/body staged for the next send. */
 final case class PendingRequest(
     headers: Map[String, String] = Map.empty,
@@ -2712,8 +2715,21 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
     for
       port <- currentPort
       host <- ZIO.serviceWith[RiftHarness](_.hostFor(port))
+      _ <- rawCaptureAt(host, port, method, path, host, tls)
+    yield ()
+
+  /** [[rawCapture]] against any listener: `host:port`, sending `Host: hostHeader`. */
+  private def rawCaptureAt(
+      host: String,
+      port: Int,
+      method: String,
+      path: String,
+      hostHeader: String,
+      tls: Boolean
+  ): IO[Throwable, Unit] =
+    for
       _ <- recordCurl(
-        s"printf '$method $path HTTP/1.1\\r\\nHost: $host\\r\\n\\r\\n' | " +
+        s"printf '$method $path HTTP/1.1\\r\\nHost: $hostHeader\\r\\n\\r\\n' | " +
           (if tls then s"openssl s_client -quiet -connect $host:$port" else s"nc $host $port")
       )
       cap <- ZIO.attemptBlocking {
@@ -2742,7 +2758,7 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
               ssl
           val out = sock.getOutputStream
           out.write(
-            s"$method $path HTTP/1.1\r\nHost: $host\r\nConnection: close\r\n\r\n".getBytes(
+            s"$method $path HTTP/1.1\r\nHost: $hostHeader\r\nConnection: close\r\n\r\n".getBytes(
               StandardCharsets.US_ASCII
             )
           )
@@ -2811,6 +2827,112 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
       assertRepro(
         c.tlsHandshake.contains(true),
         s"expected a completed TLS handshake, got ${c.tlsHandshake} (${c.error.getOrElse("no error")})"
+      )
+    )
+  }
+
+  // ── a tcp fault reached through another door (rift#1234, #229) ─────────────────────────────
+  // The gateway (`{admin}/__rift/{port}`) and the front door abort the connection exactly as the
+  // imposter's own port does (HTTP/1), and reset only that stream over HTTP/2.
+
+  private def adminHostPort: URIO[RiftHarness, (String, Int)] =
+    ZIO.serviceWith[RiftHarness] { h =>
+      val u = java.net.URI.create(h.adminUrl)
+      (u.getHost, u.getPort)
+    }
+
+  When("the client sends a raw " / string / " " / string / " via the gateway") {
+    (m: String, p: String) =>
+      for
+        port <- currentPort
+        hp <- adminHostPort
+        _ <- rawCaptureAt(hp._1, hp._2, m, s"/__rift/$port$p", hp._1, tls = false)
+      yield ()
+  }
+
+  When(
+    "the client sends a raw " / string / " " / string / " through the front door with host " / string
+  ) { (m: String, p: String, hostHeader: String) =>
+    frontDoorPort.flatMap(fd => rawCaptureAt("localhost", fd, m, p, hostHeader, tls = false))
+  }
+
+  // Each outcome is asserted literally: a reset is an RST (the read fails "Connection reset"), an
+  // empty reply is a clean EOF with zero bytes, garbage is bytes that are not an HTTP response, and
+  // a malformed chunk is a 200 chunked head followed by a chunk-size line that is not hex.
+  Then("the raw connection outcome is " / string) { (outcome: String) =>
+    rawCaptured.flatMap { c =>
+      val seen = s"${c.bytes.length} bytes (closed=${c.closed}, ${c.error.getOrElse("EOF")}): " +
+        s"'${c.text.take(120)}'"
+      val ok: Option[Boolean] = outcome match
+        case "connection reset" =>
+          Some(c.bytes.isEmpty && c.closed && c.error.exists(_.toLowerCase.contains("reset")))
+        case "empty reply" => Some(c.bytes.isEmpty && c.closed && c.error.isEmpty)
+        case "garbage bytes" => Some(c.bytes.nonEmpty && c.closed && !c.text.startsWith("HTTP/"))
+        case "200 head then a broken chunk" =>
+          val (head, rest) = c.text.split("\r\n\r\n", 2) match
+            case Array(h, r) => (h, r)
+            case _ => (c.text, "")
+          val sizeLine = rest.takeWhile(ch => ch != '\r' && ch != '\n').trim
+          Some(
+            c.closed && head.startsWith("HTTP/1.1 200") &&
+              head.toLowerCase.contains("transfer-encoding: chunked") &&
+              sizeLine.nonEmpty && !sizeLine.matches("[0-9a-fA-F]+(;.*)?")
+          )
+        case _ => None
+      ok match
+        case None => ZIO.fail(new IllegalArgumentException(s"unknown raw outcome '$outcome'"))
+        case Some(passed) => assertRepro(passed, s"expected '$outcome', got $seen")
+    }
+  }
+
+  private def h2cTwoStreams(
+      host: String,
+      port: Int,
+      authority: String,
+      first: String,
+      second: String
+  ): IO[Throwable, Unit] =
+    recordCurl(
+      s"curl -sv --http2-prior-knowledge -H 'Host: $authority' " +
+        s"http://$host:$port$first http://$host:$port$second"
+    ) *> ZIO
+      .attemptBlocking(H2cProbe.twoStreams(host, port, authority, first, second))
+      .flatMap(r => Stage.put(H2cStreams(r._1, r._2)))
+
+  When(
+    "an h2c client sends " / string / " then " / string / " on one connection via the gateway"
+  ) { (first: String, second: String) =>
+    for
+      port <- currentPort
+      hp <- adminHostPort
+      _ <- h2cTwoStreams(hp._1, hp._2, hp._1, s"/__rift/$port$first", s"/__rift/$port$second")
+    yield ()
+  }
+
+  When(
+    "an h2c client sends " / string / " then " / string /
+      " on one connection through the front door with host " / string
+  ) { (first: String, second: String, authority: String) =>
+    frontDoorPort.flatMap(fd => h2cTwoStreams("localhost", fd, authority, first, second))
+  }
+
+  private def h2cStreams: IO[Throwable, H2cStreams] =
+    Stage.get[H2cStreams].mapError(e => new IllegalStateException(s"no h2c exchange yet ($e)"))
+
+  Then("the first HTTP/2 stream was reset with INTERNAL_ERROR") {
+    h2cStreams.flatMap(r =>
+      assertRepro(
+        r.first == H2Outcome.Reset(H2cProbe.InternalError),
+        s"expected RST_STREAM INTERNAL_ERROR on the first stream, got ${r.first}"
+      )
+    )
+  }
+
+  Then("the second HTTP/2 stream answered " / int / " " / string) { (status: Int, body: String) =>
+    h2cStreams.flatMap(r =>
+      assertRepro(
+        r.second == H2Outcome.Answered(Some(status), body),
+        s"expected the same connection's next stream to answer $status '$body', got ${r.second}"
       )
     )
   }
