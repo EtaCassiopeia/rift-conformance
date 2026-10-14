@@ -16,7 +16,7 @@ rift-conformance/                    ← THIS repo. The single conformance home.
   DESIGN.md                          ← this contract
   src/test/scala/samples/rift/…      ← Plane A: engine conformance (new)
   src/test/scala/samples/mock/…      ← Plane B: MockControl corpus (migrated from zio-bdd-samples)
-  src/test/resources/features/rift/… ← Plane A features
+  src/test/plane-a/features/rift/… ← Plane A features
   src/test/resources/features/mock/… ← Plane B features (migrated)
   corpus/imposters/*.json            ← canonical JSON corpus (migrated from rift-imposter-samples at the end)
   scripts/ · COVERAGE.md · FINDINGS.md
@@ -284,7 +284,7 @@ under `abi: "v2"` at the pinned `version`, with a well-formed `sha256`/`url`. Se
 (non-zero, "FAILED"); `rift script run` prints the `respond` decision trace. Self-gating on `RIFT_BUILD_DIR`.
 
 **File-based script authoring (#87, rift#441).** `FileScriptAuthoring87Spec` spawns a dedicated
-engine with `--scripts-dir` pointed at a committed script library (`src/test/resources/rift-scripts`)
+engine with `--scripts-dir` pointed at a committed script library (`src/test/plane-a/rift-scripts`)
 and drives, over the admin API: `_rift.script.file: "greet.rhai"` (resolved under the `--scripts-dir`
 root) serves; `_rift.script.ref: "greet"` (a named entry in the imposter's own `_rift.scripts` map,
 needing no `--scripts-dir`) serves; and a path-traversal `file: "../../etc/passwd"` is rejected `400`
@@ -382,7 +382,7 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
   protected def riftVerify(adminUrl: String): ZIO[RiftHarness, Throwable, VerifyReport]
 
   // ── steps (selection) ──
-  Given("a fresh imposter from fixture " / string)          // loads src/test/resources/rift-fixtures/<name>.json
+  Given("a fresh imposter from fixture " / string)          // loads src/test/plane-a/rift-fixtures/<name>.json
   Given("every corpus imposter is posted to the engine")
   When("the client requests " / string / " " / string)      // GET /path against the scenario's imposter
   When(int / " concurrent requests are sent to " / string)
@@ -398,7 +398,7 @@ trait RiftConformanceSupport[S] { self: ZIOSteps[RiftHarness, S] =>
 
 Design decisions:
 
-1. **Imposter JSON lives in fixture files** (`src/test/resources/rift-fixtures/<feature>/<name>.json`),
+1. **Imposter JSON lives in fixture files** (`src/test/plane-a/rift-fixtures/<feature>/<name>.json`),
    referenced by name from Gherkin — *not* inlined in steps. Rationale: multi-line JSON in
    quoted step args is unreadable and fought the extractor once already (FINDINGS F2);
    fixtures diff cleanly and can be curl-replayed verbatim during triage. If zio-bdd grows

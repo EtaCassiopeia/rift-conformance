@@ -11,7 +11,7 @@ import zio.bdd.core.step.ZIOSteps
   * engine's cwd to be `$RIFT_CORPUS_ROOT` (RiftHarness sets this).
   */
 @Suite(
-  featureDirs = Array("src/test/resources/features/rift/06-behaviors.feature"),
+  featureDirs = Array("classpath:features/rift/06-behaviors.feature"),
   reporters = Array("pretty"),
   scenarioParallelism = 1
 )

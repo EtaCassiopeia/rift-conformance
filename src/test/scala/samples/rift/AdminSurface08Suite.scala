@@ -12,7 +12,7 @@ import zio.bdd.core.step.ZIOSteps
   * `RIFT_BUILD_DIR`.
   */
 @Suite(
-  featureDirs = Array("src/test/resources/features/rift/08-admin-surface.feature"),
+  featureDirs = Array("classpath:features/rift/08-admin-surface.feature"),
   reporters = Array("pretty"),
   scenarioParallelism = 1
 )

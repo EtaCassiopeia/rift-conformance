@@ -105,6 +105,20 @@ Test / unmanagedSourceDirectories ++= (
   if (ffmEnabled) Seq(baseDirectory.value / "src" / "test" / "java-jdk22") else Nil
 )
 
+// The Plane A specification — `features/rift/`, `rift-fixtures/`, `rift-lint-fixtures/`,
+// `rift-scripts/` — is one resource root, read from RIFT_FEATURES_DIR when set (the engine repo's
+// own copy, achird-labs/rift#1338) and from the in-repo `src/test/plane-a` otherwise (#236). Exactly
+// one of the two is ever on the classpath: zio-bdd resolves a `classpath:` feature with
+// `getResources`, so with both present every feature would load twice.
+val planeATree = settingKey[File]("Root of the Plane A features and fixtures")
+planeATree := sys.env
+  .get("RIFT_FEATURES_DIR")
+  .filter(_.nonEmpty)
+  .map(file)
+  .getOrElse(baseDirectory.value / "src" / "test" / "plane-a")
+Test / unmanagedResourceDirectories += planeATree.value
+Test / javaOptions += s"-Drift.planeATree=${planeATree.value.getAbsolutePath}"
+
 // Run suites one at a time: the mock corpus shares one backend server per run (a Correlated
 // WireMock instance), so concurrent suites would race on it; Plane A's single-engine-per-run
 // harness needs the same serialization.
@@ -251,7 +265,7 @@ addCommandAlias(
 // `reload` (or start a new sbt) first.
 addCommandAlias(
   "lintFeatures",
-  """;set Test / javaOptions += "-Drift.dryRun=true";testOnly samples.rift.*Suite samples.redis.*Suite -- --dry-run"""
+  """;set Test / javaOptions += "-Drift.dryRun=true";testOnly samples.planea.PlaneATreeSpec samples.rift.*Suite samples.redis.*Suite -- --dry-run"""
 )
 
 // Flow-store backend parity (#174): feature 15 drives the same flow-state scenarios against an

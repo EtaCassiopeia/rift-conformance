@@ -14,7 +14,7 @@ import zio.bdd.core.step.ZIOSteps
   * run on the shared engine. Requires `RIFT_BUILD_DIR`.
   */
 @Suite(
-  featureDirs = Array("src/test/resources/features/rift/16-front-door.feature"),
+  featureDirs = Array("classpath:features/rift/16-front-door.feature"),
   reporters = Array("pretty"),
   scenarioParallelism = 1
 )

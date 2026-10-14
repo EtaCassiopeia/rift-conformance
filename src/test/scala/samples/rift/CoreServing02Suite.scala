@@ -10,7 +10,7 @@ import zio.bdd.core.step.ZIOSteps
   * `RIFT_BUILD_DIR` (external mode).
   */
 @Suite(
-  featureDirs = Array("src/test/resources/features/rift/02-core-serving.feature"),
+  featureDirs = Array("classpath:features/rift/02-core-serving.feature"),
   reporters = Array("pretty"),
   scenarioParallelism = 1
 )

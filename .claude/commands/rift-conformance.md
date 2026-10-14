@@ -9,7 +9,7 @@ You are running the repeatable, self-driving conformance loop for **Rift** using
 two-plane zio-bdd harness — not the retired `rift-imposter-samples` shell suite. The **engine is
 the source of truth**; both planes exercise it as a downstream consumer:
 
-- **Plane A** (`samples.rift.*`, `src/test/resources/features/rift/`) drives the admin API
+- **Plane A** (`samples.rift.*`, `src/test/plane-a/features/rift/`) drives the admin API
   directly and shells out to `rift-lint`/`rift-verify`. No `MockControl` in the path — a red here
   is an **engine or tool** finding.
 - **Plane B** (`samples.mock.*`, `src/test/resources/features/mock/`) drives Rift *through* the

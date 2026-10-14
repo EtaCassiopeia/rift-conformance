@@ -33,7 +33,7 @@ Feature: Single-port gateway, binary-mode responses, self-signed HTTPS, and Prom
   # rift#977 (0.18.0): `mutualAuth` REQUIRES a client certificate (Mountebank only requests one), and
   # `rejectUnauthorized` + `ca` validate it. Before, a mutualAuth imposter silently accepted every
   # client. Refusal happens in the TLS handshake, so no HTTP status ever arrives. Test certs and how
-  # they were made: src/test/resources/rift-fixtures/tls/README.md.
+  # they were made: src/test/plane-a/rift-fixtures/tls/README.md.
   Scenario: a mutualAuth imposter refuses a client that presents no certificate
     Given a fresh imposter from fixture "tls/mutual-auth-ca"
     Then an HTTPS request to "/m" presenting no client certificate is refused

@@ -34,7 +34,7 @@ import scala.jdk.CollectionConverters.*
   * not list this suite. Requires `RIFT_BUILD_DIR`.
   */
 @Suite(
-  featureDirs = Array("src/test/resources/features/rift/12-intercept.feature"),
+  featureDirs = Array("classpath:features/rift/12-intercept.feature"),
   reporters = Array("pretty"),
   scenarioParallelism = 1
 )

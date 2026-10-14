@@ -14,7 +14,7 @@ import java.nio.file.Files
   * oracle. Requires `RIFT_BUILD_DIR`; corpus at `$RIFT_CORPUS_ROOT/imposters`.
   */
 @Suite(
-  featureDirs = Array("src/test/resources/features/rift/01-consistency-gate.feature"),
+  featureDirs = Array("classpath:features/rift/01-consistency-gate.feature"),
   reporters = Array("pretty"),
   scenarioParallelism = 1
 )

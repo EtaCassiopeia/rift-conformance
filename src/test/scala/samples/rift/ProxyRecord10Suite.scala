@@ -12,7 +12,7 @@ import zio.bdd.core.step.ZIOSteps
   * capture the query string into the recorded predicate. Requires `RIFT_BUILD_DIR`.
   */
 @Suite(
-  featureDirs = Array("src/test/resources/features/rift/10-proxy-record.feature"),
+  featureDirs = Array("classpath:features/rift/10-proxy-record.feature"),
   reporters = Array("pretty"),
   scenarioParallelism = 1
 )

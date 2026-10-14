@@ -45,6 +45,14 @@ jobs:
       - name: Lint features (dry-run step matching)
         run: scripts/lint-features.sh
 
+      # The same gate with the Plane A tree read from outside the repo (#236), the way the engine
+      # repo will supply it (achird-labs/rift#1339): RIFT_FEATURES_DIR replaces src/test/plane-a,
+      # and PlaneATreeSpec fails if a suite's feature is missing there or loaded from two trees.
+      - name: Lint features against an external tree (RIFT_FEATURES_DIR)
+        run: |
+          cp -R src/test/plane-a "$RUNNER_TEMP/plane-a"
+          RIFT_FEATURES_DIR="$RUNNER_TEMP/plane-a" scripts/lint-features.sh
+
   # Plane A against the real rift engine, fetched as a published release (#38 — no Rust build
   # needed). The corpus is vendored in-repo under ./corpus (#16), so this runs on every push/PR,
   # same as compile-and-format.

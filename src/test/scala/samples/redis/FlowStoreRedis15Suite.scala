@@ -18,7 +18,7 @@ import zio.bdd.core.step.ZIOSteps
   * shared engine.
   */
 @Suite(
-  featureDirs = Array("src/test/resources/features/rift/15-flow-store-redis.feature"),
+  featureDirs = Array("classpath:features/rift/15-flow-store-redis.feature"),
   reporters = Array("pretty"),
   scenarioParallelism = 1
 )

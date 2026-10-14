@@ -1,6 +1,6 @@
 package samples.rift
 
-import samples.rift.support.TestPorts
+import samples.rift.support.{PlaneATree, TestPorts}
 import zio.*
 import zio.test.*
 
@@ -11,7 +11,7 @@ import java.nio.file.{Files, Path, Paths}
 /** File-based script authoring (rift#441, #87): a `_rift.script` can reference its code by `file:`
   * (a path resolved under the engine's `--scripts-dir` root) or `ref:` (a named entry in the
   * imposter's own `_rift.scripts` map). This gate spawns a dedicated engine with `--scripts-dir`
-  * pointed at a committed script library (`src/test/resources/rift-scripts`) and drives, over the
+  * pointed at a committed script library (`src/test/plane-a/rift-scripts`) and drives, over the
   * admin API:
   *   - `file: "greet.rhai"` → the imposter is accepted and serves the file's `respond()`;
   *   - `ref: "greet"` against an inline `_rift.scripts` library → accepted and served;
@@ -27,7 +27,7 @@ object FileScriptAuthoring87Spec extends ZIOSpecDefault:
 
   private def buildDir: Option[Path] = sys.env.get("RIFT_BUILD_DIR").map(Paths.get(_))
 
-  private val scriptsDir: Path = Paths.get("src/test/resources/rift-scripts").toAbsolutePath
+  private val scriptsDir: Path = PlaneATree.resolve("rift-scripts")
 
   private def spawnEngine(
       bd: Path,

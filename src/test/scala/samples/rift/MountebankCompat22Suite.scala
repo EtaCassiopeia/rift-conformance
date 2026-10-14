@@ -9,7 +9,7 @@ import zio.bdd.core.step.ZIOSteps
   * that the corpus loads but never asserts (#203). Runs on every leg. Requires `RIFT_BUILD_DIR`.
   */
 @Suite(
-  featureDirs = Array("src/test/resources/features/rift/22-mountebank-compat.feature"),
+  featureDirs = Array("classpath:features/rift/22-mountebank-compat.feature"),
   reporters = Array("pretty"),
   scenarioParallelism = 1
 )
