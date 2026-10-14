@@ -11,7 +11,7 @@ import zio.bdd.core.step.ZIOSteps
   * apart from feature 06, which covers `is` responses. Requires `RIFT_BUILD_DIR`.
   */
 @Suite(
-  featureDirs = Array("src/test/resources/features/rift/14-behaviors-response-types.feature"),
+  featureDirs = Array("classpath:features/rift/14-behaviors-response-types.feature"),
   reporters = Array("pretty"),
   scenarioParallelism = 1
 )

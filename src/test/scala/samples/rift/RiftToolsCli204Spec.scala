@@ -1,6 +1,6 @@
 package samples.rift
 
-import samples.rift.support.{RiftTools, SpawnedEngine, TestPorts, VerifyReport}
+import samples.rift.support.{PlaneATree, RiftTools, SpawnedEngine, TestPorts, VerifyReport}
 import zio.*
 import zio.json.*
 import zio.json.ast.Json
@@ -22,7 +22,7 @@ import java.nio.file.{Files, Path, Paths, StandardCopyOption}
   */
 object RiftToolsCli204Spec extends ZIOSpecDefault:
 
-  private val fixtures: Path = Paths.get("src/test/resources/rift-lint-fixtures")
+  private val fixtures: Path = PlaneATree.resolve("rift-lint-fixtures")
 
   /** Each fixture must report its code at this severity. */
   private val Codes: List[(String, String)] =

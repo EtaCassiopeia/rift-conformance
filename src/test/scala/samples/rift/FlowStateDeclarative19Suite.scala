@@ -10,7 +10,7 @@ import zio.bdd.core.step.ZIOSteps
   * carried-not-executed `sequencing`/`dataset` blocks. Requires `RIFT_BUILD_DIR`.
   */
 @Suite(
-  featureDirs = Array("src/test/resources/features/rift/19-flow-state-declarative.feature"),
+  featureDirs = Array("classpath:features/rift/19-flow-state-declarative.feature"),
   reporters = Array("pretty"),
   scenarioParallelism = 1
 )

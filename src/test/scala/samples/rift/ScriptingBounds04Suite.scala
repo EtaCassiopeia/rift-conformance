@@ -11,7 +11,7 @@ import zio.bdd.core.step.ZIOSteps
   * `RIFT_BUILD_DIR`. scenarioParallelism=1 deliberately saturates the blocking-script threads.
   */
 @Suite(
-  featureDirs = Array("src/test/resources/features/rift/04-scripting-bounds.feature"),
+  featureDirs = Array("classpath:features/rift/04-scripting-bounds.feature"),
   reporters = Array("pretty"),
   scenarioParallelism = 1
 )

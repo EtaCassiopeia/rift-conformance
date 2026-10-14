@@ -20,7 +20,7 @@ import zio.bdd.core.step.ZIOSteps
   * other's imposter (which answers 200 + `x-rift-no-match`, silently masking an error door).
   */
 @Suite(
-  featureDirs = Array("src/test/resources/features/rift/13-error-envelope.feature"),
+  featureDirs = Array("classpath:features/rift/13-error-envelope.feature"),
   reporters = Array("pretty"),
   scenarioParallelism = 1
 )

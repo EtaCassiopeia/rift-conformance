@@ -1,6 +1,6 @@
 package samples.rift
 
-import samples.rift.support.RiftTools
+import samples.rift.support.{PlaneATree, RiftTools}
 import zio.*
 import zio.test.*
 
@@ -24,7 +24,7 @@ object RiftScriptTooling88Spec extends ZIOSpecDefault:
   private def tools: Option[RiftTools] =
     sys.env.get("RIFT_BUILD_DIR").map(d => RiftTools.fromBuildDir(Paths.get(d)))
 
-  private val scriptsDir: Path = Paths.get("src/test/resources/rift-scripts")
+  private val scriptsDir: Path = PlaneATree.resolve("rift-scripts")
   private def valid: Path = scriptsDir.resolve("greet.rhai")
   private def invalid: Path = scriptsDir.resolve("invalid.rhai")
 

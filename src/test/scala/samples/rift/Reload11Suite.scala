@@ -18,7 +18,7 @@ import zio.bdd.core.step.ZIOSteps
   * only). Requires `RIFT_BUILD_DIR`.
   */
 @Suite(
-  featureDirs = Array("src/test/resources/features/rift/11-reload.feature"),
+  featureDirs = Array("classpath:features/rift/11-reload.feature"),
   reporters = Array("pretty"),
   scenarioParallelism = 1
 )

@@ -49,13 +49,39 @@ scripts/run-all.sh                     one-command layered summary, both planes
 scripts/sync-rift-examples.sh          refreshes corpus/rift-examples/ from rift's examples/ at the pin (`--check` verifies)
 src/test/scala/samples/rift/           Plane A — engine conformance suites + RiftHarness
 src/test/scala/samples/mock/           Plane B — MockControl corpus (migrated from zio-bdd-samples)
-src/test/resources/features/rift/      Plane A features
+src/test/plane-a/                      Plane A spec tree (features/rift, rift-fixtures, rift-lint-fixtures, rift-scripts); RIFT_FEATURES_DIR replaces it
 src/test/resources/features/mock/      Plane B features (migrated)
 corpus/imposters/*.json                canonical JSON corpus (vendored in-repo, #16) — static, numbered, add-never-renumber
 corpus/data/products.csv               CSV lookup data for feature 06 (`lookup` behavior)
 corpus/fixtures/injection/*.cjs,*.js   JS injection modules for the scripting/decorate scenarios
 corpus/rift-examples/*.json            rift's own shipped examples, vendored at the pin (#120) — see its PROVENANCE.md
 ```
+
+## Plane A specification tree (`RIFT_FEATURES_DIR`)
+
+The Plane A suites load their features and fixtures from the **test classpath**, from one root:
+the in-repo `src/test/plane-a/` by default, or the directory `RIFT_FEATURES_DIR` names. The engine
+repo takes ownership of that tree (achird-labs/rift#1338): it ships it as
+`rift-conformance-<version>.tar.gz`, and pointing `RIFT_FEATURES_DIR` at it runs this runner
+against the engine's own specification. The tree's layout is the contract:
+
+```
+features/rift/*.feature     one file per Plane A suite (each suite names its file: classpath:features/rift/NN-x.feature)
+rift-fixtures/**            imposter JSON and other fixtures, loaded as /rift-fixtures/<name>.json
+rift-lint-fixtures/**       rift-lint inputs (RiftToolsCli204Spec)
+rift-scripts/**             the --scripts-dir library (RiftScriptTooling88Spec, FileScriptAuthoring87Spec)
+```
+
+Exactly one tree is on the classpath, never both: zio-bdd resolves a `classpath:` feature with
+`getResources`, so two trees would run every feature twice. `PlaneATreeSpec`, part of
+`sbt lintFeatures`, fails when a suite's feature is missing from the active tree or found twice; a
+missing `classpath:` feature would otherwise run zero scenarios and pass.
+
+```bash
+RIFT_FEATURES_DIR=/path/to/rift/conformance sbt lintFeatures engineConformance
+```
+
+`RIFT_FEATURES_DIR` is read when sbt loads the build, so `reload` after changing it in a session.
 
 ## Quickstart (cold start, nothing else checked out)
 

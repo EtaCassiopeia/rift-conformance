@@ -33,7 +33,7 @@ import scala.jdk.OptionConverters.*
   * imposter served the fixture chain. Requires `RIFT_BUILD_DIR`.
   */
 @Suite(
-  featureDirs = Array("src/test/resources/features/rift/20-tls-and-http2.feature"),
+  featureDirs = Array("classpath:features/rift/20-tls-and-http2.feature"),
   reporters = Array("pretty"),
   scenarioParallelism = 1
 )

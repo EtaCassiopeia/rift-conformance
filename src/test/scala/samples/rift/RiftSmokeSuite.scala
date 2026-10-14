@@ -11,7 +11,7 @@ import zio.bdd.core.step.ZIOSteps
 // Target the specific feature file, not the whole features/rift directory — each suite owns its own
 // feature so a suite never tries to run another suite's scenarios (which it has no steps for).
 @Suite(
-  featureDirs = Array("src/test/resources/features/rift/00-smoke.feature"),
+  featureDirs = Array("classpath:features/rift/00-smoke.feature"),
   reporters = Array("pretty"),
   scenarioParallelism = 1
 )
