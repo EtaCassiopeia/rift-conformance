@@ -78,10 +78,22 @@ Exactly one tree is on the classpath, never both: zio-bdd resolves a `classpath:
 missing `classpath:` feature would otherwise run zero scenarios and pass.
 
 ```bash
-RIFT_FEATURES_DIR=/path/to/rift/conformance sbt lintFeatures engineConformance
+RIFT_FEATURES_DIR=/path/to/rift/conformance sbt -batch lintFeatures
+RIFT_FEATURES_DIR=/path/to/rift/conformance sbt -batch engineConformance
 ```
 
-`RIFT_FEATURES_DIR` is read when sbt loads the build, so `reload` after changing it in a session.
+Run the two as separate invocations: `lintFeatures` sets dry-run for the rest of its sbt session,
+so an `engineConformance` chained after it would never start an engine. `RIFT_FEATURES_DIR` is read
+when sbt loads the build, so `reload` after changing it in a session.
+
+### Features ported to the engine repo's Rust runner
+
+The engine repo is moving these features to a Rust runner (`conformance/runner/`,
+achird-labs/rift#1346…#1350), one batch at a time. [`conformance/ported.txt`](conformance/ported.txt)
+names the feature files it owns. A suite whose features are all listed leaves `engineConformance`,
+`engineEmbedded` and `lintFeatures` here, so the two runners never both own a feature in a mode both
+run. It stays in `engineContainer` until the Rust runner has a container mode (achird-labs/rift#1467).
+Each porting batch adds its file names here in the same release.
 
 ## Quickstart (cold start, nothing else checked out)
 
