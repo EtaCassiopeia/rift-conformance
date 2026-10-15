@@ -2,8 +2,7 @@
 Feature: Declarative flow state — _rift.stateOps, fail-loud flowState config, the clear-flow admin route
 
   # rift 0.18.0 (#969) added `_rift.stateOps`: declarative writes on an `is` response, run in order
-  # after the render and before the write (rift docs/features/flow-state.md). Feature 15 covers only
-  # `increment` into a header, and only on the Docker `engineRedis` leg; this feature pins every op,
+  # after the render and before the write (rift docs/features/flow-state.md). This feature pins every op,
   # the pre-op template read, integer coercion, the skip-on-fault rule and auto-provisioning on the
   # default in-memory store, plus the fail-loud `flowState` config doors and the clear-flow admin
   # route (#530). Every fixture keys its flow on `X-Flow`, so a scenario isolates its flows by name.

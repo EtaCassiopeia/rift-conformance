@@ -113,7 +113,6 @@ whole feature runs; ✔ − `@tag` = runs minus those rows; ✖ = not enrolled, 
 | 12 intercept | ✔ | ✔ − `@intercept-http` + dedicated-engine tags | ✔ − dedicated-engine tags |
 | 13 error envelope | ✔ | ✔ | ✔ |
 | 14 behaviors on response types | ✔ | ✔ | ✔ |
-| 15 flow-store Redis | ✔ (`engineRedis`) | ✖ needs the external engine + a Redis container | ✖ same |
 | 16 front door | ✔ | ✖ every scenario spawns its own `--front-door` engine | ✖ same |
 | 17 metrics | ✔ | ✔ − `@metrics-port` | ✔ |
 | 18 match diagnostics | ✔ | ✔ | ✔ |
@@ -1076,26 +1075,11 @@ set, so a regression there would wipe other scenarios' imposters).
 | A **malformed `jsonpath`/`xpath` selector** was accepted (`201`), and the failed extraction compared as `""`, so an `equals body ""` stub matched every request — a rift#181 regression | [#1220](https://github.com/achird-labs/rift/issues/1220) | **fixed & verified in 0.18.1** — `13-error-envelope` outline "a malformed … is refused": `400 "bad data"`, message names the selector, on create (`jsonpath`, `xpath`, a `jsonpath` nested under `not`) and on `PUT …/stubs` (`xpath`) |
 | An **invalid `matches` regex** was accepted (`201`); the stub silently never matched | [#1221](https://github.com/achird-labs/rift/issues/1221) | **fixed & verified in 0.18.1** — same outline: `400 "bad data"`, message names the regex, on create (top-level and nested under `and`) and on `POST …/stubs` (a keyed `query.q` value) |
 
-### Flow-store backend parity, in-memory vs Redis (#174, umbrella #115)
+### Flow-store backend parity, in-memory vs Redis (#174) — retired
 
-The backend-parity class (rift#537/#562/#987). `15-flow-store-redis` drives each flow-state
-scenario once per backend against the same fixture (`rift-fixtures/flowstore/`). The step forces
-`_rift.flowState.backend`, and for Redis adds `redis: {url, keyPrefix}` with a prefix unique to the
-scenario, following rift's docs/features/flow-state.md. Every row asserts literal values, so a
-divergence fails the Redis row alone:
-
-| Row | Asserted (identical on both backends) |
-|---|---|
-| scenario-state transitions (`requiredScenarioState`/`newScenarioState`) | `Started→paid→shipped` with statuses 201/202/200; the terminal state holds |
-| `ctx.state` `incr_by`/`exists`/`cas`/`ttl` from a script | `5`,`10`; `exists` false→true; `cas` `true:v2`, stale `false:v2`; `ttl(k,0)` → `true:false`; `ttl` on an absent key → `false` |
-| flow-state TTL expiry (`ttlSeconds: 1`) | `v1`, then `EXPIRED` after 2.5 s |
-| `{{ state.* }}` in a header (`stateOps` increment) | `X-Hits` = `""`, `1`, `2` (reads the value from before the increment) |
-| state really lives in Redis | the key `<prefix>flow:<port>:k` exists in the container, so a silent fallback to in-memory cannot pass |
-
-No divergence on 0.18.0. The suite is `samples.redis.FlowStoreRedis15Suite`, outside
-`engineConformance`'s `samples.rift.*` because it needs Docker. Run it with `RIFT_IT=1 sbt
-engineRedis`. The harness owns the `redis:7-alpine` container (testcontainers, a JVM shutdown hook,
-Ryuk as the backstop). CI job `plane-a-redis` runs it on every push.
+Rift removed its Redis flow store in 0.22.0 (achird-labs/rift#1337), so feature 15 and its
+`samples.redis` suite were deleted along with the `engineRedis` alias and the `plane-a-redis` job.
+The in-memory store is the only one left; feature 19 covers its operations.
 
 ### CLI flags and dedicated-engine specs (coverage audit, 2026-09)
 

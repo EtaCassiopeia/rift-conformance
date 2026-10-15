@@ -115,11 +115,7 @@ sbt engineConformance                           # full Plane A: every samples.ri
 sbt mockConformance                             # Plane B on the default wiremock backend
 MOCK_BACKEND=embedded    sbt mockEmbedded        # Plane B, embedded FFI backend (needs JDK 22+)
 MOCK_BACKEND=rift-external sbt mockRiftExternal  # Plane B, real rift, no Docker
-RIFT_IT=1 sbt engineRedis                        # feature 15: in-memory vs Redis flow store (Docker)
 ```
-
-`engineRedis` starts its own `redis:7-alpine` container through testcontainers and stops it when
-the JVM exits, so it needs only a running Docker daemon.
 
 or the equivalent shell wrappers (`scripts/conformance-engine.sh`,
 `scripts/conformance-mock.sh`, `scripts/conformance-embedded.sh`,
@@ -135,7 +131,7 @@ targets (`make engine`, `make gate`, `make run-all`, `make fmt`, `make test`).
 | `RIFT_BUILD_CACHE` | `~/.cache/rift-conformance` | cache root for `build-rift.sh` downloads (SHA-keyed, idempotent) |
 | `RIFT_MODE` | `external` | `external` (spawn the binary, no Docker) or `container` (image) — Plane A |
 | `RIFT_CORPUS_ROOT` | `./corpus` | where the vendored JSON corpus / CSV data / fixtures live (imposters, data, fixtures subdirs) |
-| `RIFT_IT` | unset | set to `1` to attempt the Docker-gated legs: the `rift-container` Plane B layer (#12) and the `engineRedis` flow-store parity feature (#174) |
+| `RIFT_IT` | unset | set to `1` to attempt the Docker-gated legs: the `rift-container` Plane B layer (#12) |
 | `MOCK_BACKEND` | `wiremock` | Plane B backend: `wiremock` (in-process, no Docker) / `rift` (Docker container) / `rift-external` (real rift via `RiftHarness`, no Docker) / `embedded` (in-process Rift over Panama FFI, needs JDK 22+) |
 | `RIFT_FFI_LIB` | (bundled) | `librift_ffi` path for the embedded Plane B leg |
 
@@ -153,7 +149,6 @@ both resolve correctly without extra configuration.
 | `mockConformance` | `testOnly samples.mock.*` on `MOCK_BACKEND=wiremock` (excludes wiremock-`➖` capability tags) |
 | `mockEmbedded` | `testOnly samples.mock.*` on `MOCK_BACKEND=embedded` (excludes embedded-`➖` capability tags) |
 | `mockRiftExternal` | `testOnly samples.mock.*` on `MOCK_BACKEND=rift-external` (excludes only `@wiremock`-only scenarios) |
-| `engineRedis` | `testOnly samples.redis.*` — feature 15, flow-store parity in-memory vs Redis; needs `RIFT_IT=1` + Docker |
 | `lintFeatures` | `testOnly samples.* -- --dry-run` — dry-run step-matching validation across both planes |
 | `mockSmoke` | `testOnly samples.mock.* -- --include-tags smoke` |
 
@@ -172,8 +167,6 @@ and on manual `workflow_dispatch`:
   (`RIFT_MODE=embedded`), plus the Plane B corpus on `MOCK_BACKEND=embedded`.
 - **plane-a-container** — the same Plane A oracle against the published image (`RIFT_IT=1`):
   every feature the container harness can drive (COVERAGE.md's feature × mode matrix).
-- **plane-a-redis** — `sbt engineRedis` (`RIFT_IT=1`): feature 15's flow-state scenarios against an
-  in-memory and a Redis-backed imposter on the released engine.
 
 The daily schedule exists because the subject of this suite is an **external** engine: triggering
 only on harness commits meant a quiet repo showed green while rift moved six releases ahead. The

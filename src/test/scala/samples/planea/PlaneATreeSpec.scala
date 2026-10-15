@@ -34,7 +34,7 @@ object PlaneATreeSpec extends ZIOSpecDefault:
     test("every feature a suite names is on the classpath exactly once") {
       val features = referencedFeatures
       val wrong = features.map(f => f -> copiesOnClasspath(f)).filter(_._2 != 1)
-      assertTrue(features.size >= 23, wrong.isEmpty)
+      assertTrue(features.size >= 22, wrong.isEmpty)
     },
     test("the fixture roots come from one tree") {
       val wrong = List("rift-fixtures", "rift-lint-fixtures", "rift-scripts")
