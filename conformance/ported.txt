@@ -6,3 +6,10 @@
 01-consistency-gate.feature
 02-core-serving.feature
 09-gateway-https-metrics.feature
+# Batch 2 (achird-labs/rift#1347):
+06-behaviors.feature
+07-spaces-and-fsm.feature
+11-reload.feature
+14-behaviors-response-types.feature
+17-metrics.feature
+18-match-diagnostics.feature
