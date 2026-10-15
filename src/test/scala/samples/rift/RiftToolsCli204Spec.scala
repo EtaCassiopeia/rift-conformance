@@ -32,8 +32,11 @@ object RiftToolsCli204Spec extends ZIOSpecDefault:
       List("W012", "W013", "W014", "W016", "W018").map(c => s"$c.json" -> "warning") ++
       List("I005.json" -> "info")
 
+  // A header array holding a null: E018, which --fix repairs by stringifying the element. It used to
+  // be a numeric value (E019), but rift#1358 made numbers valid header values, as the engine
+  // coerces them; this fixture behaves the same from 0.19.0 to master.
   private val HeaderNumber =
-    """{"port":4990,"protocol":"http","stubs":[{"responses":[{"is":{"statusCode":200,"headers":{"X-N":7}}}]}]}"""
+    """{"port":4990,"protocol":"http","stubs":[{"responses":[{"is":{"statusCode":200,"headers":{"X-N":["a",null]}}}]}]}"""
 
   private def tools(cfg: samples.rift.support.RiftHarnessConfig): RiftTools =
     RiftTools.fromBuildDir(cfg.buildDir)
@@ -189,7 +192,7 @@ object RiftToolsCli204Spec extends ZIOSpecDefault:
       }
     },
     test(
-      "--fix quotes a numeric is.headers value in a single-imposter file, which then lints clean"
+      "--fix stringifies a null is.headers array element in a single-imposter file, which then lints clean"
     ) {
       SpawnedEngine.external { cfg =>
         for
@@ -200,8 +203,8 @@ object RiftToolsCli204Spec extends ZIOSpecDefault:
           fixed <- read(file)
           after <- tools(cfg).riftLint(file)
         yield assertTrue(
-          before.issues.exists(_.code == "E019"),
-          fixed.contains("\"X-N\": \"7\""),
+          before.issues.exists(_.code == "E018"),
+          fixed.contains("\"null\""),
           after.errors == 0
         )
       }
@@ -220,7 +223,7 @@ object RiftToolsCli204Spec extends ZIOSpecDefault:
             |        - is:
             |            statusCode: 200
             |            headers:
-            |              X-N: 7
+            |              X-N: [a, null]
             |""".stripMargin
         for
           dir <- tempDir
@@ -261,8 +264,8 @@ object RiftToolsCli204Spec extends ZIOSpecDefault:
           (aRun.stdout + aRun.stderr).contains("Applied 1 fixes"),
           wAfter.trim.startsWith("{") && wAfter.contains("\"imposters\""),
           aAfter.trim.startsWith("["),
-          wAfter.contains("\"X-N\": \"7\""),
-          aAfter.contains("\"X-N\": \"7\""),
+          wAfter.contains("\"null\""),
+          aAfter.contains("\"null\""),
           wLint.errors == 0,
           aLint.errors == 0
         )
