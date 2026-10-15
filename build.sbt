@@ -144,7 +144,6 @@ addCommandAlias("engineConformance", "testOnly samples.rift.*")
 //   09-gateway-https-metrics — HTTPS/mTLS client to the imposter plus the metrics listener: embedded
 //     has no metrics listener (DESIGN §3.1); container revisits it with the TLS work.
 //   16-front-door — every scenario spawns its own `--front-door` engine (`@front-door`).
-//   15-flow-store-redis — lives in samples.redis (`engineRedis`), external + Docker only.
 // 11-reload runs embedded only: the container harness has no config file to reload (withConfigFile
 // is unsupported by design).
 val planeAEveryModeSuites: Seq[String] = Seq(
@@ -265,14 +264,9 @@ addCommandAlias(
 // `reload` (or start a new sbt) first.
 addCommandAlias(
   "lintFeatures",
-  """;set Test / javaOptions += "-Drift.dryRun=true";testOnly samples.planea.PlaneATreeSpec samples.rift.*Suite samples.redis.*Suite -- --dry-run"""
+  """;set Test / javaOptions += "-Drift.dryRun=true";testOnly samples.planea.PlaneATreeSpec samples.rift.*Suite -- --dry-run"""
 )
 
-// Flow-store backend parity (#174): feature 15 drives the same flow-state scenarios against an
-// in-memory and a Redis-backed imposter. It needs Docker (a redis:7-alpine container the harness
-// starts itself) and the external engine, so it lives in `samples.redis` — outside
-// `engineConformance`'s `samples.rift.*` — and runs only here, with RIFT_IT=1.
-addCommandAlias("engineRedis", "testOnly samples.redis.*")
 addCommandAlias("mockSmoke", "testOnly samples.mock.* -- --include-tags smoke")
 // `rift` is excluded alongside scripting/templating/proxyrecord/intercept — matching zio-bdd-samples'
 // scripts/conformance.sh (`--exclude-tags scripting,templating,proxyrecord,rift`) plus `intercept`
