@@ -1,0 +1,8 @@
+# Feature files the engine repo's Rust runner owns (achird-labs/rift conformance/runner).
+# One file name per line. Each porting batch adds its features here and in the engine repo's
+# conformance/runner/src/spec.rs PORTED_FEATURES in the same release.
+# Batch 1 (achird-labs/rift#1346):
+00-smoke.feature
+01-consistency-gate.feature
+02-core-serving.feature
+09-gateway-https-metrics.feature

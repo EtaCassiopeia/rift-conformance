@@ -128,9 +128,35 @@ Test / parallelExecution := false
 // on the same build as the shell gate. (The full alias set — run-all, mock legs — lands in #15.)
 addCommandAlias("engineGate", "testOnly samples.rift.ConsistencyGateSuite")
 
-// Full Plane A pass (issue #15): every samples.rift.* suite, not just the gate. This is what
-// scripts/conformance-engine.sh and scripts/run-all.sh's "engine (Plane A)" layer invoke.
-addCommandAlias("engineConformance", "testOnly samples.rift.*")
+// ── Features ported to the engine repo's Rust runner (#237, achird-labs/rift#1346…#1350) ─────────
+// conformance/ported.txt names the feature files the Rust runner (achird-labs/rift conformance/runner)
+// now owns. A suite whose every `classpath:features/rift/…` file is listed leaves the external,
+// embedded and lint legs here, so the two runners never both own a feature in a mode both run. The
+// container leg keeps them until the Rust runner has a container mode (achird-labs/rift#1467).
+// Suites are found by reading the `classpath:` names out of their sources, so the list stays in the
+// feature-file vocabulary the engine repo uses.
+val portedFeatures: Set[String] =
+  IO.readLines(file("conformance/ported.txt"))
+    .map(_.trim)
+    .filter(l => l.nonEmpty && !l.startsWith("#"))
+    .toSet
+
+val portedSuites: Seq[String] = {
+  val featureRef = "classpath:features/rift/([^\"]+)".r
+  (file("src/test/scala/samples/rift") * "*.scala").get.sorted.flatMap { f =>
+    val named = featureRef.findAllMatchIn(IO.read(f)).map(_.group(1)).toSet
+    if (named.nonEmpty && named.subsetOf(portedFeatures)) Some(f.base) else None
+  }
+}
+
+def withoutPorted(suites: Seq[String]): Seq[String] = suites.filterNot(portedSuites.contains)
+// sbt's testOnly drops a class named with a leading `-`.
+val portedExclusions: String = portedSuites.map(" -samples.rift." + _).mkString
+
+// Full Plane A pass (issue #15): every samples.rift.* suite, not just the gate, minus the ported
+// ones. This is what scripts/conformance-engine.sh and scripts/run-all.sh's "engine (Plane A)"
+// layer invoke.
+addCommandAlias("engineConformance", "testOnly samples.rift.*" + portedExclusions)
 
 // ── Plane A mode legs (#18 embedded, #12 container, #206 enrolment) ─────────────────────────────
 // One engine, three deliveries: the binary (external, `engineConformance` above), the rift-java
@@ -202,7 +228,7 @@ def planeABddStep(suites: Seq[String], excludeTags: Seq[String]): String =
 addCommandAlias(
   "engineEmbedded",
   "; " + planeABddStep(
-    planeAEveryModeSuites :+ "Reload11Suite",
+    withoutPorted(planeAEveryModeSuites :+ "Reload11Suite"),
     dedicatedEngineTags ++ Seq("intercept-http", "metrics-port", "no-config-source")
   ) + " ; " + planeATestOnly(
     Seq(
@@ -264,7 +290,8 @@ addCommandAlias(
 // `reload` (or start a new sbt) first.
 addCommandAlias(
   "lintFeatures",
-  """;set Test / javaOptions += "-Drift.dryRun=true";testOnly samples.planea.PlaneATreeSpec samples.rift.*Suite -- --dry-run"""
+  """;set Test / javaOptions += "-Drift.dryRun=true";testOnly samples.planea.PlaneATreeSpec samples.rift.*Suite""" +
+    portedExclusions + " -- --dry-run"
 )
 
 addCommandAlias("mockSmoke", "testOnly samples.mock.* -- --include-tags smoke")
