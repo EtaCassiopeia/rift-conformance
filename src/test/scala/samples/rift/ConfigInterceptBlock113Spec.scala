@@ -265,7 +265,10 @@ object ConfigInterceptBlock113Spec extends ZIOSpecDefault:
         )
       }
     },
-    test("POST /admin/reload warns that the block was not re-applied and leaves the rules alone") {
+    // rift#1271 (0.20.0): reload re-applies the block's rules and reports
+    // `"intercept": {"rulesSeeded", "rulesRuntime"}`; before that it left them alone and warned. The
+    // report's presence is what tells the two apart, so this pins whichever the engine has.
+    test("POST /admin/reload re-applies the block's rules, or warns it did not (before 0.20.0)") {
       external {
         for
           dir <- tempDir
@@ -281,13 +284,24 @@ object ConfigInterceptBlock113Spec extends ZIOSpecDefault:
           before <- ruleHosts(admin)
           reloaded <- send(s"$admin/admin/reload", "POST", Some("{}"))
           after <- ruleHosts(admin)
+          reApplies = reloaded._2.contains("rulesSeeded")
+          // An edited rule takes effect on the next reload when the engine re-applies the block.
+          _ <- ZIO.when(reApplies)(
+            writeConfig(
+              dir,
+              "declared.json",
+              wrapperConfig(impPort, icPort, serveRule("edited.example", "from-edit"))
+            ) *> send(s"$admin/admin/reload", "POST", Some("{}"))
+          )
+          edited <- ruleHosts(admin)
         yield assertTrue(
           reloaded._1 == 200,
-          // Silence here would be the bug: an edited block that never took effect must not look
-          // applied. The warning is the whole point of the field.
-          reloaded._2.contains("warnings"),
-          reloaded._2.contains("NOT re-applied"),
-          after == before
+          after == before,
+          // Silence would be the bug either way: a block that never took effect must not look
+          // applied, so an engine that does not re-apply must say so.
+          if reApplies then
+            !reloaded._2.contains("NOT re-applied") && edited == List("edited.example")
+          else reloaded._2.contains("warnings") && reloaded._2.contains("NOT re-applied")
         )
       }
     },
