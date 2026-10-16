@@ -13,8 +13,8 @@ engine:
 gate:
 	sbt engineGate
 
-# Full layered summary: engine (Plane A) + Plane B wiremock/embedded/rift-external (all run) +
-# rift-container (SKIP unless RIFT_IT=1, gated on Docker, #12).
+# Full layered summary: Plane A external + embedded (SKIP below JDK 22) + container (SKIP unless
+# RIFT_IT=1, gated on Docker, #12).
 run-all:
 	./scripts/run-all.sh
 

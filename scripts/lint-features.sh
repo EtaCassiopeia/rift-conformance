@@ -5,11 +5,6 @@
 # needs no RIFT_BUILD_DIR, no Docker, and no fetched rift — the cheapest conformance layer, safe to
 # run in the compile/format CI job.
 #
-# Scope note: Plane B (samples.mock.*) is NOT dry-run-clean yet — a scenario carrying both @rift and
-# @mock(orders) has its Rift-only fixture provisioned on the wiremock backend even under
-# --exclude-tags rift (an upstream zio-bdd tag-exclusion bug). The alias is Plane-A-only until that
-# is fixed; see the `lintFeatures` comment in build.sbt.
-#
 # Usage: scripts/lint-features.sh
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
