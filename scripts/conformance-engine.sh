@@ -10,8 +10,7 @@
 #
 # RIFT_MODE=container (#12) runs the engine in a Docker container on a published image (RIFT_IMAGE)
 # and runs the container-safe subset (engineContainer: every feature but 09, 11 and 16, minus the
-# tags build.sbt names per mode). Docker/RIFT_IT-gated — SKIPs when RIFT_IT!=1 or docker is absent,
-# like the Plane B rift-container leg.
+# tags build.sbt names per mode). Docker/RIFT_IT-gated — SKIPs when RIFT_IT!=1 or docker is absent.
 #
 # Usage: scripts/conformance-engine.sh
 #
@@ -47,7 +46,7 @@ if [ "$RIFT_MODE" = "embedded" ]; then
   fi
   SBT_TASK="engineEmbedded"
 elif [ "$RIFT_MODE" = "container" ]; then
-  # Docker-gated like the Plane B rift-container leg: opt-in via RIFT_IT=1, and docker must be usable.
+  # Docker-gated: opt-in via RIFT_IT=1, and docker must be usable.
   if [ "${RIFT_IT:-}" != "1" ]; then
     echo "conformance-engine: SKIP container — Docker-gated (RIFT_IT unset); see #12" >&2
     exit "$SKIP_EXIT_CODE"

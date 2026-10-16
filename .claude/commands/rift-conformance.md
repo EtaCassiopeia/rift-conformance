@@ -1,6 +1,6 @@
 ---
 description: Standing Rift conformance pass — fetch the engine, run both attribution planes of this harness, triage any red per DESIGN.md §8, and update COVERAGE.md/FINDINGS.md for gaps.
-argument-hint: "[scope: full | gate | ext | mock | verify #NNN]"
+argument-hint: "[scope: full | gate | ext | verify #NNN]"
 ---
 
 # Rift standing conformance pass
@@ -12,9 +12,8 @@ the source of truth**; both planes exercise it as a downstream consumer:
 - **Plane A** (`samples.rift.*`, `src/test/plane-a/features/rift/`) drives the admin API
   directly and shells out to `rift-lint`/`rift-verify`. No `MockControl` in the path — a red here
   is an **engine or tool** finding.
-- **Plane B** (`samples.mock.*`, `src/test/resources/features/mock/`) drives Rift *through* the
-  zio-bdd `MockControl` adapter on four backends (`wiremock` / `rift` / `rift-external` /
-  `embedded`). A red here with Plane A green is a **library** finding.
+- **Plane B** (the zio-bdd `MockControl` corpus) moved to EtaCassiopeia/zio-bdd (zio-bdd#362) and
+  is no longer run here.
 
 This repo is self-contained: the corpus (`corpus/imposters/*.json`, `corpus/data/products.csv`,
 `corpus/fixtures/injection/*`) is vendored in-repo, and the engine is fetched as a published
@@ -29,7 +28,6 @@ for the architecture and risk register.
 | `full` (default) | both planes, every leg `scripts/run-all.sh` runs |
 | `gate` | just `sbt engineGate` (feature 01, the consistency gate — cheapest inner loop) |
 | `ext` | Plane A suites 03–10 (`samples.rift.*` beyond the gate and core serving — faults, scripting, templating, behaviors, spaces/FSM, admin, gateway/HTTPS/metrics, proxy/record) |
-| `mock` | the Plane B legs (`mockConformance` wiremock, `mockEmbedded`, `mockRiftExternal`, and the Docker-gated `rift` container leg if `RIFT_IT=1`) |
 | `verify #NNN` | the `@gap` flip workflow — validate a specific fix/finding end-to-end and flip its pinned-divergence scenario if the fix landed |
 
 Guiding principles:
@@ -71,12 +69,6 @@ sbt "testOnly samples.rift.FaultsTransport03Suite samples.rift.ScriptingBounds04
   samples.rift.Templating05Suite samples.rift.Behaviors06Suite samples.rift.SpacesFsm07Suite \
   samples.rift.AdminSurface08Suite samples.rift.GatewayHttpsMetrics09Suite \
   samples.rift.ProxyRecord10Suite"
-
-# mock (Plane B, both no-Docker legs + wiremock; add the container leg if RIFT_IT=1)
-sbt mockConformance
-MOCK_BACKEND=rift-external sbt mockRiftExternal
-MOCK_BACKEND=embedded sbt mockEmbedded                # needs JDK 22+ (FFM); skip if unavailable
-[ "${RIFT_IT:-0}" = 1 ] && scripts/conformance-rift.sh
 ```
 
 No `RIFT_CORPUS_ROOT` needs to be set — it defaults to `./corpus`, vendored in this repo.

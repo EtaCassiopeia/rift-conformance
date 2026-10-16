@@ -17,7 +17,7 @@ val zioBddVersion = "1.5.1"
 // evicts it up to riftJavaVersion (a patch-level override) — keep that override until a zio-bdd
 // release (1.5.2) declares rift-java 0.3.4 itself. The rift-java 0.3.4
 // natives embed rift 0.19.0, the same engine scripts/build-rift.sh fetches for the binary legs
-// (external + container Plane A, rift-external Plane B), so the binary/native engine-version split
+// (external + container Plane A), so the binary/native engine-version split
 // is closed again. Bump RIFT_VERSION, zioBddVersion and riftJavaVersion together.
 //
 // rift-java's `RiftFfi` binds the whole C-ABI (v2 admin symbols, `rift_verify`,
@@ -32,9 +32,8 @@ libraryDependencies ++= Seq(
   "dev.zio" %% "zio-json" % "0.7.3",
   "dev.zio" %% "zio-process" % "0.7.2",
   "io.github.etacassiopeia" %% "zio-bdd" % zioBddVersion % Test,
-  "io.github.etacassiopeia" %% "zio-bdd-mock" % zioBddVersion % Test, // Plane B: portable MockControl SPI, DSL, model
-  "io.github.etacassiopeia" %% "zio-bdd-wiremock" % zioBddVersion % Test, // Plane B: default backend (in-process, no Docker)
-  // Plane B: gated backend (container / embedded FFM). Needs JDK 17+ (rift-java-core is class 61).
+  // EmbeddedAdmin (Plane A embedded mode) loads the in-process engine through its EmbeddedRift.
+  // Needs JDK 17+ (rift-java-core is class 61). Plane B moved to EtaCassiopeia/zio-bdd (#362).
   "io.github.etacassiopeia" %% "zio-bdd-rift" % zioBddVersion % Test,
   // Pins rift-java-core to riftJavaVersion on every JDK: zio-bdd-rift declares 0.3.2, and only the
   // JDK 22+ rift-java-embedded dependency below would otherwise evict it (see ONE ENGINE VERSION).
@@ -49,7 +48,7 @@ libraryDependencies ++= Seq(
 
 // Local-only: Rift's testcontainers path pulls docker-java 3.3.x (via testcontainers-java
 // 1.19.1), which can't handshake with Docker Desktop 29. Override to a compatible docker-java for
-// the `MOCK_BACKEND=rift` leg (Docker container, issue #12). Harmless otherwise.
+// the `RIFT_MODE=container` leg (Docker container, issue #12). Harmless otherwise.
 dependencyOverrides ++= Seq(
   "org.testcontainers" % "testcontainers" % "1.21.4",
   "com.github.docker-java" % "docker-java-api" % "3.4.2",
@@ -68,10 +67,9 @@ Test / testFrameworks := Seq(
 // and process teardown run in an isolated JVM, and run suites serially (one engine per run).
 Test / fork := true
 
-// Embedded FFI (MOCK_BACKEND=embedded Plane B, and RIFT_MODE=embedded Plane A #18): the in-process
-// Rift engine via Panama FFM. Gated on a JDK **22+** JVM: `rift-java-embedded` is Java-22 bytecode
-// (class 66) on the stable FFM API. On JDK 17/21 the embedded backend is unavailable
-// (`EmbeddedRift.available` is false) and the corpus runs on wiremock instead.
+// Embedded FFI (RIFT_MODE=embedded Plane A, #18): the in-process Rift engine via Panama FFM. Gated
+// on a JDK **22+** JVM: `rift-java-embedded` is Java-22 bytecode (class 66) on the stable FFM API.
+// On JDK 17/21 the embedded mode is unavailable (`EmbeddedRift.available` is false).
 lazy val ffmEnabled: Boolean =
   System.getProperty("java.specification.version", "11").split("\\.").head.toInt >= 22
 
@@ -119,13 +117,12 @@ planeATree := sys.env
 Test / unmanagedResourceDirectories += planeATree.value
 Test / javaOptions += s"-Drift.planeATree=${planeATree.value.getAbsolutePath}"
 
-// Run suites one at a time: the mock corpus shares one backend server per run (a Correlated
-// WireMock instance), so concurrent suites would race on it; Plane A's single-engine-per-run
-// harness needs the same serialization.
+// Run suites one at a time: Plane A's harness shares one engine per run, so concurrent suites
+// would race on it.
 Test / parallelExecution := false
 
 // Plane A consistency gate (feature 01). The parity checkpoint (#6) and future retirements run this
-// on the same build as the shell gate. (The full alias set — run-all, mock legs — lands in #15.)
+// on the same build as the shell gate.
 addCommandAlias("engineGate", "testOnly samples.rift.ConsistencyGateSuite")
 
 // ── Features ported to the engine repo's Rust runner (#237, achird-labs/rift#1346…#1350) ─────────
@@ -279,10 +276,7 @@ addCommandAlias(
 //     layer, then skips step bodies), so without this the Plane A suites demand RIFT_BUILD_DIR. Set
 //     on Test/javaOptions (the forked test JVM) so bare `sbt lintFeatures` works with no wrapper.
 //   • Scoped to `samples.rift.*Suite` (the BDD suites) — the `*Spec` classes are zio-test, ignore
-//     --dry-run, and would really run (needing an engine). PLANE B IS DEFERRED: `samples.mock.*`
-//     can't be dry-run cleanly yet because a scenario carrying both `@rift` and `@mock(orders)` has
-//     its Rift-only fixture provisioned on the wiremock backend even under `--exclude-tags rift`
-//     (upstream zio-bdd tag-exclusion bug). Re-add `samples.mock.*Suite` here once that lands.
+//     --dry-run, and would really run (needing an engine).
 // The `set` persists for the sbt SESSION: after `lintFeatures` an interactive session keeps
 // -Drift.dryRun=true, so a subsequent real run in the SAME session would get RiftHarnessDryRun. That
 // surfaces as a LOUD "reached under --dry-run" defect (never a false green), and CI/scripts run it in
@@ -292,33 +286,4 @@ addCommandAlias(
   "lintFeatures",
   """;set Test / javaOptions += "-Drift.dryRun=true";testOnly samples.planea.PlaneATreeSpec samples.rift.*Suite""" +
     portedExclusions + " -- --dry-run"
-)
-
-addCommandAlias("mockSmoke", "testOnly samples.mock.* -- --include-tags smoke")
-// `rift` is excluded alongside scripting/templating/proxyrecord/intercept — matching zio-bdd-samples'
-// scripts/conformance.sh (`--exclude-tags scripting,templating,proxyrecord,rift`) plus `intercept`
-// (#54, a capability WireMock doesn't advertise) — because several @rift-tagged scenarios (samples
-// 09/17/19) assert raw-Rift-only behavior that a WireMock backend cannot satisfy by design (see
-// COVERAGE.md's "Plane B" notes); without this exclusion `mockConformance` is red on
-// MOCK_BACKEND=wiremock for reasons unrelated to library conformance.
-addCommandAlias(
-  "mockConformance",
-  "testOnly samples.mock.* -- --exclude-tags scripting,templating,proxyrecord,rift,intercept,fixedport"
-)
-// The embedded (in-process Rift FFI) backend has different capabilities than wiremock: it CAN
-// run scripting/templating (a real Rift engine) but not the wiremock-native / stateful / negotiation
-// scenarios — so it carries its own tag-exclusion set (mirrors scripts/conformance-embedded.sh).
-addCommandAlias(
-  "mockEmbedded",
-  "testOnly samples.mock.* -- --exclude-tags stateful,stateinspection,rift,wiremock,negotiation,native"
-)
-// `rift-external` (issue #14) is a real rift engine spawned by the Plane A RiftHarness (no
-// Docker, no FFM floor) — it advertises and runs the full capability surface, so it only excludes
-// `wiremock` (the two raw-WireMock-only scenarios, samples 17/19, that assert WireMock-specific
-// behavior a rift engine can't and shouldn't satisfy) and `intercept` (#54 — the rift-external
-// MockControl is connected without an intercept proxy, so it doesn't advertise the Intercept
-// capability). Mirrors scripts/conformance-rift-external.sh.
-addCommandAlias(
-  "mockRiftExternal",
-  "testOnly samples.mock.* -- --exclude-tags wiremock,intercept"
 )
